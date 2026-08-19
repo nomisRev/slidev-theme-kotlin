@@ -16,14 +16,15 @@
     "public",
     "setup",
     "styles",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "slidev build example.md",
-    "dev": "slidev example.md --open",
-    "export": "slidev export example.md",
-    "screenshot": "slidev export example.md --format png"
+    "build": "slidev build slides.md",
+    "dev": "slidev slides.md --open",
+    "export": "slidev export slides.md",
+    "screenshot": "slidev export slides.md --format png"
   },
   "dependencies": {
     "@slidev/types": "^52.2.5"

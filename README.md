@@ -114,9 +114,9 @@ npm run export
 npm run screenshot
 ```
 
-### Running the Example
+### Running the Slides
 
-The repository includes `example.md` demonstrating all theme features:
+The repository includes `slides.md`, a compact presentation demonstrating the theme's layouts, Kotlin highlighting, Kodee animations, magic moves, and click animations:
 
 ```bash
 npm run dev
@@ -145,7 +145,7 @@ This will open the example presentation in your browser with hot-reload enabled.
 │   ├── index.ts        # Style entry point
 │   └── layout.css      # Layout styles
 ├── debug.js            # Utility script for enumerating Shiki Kotlin tokens
-├── example.md          # Example presentation demonstrating theme features
+├── slides.md           # Example presentation used for local development and GitHub Pages
 ├── package.json        # Package configuration and dependencies
 └── LICENSE             # Apache License 2.0
 ```

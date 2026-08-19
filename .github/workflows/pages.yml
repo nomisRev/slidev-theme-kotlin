@@ -1,9 +1,9 @@
-name: Deploy pages
+name: Deploy slides to GitHub Pages
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,35 +19,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
-
-      - name: Setup @antfu/ni
-        run: npm i -g @antfu/ni
+          node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        run: nci
+        run: npm ci
 
-      - name: Build
-        run: nr build --base /${{github.event.repository.name}}/
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
+      - name: Build slides
+        run: npm run build -- --base "${{ steps.pages.outputs.base_path }}/"
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
+    needs: build
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: build
-    runs-on: ubuntu-latest
-    name: Deploy
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
