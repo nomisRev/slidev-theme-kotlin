@@ -1,6 +1,6 @@
 {
   "name": "slidev-theme-kotlin",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "type": "module",
   "keywords": [
     "slidev-theme",
@@ -9,6 +9,16 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "files": [
+    "assets",
+    "components",
+    "layouts",
+    "public",
+    "setup",
+    "styles",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "slidev build example.md",
     "dev": "slidev example.md --open",

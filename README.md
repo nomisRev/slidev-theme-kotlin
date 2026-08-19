@@ -135,8 +135,9 @@ This will open the example presentation in your browser with hot-reload enabled.
 │   ├── cover.vue       # Cover slide layout
 │   ├── default.vue     # Default slide layout
 │   └── intro.vue       # Introduction slide layout
+├── assets/             # Bundled theme assets
+│   └── kodee-*.svg     # Kodee mascot variants (11 variants)
 ├── public/             # Static assets
-│   ├── kodee-*.svg     # Kodee mascot variants (11 variants)
 │   └── kotlin-logo*.svg # Kotlin logos (light/dark modes)
 ├── setup/              # Slidev setup files
 │   └── shiki.ts        # Syntax highlighting configuration for Kotlin

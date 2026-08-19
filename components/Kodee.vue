@@ -19,26 +19,27 @@ const props = withDefaults(defineProps<Props>(), {
   scale: undefined,
 })
 
-// Compute image source
-const imageSrc = computed(() => {
-  const variant = props.variant.startsWith('kodee-') ? props.variant : `kodee-${props.variant}`
-  return `theme/${variant}.svg`
-})
+// Bundle mascot assets with the theme instead of relying on Slidev to copy a
+// dependency's public directory into the consuming presentation.
+const kodeeAssets = import.meta.glob('../assets/kodee-*.svg', {
+  eager: true,
+  import: 'default',
+  query: '?url',
+}) as Record<string, string>
 
-const kodeeImage = computed(() => {
-  const base = import.meta.env.BASE_URL || '/'
-  return `${base}${imageSrc.value}`
-})
+const variantName = computed(() =>
+  props.variant.startsWith('kodee-') ? props.variant : `kodee-${props.variant}`,
+)
+
+const kodeeImage = computed(() => kodeeAssets[`../assets/${variantName.value}.svg`])
 
 // Compute size classes and dimensions
 const sizeConfig = computed(() => {
   switch (props.size) {
     case 'large':
-      if (imageSrc.value.endsWith("kodee-wave.svg")) {
-        return {width: '500px', height: '500px'}
-      } else {
-        return {width: '600px', height: '600px'}
-      }
+      return variantName.value === 'kodee-wave'
+        ? {width: '500px', height: '500px'}
+        : {width: '600px', height: '600px'}
     case 'small':
     default:
       return {width: '200px', height: '200px'}
@@ -53,16 +54,15 @@ const positionStyles = computed(() => {
     height: sizeConfig.value.height,
   }
 
-  const src = imageSrc.value
-  console.log(`[DEBUG] Kodee image: encountered ${src}`)
+  const variant = variantName.value
 
   styles.right = '0px'
   if (props.position === 'corner') {
-    if (src.endsWith("kodee-greeting.svg")) {
+    if (variant === 'kodee-greeting') {
       styles.bottom = '-42px'
-    } else if (src.endsWith("kodee-wink.svg")) {
+    } else if (variant === 'kodee-wink') {
       styles.bottom = '-35px'
-    } else if (src.endsWith("kodee-wave.svg")) {
+    } else if (variant === 'kodee-wave') {
       styles.bottom = '-15px'
     } else {
       styles.bottom = '-42px'
@@ -72,11 +72,11 @@ const positionStyles = computed(() => {
     styles.right = '-5%'
     styles.transform = 'translateY(-40%)'
 
-    if (src.endsWith("kodee-greeting.svg")) {
+    if (variant === 'kodee-greeting') {
       styles.top = '13%'
-    } else if (src.endsWith("kodee-wink.svg")) {
+    } else if (variant === 'kodee-wink') {
       styles.top = '10%'
-    } else if (src.endsWith("kodee-wave.svg")) {
+    } else if (variant === 'kodee-wave') {
       styles.top = '16%'
       styles.right = '3%'
     } else {
