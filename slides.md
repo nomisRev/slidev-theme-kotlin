@@ -185,3 +185,150 @@ kodee: tiny
 # Even tiny Kodee joins in
 
 Every bundled mascot variant is ready to use in your slides.
+
+---
+kodee: false
+---
+
+# Drawn annotations
+
+`DrawnAnnotation` is bundled with the theme: it can mark an element or exact code text, then explain it with a label or connector.
+
+---
+kodee: false
+---
+
+# Annotate Kotlin code
+
+<DrawnAnnotation type="circle" text="fun main" label="the entry point of every Kotlin program" :on="1">
+
+```kotlin [Main.kt]
+fun main() {
+    println("Hello, Kotlin!")
+}
+```
+
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Connect two elements
+
+<DrawnAnnotation
+  source-type="circle"
+  selector="[data-source]"
+  target="[data-target]"
+  :target-mark="false"
+  arrow
+  label="B follows from A"
+  :at="1"
+  :label-at="2"
+>
+
+<div>Element <b data-source>A</b> is annotated and the arrow lands on <b data-target>B</b>.</div>
+
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Four ways to mark something
+
+<DrawnAnnotation type="underline" selector="[data-underline]" :at="1">
+<DrawnAnnotation type="circle" selector="[data-circle]" :at="2">
+<DrawnAnnotation type="box" selector="[data-box]" :at="3">
+<DrawnAnnotation type="strike-through" selector="[data-strike]" :at="4">
+
+- An <b data-underline>underline</b> is the default and quietest mark.
+- A <b data-circle>circle</b> emphasizes one thing.
+- A <b data-box>box</b> frames an entire phrase.
+- A <b data-strike>strike-through</b> crosses out what no longer holds.
+
+</DrawnAnnotation>
+</DrawnAnnotation>
+</DrawnAnnotation>
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Labels find room automatically
+
+<DrawnAnnotation type="underline" selector="[data-pinned]" label="pinned by hand" :label-x="78" :label-y="18" :at="1">
+<DrawnAnnotation type="underline" selector="[data-quiet]" label="named without a line" :connect="false" placement="right" :at="2">
+<DrawnAnnotation type="circle" selector="[data-auto]" label="placed automatically, clear of the other content" :at="3">
+
+> You can <b data-pinned>put a label</b> where you want it.
+>
+> Or have it <b data-quiet>written on its own</b> with no leader line.
+>
+> Otherwise it finds <b data-auto>its own place</b> on the slide.
+
+</DrawnAnnotation>
+</DrawnAnnotation>
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Annotate a Magic Move step
+
+<DrawnAnnotation type="underline" text="val greeting" label="read-only; its type is inferred" insert :on="2">
+
+````md magic-move [Main.kt]
+```kotlin [Main.kt]
+fun main() {
+    println("Hello, Kotlin!")
+}
+```
+
+```kotlin [Main.kt]
+fun main() {
+    val greeting = "Hello, Kotlin!"
+    println(greeting)
+}
+```
+
+```kotlin [Main.kt]
+fun main() {
+    val greeting = "Hello, Kotlin!"
+    println(greeting.uppercase())
+}
+```
+````
+
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Sequential marks share one click
+
+<DrawnAnnotation type="underline" selector="[data-underlined]" :at="1">
+<DrawnAnnotation type="circle" selector="[data-circled]" :at="1">
+
+The <b data-circled>circle</b> is drawn first; the <b data-underlined>underline</b> follows on the same click.
+
+</DrawnAnnotation>
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Control the sketch
+
+<DrawnAnnotation type="box" selector="[data-clean]" :options="{ roughness: 0, bowing: 0 }" :iterations="1" placement="right" label="clean geometric strokes" :at="1">
+<DrawnAnnotation type="circle" selector="[data-wobbly]" :options="{ roughness: 2.6, seed: 12 }" :stroke-width="4" :duration="1600" color="#eb55e6" placement="right" label="wobblier, slower, and pink" :at="2">
+
+- Any <b data-clean>rough.js option</b> passes straight through.
+- Turn <b data-wobbly>roughness up</b> and set the colour, width, and duration yourself.
+
+</DrawnAnnotation>
+</DrawnAnnotation>

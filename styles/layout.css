@@ -43,3 +43,19 @@
         @apply mt-10;
     }
 }
+
+/* DrawnAnnotation defaults. Override these in a deck or slide to match a
+   specific visual treatment. */
+:root {
+    --drawn-annotation-color: var(--slidev-theme-primary, #7954f6);
+    --drawn-annotation-label-font: var(--slidev-font-sans), sans-serif;
+    --drawn-annotation-label-size: 28px;
+    --drawn-annotation-label-weight: 800;
+}
+
+/* Let a click-ranged annotation finish its exit fade before the content it
+   replaces begins its own click transition. */
+.slidev-layout:has(.drawn-annotation.is-fading-out)
+  .slidev-vclick-target.slidev-vclick-current:not(.slidev-vclick-anim-none) {
+    transition-delay: 280ms;
+}

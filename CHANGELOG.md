@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- Bundle `DrawnAnnotation`, a click-aware, Rough.js-powered annotation component for marking elements or exact code text with circles, underlines, boxes, and strike-throughs.
+- Support leader lines, target marks, automatic non-overlapping labels, sequential nested reveals, temporary click ranges, and Magic Move-aware tracking.
+- Add complete component documentation and interactive examples to the theme showcase.
+
+### Packaging
+
+- Add `roughjs` as a runtime dependency required by `DrawnAnnotation`.
+
 ## 0.0.10
 
 ### Added

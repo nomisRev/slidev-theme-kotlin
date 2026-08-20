@@ -1,6 +1,6 @@
 {
   "name": "slidev-theme-kotlin",
-  "version": "0.0.10",
+  "version": "0.10.0",
   "type": "module",
   "keywords": [
     "slidev-theme",
@@ -29,7 +29,8 @@
     "screenshot": "slidev export slides.md --format png"
   },
   "dependencies": {
-    "@slidev/types": "^52.2.5"
+    "@slidev/types": "^52.2.5",
+    "roughjs": "^4.6.6"
   },
   "devDependencies": {
     "@slidev/cli": "^52.2.5",

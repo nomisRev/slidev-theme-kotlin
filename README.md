@@ -12,6 +12,7 @@ This theme provides a professional presentation template tailored for Kotlin dev
 - **Multiple Layouts**: Pre-built layouts including default, cover, and intro
 - **Kotlin Branding**: Official Kotlin logos for both light and dark modes
 - **JetBrains Fonts**: Uses Inter for sans-serif and JetBrains Mono for code
+- **Drawn annotations**: Click-aware, hand-drawn marks, labels, and connectors for elements and code
 
 ## Requirements
 
@@ -111,6 +112,22 @@ kodee:
   scale: 1.2
 ---
 ```
+
+### Using DrawnAnnotation
+
+`<DrawnAnnotation>` is auto-registered for every deck using the theme. It can mark an element with a selector or exact text inside a Shiki or Magic Move code block, then connect that mark to a label or another element.
+
+````md
+<DrawnAnnotation type="circle" text="fun main" label="program entry point" :on="1">
+
+```kotlin
+fun main() = println("Hello, Kotlin!")
+```
+
+</DrawnAnnotation>
+````
+
+The full prop reference, timing behavior, and troubleshooting guide are in [`components/README.md`](components/README.md). The bundled [`slides.md`](slides.md) includes working examples of code annotations, connectors, labels, sequential reveals, and Magic Move integration.
 
 #### IntelliJ formatting
 
@@ -241,6 +258,7 @@ layout: cover
 
 ### Runtime Dependencies
 - `@slidev/types` (^52.2.5) - Slidev type definitions
+- `roughjs` (^4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
 
 ### Development Dependencies
 - `@slidev/cli` (^52.2.5) - Slidev command-line interface
