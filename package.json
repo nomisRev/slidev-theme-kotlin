@@ -1,6 +1,6 @@
 {
   "name": "slidev-theme-kotlin",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "type": "module",
   "keywords": [
     "slidev-theme",
@@ -16,12 +16,14 @@
     "public",
     "setup",
     "styles",
+    "slide-bottom.vue",
     "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "slidev build slides.md",
+    "lint": "node scripts/lint-slides.mjs slides.md",
+    "build": "npm run lint && slidev build slides.md",
     "dev": "slidev slides.md --open",
     "export": "slidev export slides.md",
     "screenshot": "slidev export slides.md --format png"
@@ -30,7 +32,8 @@
     "@slidev/types": "^52.2.5"
   },
   "devDependencies": {
-    "@slidev/cli": "^52.2.5"
+    "@slidev/cli": "^52.2.5",
+    "@slidev/parser": "^52.2.5"
   },
   "slidev": {
     "colorSchema": "both",

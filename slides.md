@@ -2,7 +2,11 @@
 theme: ./
 highlighter: shiki
 transition: view-transition
+themeConfig:
+  kodee: greeting
 ---
+
+<!-- @formatter:off -->
 
 # Kotlin Slidev Theme
 
@@ -12,10 +16,6 @@ transition: view-transition
 
 ---
 layout: intro
-kodee:
-  variant: greeting
-  size: large
-  position: featured
 ---
 
 # Meet Kodee
@@ -26,11 +26,6 @@ The Kotlin mascot is built into every theme layout.
 - Move it between featured and corner positions
 - Use view transitions for a smooth hand-off
 
----
-kodee:
-  variant: greeting
-  size: small
-  position: corner
 ---
 
 # Kotlin-first code highlighting
@@ -46,10 +41,7 @@ fun greet(name: String): Result<String> =
 ```
 
 ---
-kodee:
-  variant: wink
-  size: small
-  position: corner
+kodee: wink
 ---
 
 # Magic Move for code walkthroughs
@@ -82,10 +74,7 @@ kodee:
 Kodee can change expression, size, and placement from one slide to the next.
 
 ---
-kodee:
-  variant: jumping
-  size: small
-  position: corner
+kodee: jumping
 ---
 
 # Reveal details as you present
@@ -114,10 +103,7 @@ The theme works with Slidev's standard click animations.
 
 ---
 layout: two-cols-header
-kodee:
-  variant: heart
-  size: small
-  position: corner
+kodee: heart
 ---
 
 # Compose layouts with familiar Slidev syntax
@@ -143,10 +129,7 @@ val theme = Theme(
 
 ---
 layout: cover
-kodee:
-  variant: wave
-  size: large
-  position: featured
+kodee: wave
 ---
 
 # Ready to present Kotlin
@@ -154,3 +137,51 @@ kodee:
 ## Install the theme and make it your own
 
 `npm install slidev-theme-kotlin`
+
+---
+kodee: sitting
+---
+
+# Sit down with Kotlin
+
+Build calm, readable APIs with concise language features.
+
+---
+kodee: drinking
+---
+
+# Take a Kotlin break
+
+A small expression can still say a lot.
+
+---
+kodee: in-love
+---
+
+# Fall in love with null safety
+
+Use Kotlin's type system to make invalid states harder to represent.
+
+---
+kodee: welcome
+---
+
+# Welcome to the Kotlin ecosystem
+
+From server-side services to multiplatform apps, Kotlin meets you where you are.
+
+---
+kodee: winter
+---
+
+# Kotlin works in every season
+
+Keep your code expressive as your project grows.
+
+---
+kodee: tiny
+---
+
+# Even tiny Kodee joins in
+
+Every bundled mascot variant is ready to use in your slides.

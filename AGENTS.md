@@ -1,0 +1,3 @@
+- Use `agent-browser --help` CLI to check the slides
+- You can find Slidev SKILLS here, node_modules/@slidev/cli/skills/slidev/SKILL.md
+- In doubt read code in node_modules to understand the libraries you need to work with 

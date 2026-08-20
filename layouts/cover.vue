@@ -1,12 +1,7 @@
-<script setup lang="ts">
-import KodeeWrapper from '../components/KodeeWrapper.vue'
-</script>
-
 <template>
   <div class="slidev-layout cover">
     <div class="my-auto w-full">
       <slot />
     </div>
-    <KodeeWrapper />
   </div>
 </template>

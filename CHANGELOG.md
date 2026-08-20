@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.10
+
+### Added
+
+- Allow decks to enable Kodee once with `themeConfig.kodee`. A shared per-slide layer supports every layout: regular slides use a small bottom-right mascot, while cover and intro layouts use a large featured mascot.
+- Support concise per-slide overrides such as `kodee: wink` and `kodee: false`, while retaining the full object configuration.
+- Implement the documented `medium` Kodee size.
+
+### Fixed
+
+- Add IntelliJ formatter settings and a deck-level formatter guard so later Slidev frontmatter blocks remain valid YAML.
+
 ## 0.0.9
 
 ### Fixed

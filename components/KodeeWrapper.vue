@@ -3,22 +3,66 @@ import { computed } from 'vue'
 import { useSlideContext } from '@slidev/client'
 import Kodee from './Kodee.vue'
 
-const slideContext = useSlideContext()
+interface KodeeConfig {
+  variant?: string
+  size?: 'small' | 'medium' | 'large'
+  position?: 'corner' | 'featured' | 'custom'
+  x?: number
+  y?: number
+  scale?: number
+}
 
-// Get kodee configuration from frontmatter
-const kodeeConfig = computed(() => {
-  return slideContext.$frontmatter?.kodee || null
+interface Props {
+  defaultVariant?: string
+  defaultSize?: KodeeConfig['size']
+  defaultPosition?: KodeeConfig['position']
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  defaultVariant: 'greeting',
+  defaultSize: 'small',
+  defaultPosition: 'corner',
 })
 
-// Check if kodee should be shown on this slide
-const showKodee = computed(() => {
-  return kodeeConfig.value !== null && kodeeConfig.value !== false
+const { $frontmatter, $slidev } = useSlideContext()
+
+const defaults = computed<KodeeConfig>(() => ({
+  variant: props.defaultVariant,
+  size: props.defaultSize,
+  position: props.defaultPosition,
+}))
+
+const kodeeConfig = computed<KodeeConfig | null>(() => {
+  // A slide-level value wins. Otherwise use the deck-wide theme setting.
+  const configured = $frontmatter?.kodee ?? $slidev.configs.themeConfig?.kodee
+
+  if (configured === undefined || configured === null || configured === false)
+    return null
+
+  if (configured === true)
+    return defaults.value
+
+  if (typeof configured === 'string') {
+    return {
+      ...defaults.value,
+      variant: configured,
+    }
+  }
+
+  if (typeof configured === 'object') {
+    return {
+      ...defaults.value,
+      ...configured,
+    }
+  }
+
+  return null
 })
 </script>
 
 <template>
   <Kodee
-    v-if="showKodee"
+    v-if="kodeeConfig"
     :variant="kodeeConfig.variant"
     :size="kodeeConfig.size"
     :position="kodeeConfig.position"

@@ -43,7 +43,25 @@ transition: view-transition
 
 ### Using Kodee Mascot
 
-Add Kodee to any slide by including the `kodee` configuration in the slide's frontmatter:
+Enable Kodee once for the whole deck with `themeConfig`:
+
+```yaml
+---
+theme: kotlin
+themeConfig:
+  kodee: greeting
+---
+```
+
+Kodee then uses layout-aware defaults: `small` in the bottom-right corner on regular slides, and `large`/`featured` on `cover` and `intro` slides. Override only the variant when a slide needs a different expression:
+
+```yaml
+---
+kodee: wink
+---
+```
+
+Use `kodee: false` to hide the mascot on one slide. The original object form remains available when you need complete control:
 
 ```yaml
 ---
@@ -52,8 +70,6 @@ kodee:
   size: large
   position: featured
 ---
-
-# Your Slide Content
 ```
 
 #### Kodee Configuration Options
@@ -72,13 +88,13 @@ kodee:
   - `tiny` - Tiny Kodee
 
 - **size**: Control Kodee's size
-  - `small` - 200x200px (default)
-  - `large` - 600x600px (500x500px for wave variant)
-  - `medium` - TODO: Not yet implemented
+  - `small` - 200x200px (regular-layout default)
+  - `medium` - 320x320px
+  - `large` - 600x600px (500x500px for wave variant; cover/intro default)
 
 - **position**: Control Kodee's placement
-  - `corner` - Bottom right corner (default)
-  - `featured` - Prominently displayed on slide
+  - `corner` - Bottom right corner (regular-layout default)
+  - `featured` - Prominently displayed (cover/intro default)
   - `custom` - Use with `x` and `y` coordinates
 
 #### Custom Positioning
@@ -95,6 +111,26 @@ kodee:
   scale: 1.2
 ---
 ```
+
+#### IntelliJ formatting
+
+IntelliJ recognizes only the first YAML block in a Markdown file as frontmatter. To keep later Slidev frontmatter intact when using **Reformat Code**, enable formatter tags and stop formatting after the deck headmatter:
+
+```ini
+# .editorconfig
+[*.md]
+ij_formatter_tags_enabled = true
+```
+
+```md
+---
+theme: kotlin
+---
+
+<!-- @formatter:off -->
+```
+
+The theme's example deck includes this guard.
 
 ## Development
 
@@ -131,6 +167,7 @@ This will open the example presentation in your browser with hot-reload enabled.
 ├── components/          # Vue components
 │   ├── Kodee.vue       # Main Kodee mascot component with animations
 │   └── KodeeWrapper.vue # Wrapper component for Kodee integration
+├── slide-bottom.vue     # Per-slide Kodee layer shared by every layout
 ├── layouts/            # Slidev layout templates
 │   ├── cover.vue       # Cover slide layout
 │   ├── default.vue     # Default slide layout

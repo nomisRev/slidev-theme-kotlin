@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed} from 'vue'
+import { computed } from 'vue'
 
 interface Props {
   variant?: string
@@ -40,9 +40,11 @@ const sizeConfig = computed(() => {
       return variantName.value === 'kodee-wave'
         ? {width: '500px', height: '500px'}
         : {width: '600px', height: '600px'}
+    case 'medium':
+      return { width: '320px', height: '320px' }
     case 'small':
     default:
-      return {width: '200px', height: '200px'}
+      return { width: '200px', height: '200px' }
   }
 })
 
@@ -60,10 +62,40 @@ const positionStyles = computed(() => {
   if (props.position === 'corner') {
     if (variant === 'kodee-greeting') {
       styles.bottom = '-42px'
+      styles.right = '-15px'
     } else if (variant === 'kodee-wink') {
       styles.bottom = '-35px'
+      styles.right = '-20px'
     } else if (variant === 'kodee-wave') {
       styles.bottom = '-15px'
+      styles.right = '-15px'
+    } else if (variant === 'kodee-heart') {
+      // This artwork extends 10px farther below its viewBox center than the
+      // greeting variant that establishes the default corner baseline.
+      styles.bottom = '-32px'
+      styles.right = '-30px'
+    } else if (variant === 'kodee-jumping') {
+      styles.bottom = '-34px'
+      styles.right = '-15px'
+    } else if (variant === 'kodee-sitting') {
+      styles.bottom = '-35px'
+      styles.right = '-5px'
+    } else if (variant === 'kodee-drinking') {
+      styles.bottom = '-36px'
+      styles.right = '-31px'
+    } else if (variant === 'kodee-in-love') {
+      styles.bottom = '-31px'
+      styles.right = '-15px'
+    } else if (variant === 'kodee-welcome') {
+      styles.bottom = '-37px'
+      styles.right = '-15px'
+    } else if (variant === 'kodee-winter') {
+      styles.bottom = '-27px'
+      styles.right = '-15px'
+    } else if (variant === 'kodee-tiny') {
+      styles.height = '100px'
+      styles.width = '100px'
+      styles.bottom = '-8px'
     } else {
       styles.bottom = '-42px'
     }
