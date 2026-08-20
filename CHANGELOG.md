@@ -19,10 +19,13 @@
 - Allow decks to enable Kodee once with `themeConfig.kodee`. A shared per-slide layer supports every layout: regular slides use a small bottom-right mascot, while cover and intro layouts use a large featured mascot.
 - Support concise per-slide overrides such as `kodee: wink` and `kodee: false`, while retaining the full object configuration.
 - Implement the documented `medium` Kodee size.
+- Bundle `DrawnAnnotation`, a click-aware, Rough.js-powered annotation component for marking elements or exact code text with circles, underlines, boxes, and strike-throughs.
+- Support leader lines, target marks, automatic non-overlapping labels, sequential nested reveals, temporary click ranges, and Magic Move-aware tracking.
+- Add complete component documentation and interactive examples to the theme showcase.
 
-### Fixed
+### Packaging
 
-- Add IntelliJ formatter settings and a deck-level formatter guard so later Slidev frontmatter blocks remain valid YAML.
+- Add `roughjs` as a runtime dependency required by `DrawnAnnotation`.
 
 ## 0.0.9
 
