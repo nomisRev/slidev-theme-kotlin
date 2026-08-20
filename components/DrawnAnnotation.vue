@@ -1312,10 +1312,13 @@ function placeLabel(
 }
 
 /**
- * Everything the label has to stay clear of: the leaf elements of the slide,
- * which is what actually carries text and images, plus anything the slide opted
- * in through `avoid-selector`. `.card` and `.kodee-character` are the Kotlin
- * theme's callouts and mascot.
+ * Everything the label has to stay clear of: every rendered text fragment and
+ * image on the slide, plus whole boxes for content whose padding also matters
+ * and anything the slide opted in through `avoid-selector`. Text nodes must be
+ * measured directly: prose such as `before <b>marked</b> after` belongs to a
+ * non-leaf element, so collecting only leaf elements loses both surrounding
+ * fragments and lets a label land on top of them.
+ * `.card` and `.kodee-character` are the Kotlin theme's callouts and mascot.
  */
 const BLOCK_OBSTACLES = 'pre, .slidev-code, .slidev-code-wrapper, .card, table, blockquote, .kodee-character'
 
@@ -1323,18 +1326,27 @@ function collectObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): B
   const slide = slideRoot() ?? root
   const boxes: Box[] = []
   for (const element of obstacleCandidates(slide)) {
-    // Empty leaves are spacers and other invisible layout helpers, which the
-    // label is free to cover.
-    const leaf = element.childElementCount === 0 && !!element.textContent?.trim()
     // Blocks are added whole, so a label never lands in the padding of a code
-    // block or a card, which their leaf elements alone would leave free.
-    const block = element.matches(BLOCK_OBSTACLES)
-    if (!leaf && !block && !isMedia(element))
-      continue
-    const rect = element.getBoundingClientRect()
-    if (rect.width < 6 || rect.height < 6)
-      continue
-    boxes.push(toLocal(rect))
+    // block or a card, which their text fragments alone would leave free.
+    if (element.matches(BLOCK_OBSTACLES) || isMedia(element)) {
+      const rect = element.getBoundingClientRect()
+      if (rect.width >= 6 && rect.height >= 6)
+        boxes.push(toLocal(rect))
+    }
+
+    // Read direct text nodes from every element rather than only using leaf
+    // element boxes. A list item commonly contains both plain text and a <b>
+    // target; its plain text otherwise disappears from the obstacle map.
+    for (const node of Array.from(element.childNodes)) {
+      if (node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim())
+        continue
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      for (const rect of Array.from(range.getClientRects())) {
+        if (rect.width >= 4 && rect.height >= 4)
+          boxes.push(toLocal(rect))
+      }
+    }
   }
   if (props.avoidSelector) {
     for (const element of Array.from(slide.querySelectorAll<HTMLElement>(props.avoidSelector)))
@@ -1467,7 +1479,7 @@ onBeforeUnmount(() => {
 watch($clicks, () => {
   unsettle()
   track()
-})
+}, { flush: 'sync' })
 
 // Any prop can change what is drawn or where the label may go, so re-measure
 // on all of them instead of maintaining a list that can silently go stale.
@@ -1558,6 +1570,14 @@ watch(props, scheduleUpdate)
       {{ props.label }}
     </div>
     <slot />
+    <!-- Keep the live region mounted so screen readers announce the label when
+         its click is reached. The positioned copy is presentation-only. -->
+    <span
+      class="annotation-label-status annotation-ignore"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ labelActive && geometry.ready ? props.label : '' }}</span>
   </div>
 </template>
 
@@ -1572,6 +1592,14 @@ watch(props, scheduleUpdate)
    Slidev hides them when no annotation is in the way. */
 .drawn-annotation.slidev-vclick-hidden { visibility: hidden; }
 .click-marker { position: absolute; width: 0; height: 0; overflow: hidden; }
+.annotation-label-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
 .annotation-overlay {
   position: absolute;

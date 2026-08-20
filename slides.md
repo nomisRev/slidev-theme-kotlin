@@ -310,8 +310,8 @@ kodee: false
 
 # Sequential marks share one click
 
-<DrawnAnnotation type="underline" selector="[data-underlined]" :at="1">
 <DrawnAnnotation type="circle" selector="[data-circled]" :at="1">
+<DrawnAnnotation type="underline" selector="[data-underlined]" :at="1">
 
 The <b data-circled>circle</b> is drawn first; the <b data-underlined>underline</b> follows on the same click.
 
