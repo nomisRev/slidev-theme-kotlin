@@ -85,7 +85,7 @@ const props = withDefaults(defineProps<{
   connect?: boolean
   /** Arrow head at the end of the leader line. */
   arrow?: boolean
-  /** Curvature of the leader line, as a fraction of its length. */
+  /** Sideways bow of the leader line, as a fraction of its length (capped at 40 slide pixels). */
   curve?: number
   /**
    * Passed straight to rough.js, which draws every stroke, so everything it
@@ -302,9 +302,9 @@ provide(realClicksKey, $clicksContext)
 const startsOnInitialSlide = computed(() => Number(atClick.value) === 0)
 const manualClicks = computed(() => props.insert || !!outerClicksContext || startsOnInitialSlide.value)
 const painted = computed(() => geometryPainted.value || showImmediately.value)
-// True once the annotated element has held still for a few frames. Drawing is
-// held back until then, so a mark never appears on top of a Magic Move step or
-// a slide transition that is still travelling.
+// True once the animations triggered by the current click have finished.
+// Drawing is held back until then, so a mark never appears on top of a Magic
+// Move step or a slide transition that is still travelling.
 const settled = ref(!props.wait)
 // An annotation with `until` is only shown while the thing it points at is on
 // screen: past that click every stage hides again, in one step.
@@ -683,31 +683,55 @@ let mounted = false
 // The images whose load re-measures geometry, kept so unmount removes exactly
 // the listeners that were added.
 const watchedImages: HTMLImageElement[] = []
-// How long the geometry has to hold still before it counts as settled, and how
-// long we are willing to wait for that. The cap matters for anything that never
-// stops moving, so an annotation is never lost to it.
-const SETTLE_FRAMES = 3
-const SETTLE_TIMEOUT = 3000
-let settleDeadline = 0
-let stableFrames = 0
-let lastSignature = ''
+// Each wait gets an identity so a completion from the previous click cannot
+// release the next one. The Web Animations API covers CSS transitions, CSS
+// animations and Magic Move's generated animations with the same `finished`
+// promise, including their real delay and duration.
+let settleRun = 0
 
-/**
- * Whether something in the slot is still animating. Geometry alone does not
- * catch everything: a Magic Move step fades new tokens in where they already
- * belong, so the boxes sit still while the code is visibly still arriving.
- */
-function inMotion() {
+function relevantAnimations() {
   const root = container.value
   if (!root?.getAnimations)
-    return false
-  return root.getAnimations({ subtree: true }).some((animation) => {
-    if (animation.playState !== 'running')
+    return []
+  return root.getAnimations({ subtree: true }).filter((animation) => {
+    if (animation.playState !== 'running' && !animation.pending)
       return false
-    const target = (animation.effect as KeyframeEffect | null)?.target ?? null
-    // The annotation's own strokes and label are not what it waits for.
-    return !target?.closest('.annotation-ignore')
+    const target = (animation.effect as KeyframeEffect | null)?.target
+    // Pseudo-element and infinite animations cannot describe geometry we can
+    // measure to begin with. Most importantly, never wait for our own strokes:
+    // they only start after `settled` opens the annotation.
+    return target instanceof Element
+      && !target.closest('.annotation-ignore')
+      && Number.isFinite(animation.effect?.getComputedTiming().endTime)
   })
+}
+
+function nextFrame() {
+  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+}
+
+/**
+ * Release the entrance when the animations that actually started for this
+ * click finish. Re-check after each batch because Magic Move can create the
+ * next transition while completing the previous one. A final frame lets the
+ * browser commit the finished layout before it is measured for drawing.
+ */
+async function settleAfterAnimations(run: number) {
+  await nextTick()
+  await nextFrame()
+  while (mounted && run === settleRun) {
+    const animations = relevantAnimations()
+    if (!animations.length) {
+      await nextFrame()
+      if (mounted && run === settleRun && !relevantAnimations().length) {
+        updateGeometry()
+        settled.value = true
+      }
+      return
+    }
+    await Promise.allSettled(animations.map(animation => animation.finished))
+    await nextFrame()
+  }
 }
 
 /**
@@ -715,14 +739,14 @@ function inMotion() {
  * Called on every click, because that is what starts a Magic Move step.
  */
 function unsettle() {
+  const run = ++settleRun
   if (!props.wait || !props.track) {
     settled.value = true
     return
   }
   settled.value = false
-  stableFrames = 0
-  settleDeadline = performance.now() + SETTLE_TIMEOUT
   track(0)
+  void settleAfterAnimations(run)
 }
 
 function scheduleUpdate() {
@@ -735,10 +759,14 @@ function scheduleUpdate() {
 }
 
 /**
- * Keeps re-measuring for a short while. Magic Move and click transitions move
- * the annotated tokens over several hundred milliseconds, and there is no
- * single event that reliably marks the end of that movement.
+ * Keeps re-measuring while an animation moves the annotated content. The
+ * animation's `finished` promise controls the entrance; this loop only keeps
+ * the geometry attached to the moving element until then.
  */
+// A plain click has no moving geometry. Keep a short tracking window for Vue to
+// apply that click, while mutations from Magic Move retain the longer window.
+const CLICK_TRACK_DURATION = 120
+
 function track(duration = 700) {
   if (!props.track)
     return
@@ -747,8 +775,6 @@ function track(duration = 700) {
     return
   const step = () => {
     updateGeometry()
-    if (!settled.value && performance.now() > settleDeadline)
-      settled.value = true
     if (mounted && (performance.now() < trackUntil || !settled.value)) {
       trackFrame = requestAnimationFrame(step)
     }
@@ -852,24 +878,6 @@ function updateGeometry() {
   geometry.mark = shapeBoxes.flatMap(box => markPaths(box, sourceMarkType.value))
 
   paintDestination(root, toLocal, marked, width, height)
-
-  // Two measurements that come out identical mean the element has come to rest.
-  const signature = [
-    geometry.mark.join(''),
-    geometry.leader.join(''),
-    geometry.arrow.join(''),
-    geometry.targetMark.join(''),
-    Math.round(geometry.labelLeft),
-    Math.round(geometry.labelTop),
-  ].join('|')
-  if (signature === lastSignature && !inMotion()) {
-    if (++stableFrames >= SETTLE_FRAMES)
-      settled.value = true
-  }
-  else {
-    lastSignature = signature
-    stableFrames = 0
-  }
 
   const firstMeasurement = !geometry.ready
   geometry.ready = true
@@ -1001,31 +1009,61 @@ function paintDestination(
 
 interface Point { x: number, y: number }
 
-/** The leader's bezier between two points, bowed to one side or the other. */
-function leaderCurve(start: Point, end: Point, side: 1 | -1) {
+function unitVector(x: number, y: number): Point | undefined {
+  const length = Math.hypot(x, y)
+  return length > 0.001 ? { x: x / length, y: y / length } : undefined
+}
+
+// The bow of a leader is capped in slide pixels: proportional to length alone,
+// a long leader turns into a swooping gesture instead of a connection.
+const LEADER_MAX_BOW = 40
+
+/**
+ * The leader's bezier between two points. `out` is the direction the line
+ * leaves the mark and `into` the direction it arrives at its destination; the
+ * curve turns smoothly from one to the other, and `side` adds a gentle bow.
+ * The arrival tangent stays aimed at the destination — that is what makes the
+ * line read as pointing at the label rather than curling flat and sweeping
+ * past it.
+ */
+function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?: Point) {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const distance = Math.hypot(dx, dy)
-  const bend = distance * props.curve * side
-  const perpX = -dy / (distance || 1) * bend
-  const perpY = dx / (distance || 1) * bend
+  const along = unitVector(dx, dy) ?? { x: 1, y: 0 }
+  const bend = Math.min(distance * props.curve, LEADER_MAX_BOW) * side
+  const perpX = -along.y * bend
+  const perpY = along.x * bend
+  const reach = distance * 0.38
+  const outDir = out ?? along
+  const inDir = into ?? along
   return {
     start,
     end,
     distance,
-    c1x: start.x + dx * 0.34 + perpX,
-    c1y: start.y + dy * 0.34 + perpY,
-    c2x: start.x + dx * 0.72 + perpX,
-    c2y: start.y + dy * 0.72 + perpY,
+    c1x: start.x + outDir.x * reach + perpX,
+    c1y: start.y + outDir.y * reach + perpY,
+    // Most of the bow sits near the exit; the arrival keeps pointing where it
+    // is going, so the line lands on the label instead of flattening out.
+    c2x: end.x - inDir.x * reach + perpX * 0.35,
+    c2y: end.y - inDir.y * reach + perpY * 0.35,
   }
 }
 
 type Curve = ReturnType<typeof leaderCurve>
 
-/** Roughly how much of the curve runs through the given boxes, in slide pixels. */
-function curveCrossing(curve: Curve, obstacles: Box[]) {
+/**
+ * How much of the curve runs through the given boxes, and how much ink it
+ * spends overall, both in slide pixels and both sampled from the same points.
+ * The arc length is what prices a detour: a route that dodges text is only
+ * worth taking when it saves more crossing than the extra line it draws.
+ */
+function measureCurve(curve: Curve, obstacles: Box[]) {
   const samples = 24
   let inside = 0
+  let length = 0
+  let px = 0
+  let py = 0
   for (let i = 0; i <= samples; i++) {
     const t = i / samples
     const u = 1 - t
@@ -1033,8 +1071,12 @@ function curveCrossing(curve: Curve, obstacles: Box[]) {
     const y = u ** 3 * curve.start.y + 3 * u ** 2 * t * curve.c1y + 3 * u * t ** 2 * curve.c2y + t ** 3 * curve.end.y
     if (obstacles.some(box => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom))
       inside++
+    if (i)
+      length += Math.hypot(x - px, y - py)
+    px = x
+    py = y
   }
-  return inside / (samples + 1) * curve.distance
+  return { crossing: inside / (samples + 1) * curve.distance, length }
 }
 
 /**
@@ -1043,9 +1085,11 @@ function curveCrossing(curve: Curve, obstacles: Box[]) {
  * sentence the mark sits in, which reads as a strike-through of text the
  * annotation has nothing to do with. So candidate exits along the mark's
  * border are tried, bowing to either side, against the rendered text of the
- * slide. The straight exit is only given up when another exit saves a
- * substantial amount of crossing: brushing past a neighbouring line is part of
- * the hand-drawn look, and a leader that trades it for a detour reads as
+ * slide — with the extra ink of a detour priced in, so a route that dodges
+ * text is only chosen when it saves more crossing than the line it adds. The
+ * straight exit is also only given up when another exit saves a substantial
+ * amount of crossing: brushing past a neighbouring line is part of the
+ * hand-drawn look, and a leader that trades it for a wide swing reads as
  * starting from the wrong place.
  */
 function routeLeader(root: HTMLElement, toLocal: (rect: DOMRect) => Box, markBox: Box, destination: Box, endPoint?: Point): Curve | undefined {
@@ -1072,19 +1116,49 @@ function routeLeader(root: HTMLElement, toLocal: (rect: DOMRect) => Box, markBox
     Math.hypot(a.x - defaultStart.x, a.y - defaultStart.y)
     - Math.hypot(b.x - defaultStart.x, b.y - defaultStart.y))
 
+  // Where a route from `start` ends, and the direction it arrives in. A target
+  // is met at the given point; a label is met at its nearest edge — a drawn
+  // leader stops at the edge of the words it points at, it does not travel on
+  // towards their centre.
+  const endFor = (start: Point) => {
+    if (endPoint) {
+      const end = backOff(endPoint, start, targetMarkType.value !== 'none' ? destination.width / 2 : 6)
+      return { end, into: unitVector(endPoint.x - end.x, endPoint.y - end.y) }
+    }
+    const nearest = {
+      x: clamp(start.x, destination.left, destination.right),
+      y: clamp(start.y, destination.top, destination.bottom),
+    }
+    const into = unitVector(nearest.x - start.x, nearest.y - start.y)
+    const end = into ? { x: nearest.x - into.x * 6, y: nearest.y - into.y * 6 } : nearest
+    return { end, into }
+  }
+
   let straight: { curve: Curve, crossing: number, cost: number } | undefined
   let best: { curve: Curve, crossing: number, cost: number } | undefined
+  // What the shortest reasonable route spends; anything beyond it is detour.
+  const defaultEnd = endFor(defaultStart).end
+  const directLength = Math.hypot(defaultEnd.x - defaultStart.x, defaultEnd.y - defaultStart.y)
   for (const [index, start] of [defaultStart, ...exits].entries()) {
-    const end = endPoint
-      ? backOff(endPoint, start, targetMarkType.value !== 'none' ? destination.width / 2 : 6)
-      : edgePoint(destination, start.x, start.y, 6)
+    const { end, into: arrival } = endFor(start)
+    const chord = unitVector(end.x - start.x, end.y - start.y)
+    if (!chord)
+      continue
+    // Leave the mark outward through the chosen exit, leaning toward the
+    // destination so the curve can never double back around the mark, and
+    // arrive pointing into the destination.
+    const outward = unitVector(start.x - markBox.cx, start.y - markBox.cy) ?? chord
+    const out = unitVector(outward.x + chord.x, outward.y + chord.y) ?? chord
+    const into = arrival ?? chord
     for (const side of [1, -1] as const) {
-      const curve = leaderCurve(start, end, side)
+      const curve = leaderCurve(start, end, side, out, into)
       if (curve.distance < 4)
         continue
-      // Crossing text costs its length; the small terms only break ties.
-      const crossing = curveCrossing(curve, obstacles)
-      const cost = crossing + index * 2 + (side < 0 ? 1 : 0)
+      // Crossing text costs its length, a detour costs part of the extra ink
+      // it spends; the small terms only break ties.
+      const { crossing, length } = measureCurve(curve, obstacles)
+      const detour = Math.max(0, length - directLength)
+      const cost = crossing + detour * 0.4 + index * 2 + (side < 0 ? 1 : 0)
       if (index === 0 && (!straight || cost < straight.cost))
         straight = { curve, crossing, cost }
       if (!best || cost < best.cost)
@@ -1147,6 +1221,27 @@ function collectTextObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box
           boxes.push(toLocal(rect))
       }
     }
+  }
+  // The marks and labels of the other annotations on the slide. A leader that
+  // dives through a circled word or a written label reads as marking it. Their
+  // paths are in the DOM from the first measurement — merely hidden until
+  // their click — so routing around them is stable rather than a jump on the
+  // click that reveals them.
+  for (const svg of Array.from(slide.querySelectorAll<SVGSVGElement>('svg.annotation-overlay'))) {
+    if (svg === overlay.value)
+      continue
+    for (const path of Array.from(svg.querySelectorAll<SVGPathElement>('.annotation-mark, .annotation-target'))) {
+      const rect = path.getBoundingClientRect()
+      if (rect.width >= 4 || rect.height >= 4)
+        boxes.push(toLocal(rect))
+    }
+  }
+  for (const label of Array.from(slide.querySelectorAll<HTMLElement>('.annotation-label.is-placed'))) {
+    if (label === labelEl.value)
+      continue
+    const rect = label.getBoundingClientRect()
+    if (rect.width >= 6 && rect.height >= 6)
+      boxes.push(toLocal(rect))
   }
   return boxes
 }
@@ -1462,6 +1557,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   mounted = false
+  settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
   cancelAnimationFrame(frame)
@@ -1478,7 +1574,7 @@ onBeforeUnmount(() => {
 // the annotated element for a while after it changes.
 watch($clicks, () => {
   unsettle()
-  track()
+  track(CLICK_TRACK_DURATION)
 }, { flush: 'sync' })
 
 // Any prop can change what is drawn or where the label may go, so re-measure
