@@ -156,18 +156,18 @@ function findLineTargets(host: HTMLElement, line: number): HTMLElement[] {
     const lineEl = code.querySelectorAll<HTMLElement>('.line')[line - 1]
     if (lineEl) {
       const spans = Array.from(lineEl.children).filter((c): c is HTMLElement => c instanceof HTMLElement)
-      // Prefer the token spans over the block-level line span, so indentation
-      // is skipped like on the Magic Move path. A blank line has no anchor.
+      // Prefer token spans over the block-level line span. The range builder
+      // below trims whitespace inside a token too, since Shiki commonly puts
+      // a line's indentation in the same span as its first keyword.
       if (spans.length)
         tokens.push(...spans)
       else if (lineEl.textContent?.trim())
         tokens.push(lineEl)
     }
   }
-  // The renderer's anchor span, leading indentation, and trailing whitespace
-  // are all whitespace-only tokens; trim them so the underline and the
-  // message hug the actual code. Whitespace between tokens is kept so the
-  // underline remains continuous across the offending expression.
+  // Drop wholly whitespace-only edge tokens. Shiki can also combine an
+  // indent and the first keyword in one token; rangeForElements trims that
+  // remaining whitespace inside the edge text nodes.
   while (tokens.length && !tokens[0].textContent?.trim())
     tokens.shift()
   while (tokens.length && !tokens[tokens.length - 1].textContent?.trim())
@@ -288,10 +288,50 @@ function findTextTarget(code: HTMLElement, needle: string, line?: number) {
 function rangeForElements(elements: HTMLElement[]): Range | null {
   if (!elements.length)
     return null
+
+  // A token is not necessarily just code: Shiki often emits the leading
+  // indentation together with the first keyword (for example, `    return`).
+  // Select text-node offsets rather than whole token elements so a line
+  // diagnostic begins at the first actual character, not in its indent.
+  const nodes: Text[] = []
+  for (const element of elements) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let node: Node | null
+    // eslint-disable-next-line no-cond-assign
+    while ((node = walker.nextNode()))
+      nodes.push(node as Text)
+  }
+
+  const value = nodes.map(node => node.data).join('')
+  const start = value.length - value.trimStart().length
+  const end = value.trimEnd().length
+  if (start === end)
+    return null
+
+  let offset = 0
+  let startNode: Text | undefined
+  let endNode: Text | undefined
+  let startOffset = 0
+  let endOffset = 0
+  for (const node of nodes) {
+    const next = offset + node.data.length
+    if (!startNode && start >= offset && start < next) {
+      startNode = node
+      startOffset = start - offset
+    }
+    if (!endNode && end > offset && end <= next) {
+      endNode = node
+      endOffset = end - offset
+      break
+    }
+    offset = next
+  }
+  if (!startNode || !endNode)
+    return null
+
   const range = document.createRange()
-  range.setStart(elements[0], 0)
-  const last = elements[elements.length - 1]
-  range.setEnd(last, last.childNodes.length)
+  range.setStart(startNode, startOffset)
+  range.setEnd(endNode, endOffset)
   return range
 }
 
