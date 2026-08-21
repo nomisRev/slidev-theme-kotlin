@@ -13,6 +13,7 @@ This theme provides a professional presentation template tailored for Kotlin dev
 - **Kotlin Branding**: Official Kotlin logos for both light and dark modes
 - **JetBrains Fonts**: Uses Inter for sans-serif and JetBrains Mono for code
 - **Drawn annotations**: Click-aware, hand-drawn marks, labels, and connectors for elements and code
+- **Inline compiler diagnostics**: IntelliJ-style squiggles and messages for static and Magic Move code blocks
 
 ## Requirements
 
@@ -129,6 +130,22 @@ fun main() = println("Hello, Kotlin!")
 
 The full prop reference, timing behavior, and troubleshooting guide are in [`components/README.md`](components/README.md). The bundled [`slides.md`](slides.md) includes working examples of code annotations, connectors, labels, sequential reveals, and Magic Move integration.
 
+### Using InlineCompilerError
+
+`<InlineCompilerError>` is auto-registered for every deck using the theme. Wrap one code block to underline a source line or exact text with an IntelliJ-style diagnostic; it follows both static Shiki blocks and Magic Move steps.
+
+````md
+<InlineCompilerError text="userName" message="Unresolved reference: userName" :on="1">
+
+```kotlin
+println(userName)
+```
+
+</InlineCompilerError>
+````
+
+See [`components/README.md`](components/README.md#inlinecompilererror) for the target and click-timing props.
+
 #### IntelliJ formatting
 
 IntelliJ recognizes only the first YAML block in a Markdown file as frontmatter. To keep later Slidev frontmatter intact when using **Reformat Code**, enable formatter tags and stop formatting after the deck headmatter:
@@ -181,9 +198,11 @@ This will open the example presentation in your browser with hot-reload enabled.
 
 ```
 .
-├── components/          # Vue components
-│   ├── Kodee.vue       # Main Kodee mascot component with animations
-│   └── KodeeWrapper.vue # Wrapper component for Kodee integration
+├── components/                   # Vue components
+│   ├── DrawnAnnotation.vue        # Hand-drawn marks, labels, and connectors
+│   ├── InlineCompilerError.vue    # Inline code diagnostics
+│   ├── Kodee.vue                  # Main Kodee mascot component with animations
+│   └── KodeeWrapper.vue           # Wrapper component for Kodee integration
 ├── slide-bottom.vue     # Per-slide Kodee layer shared by every layout
 ├── layouts/            # Slidev layout templates
 │   ├── cover.vue       # Cover slide layout

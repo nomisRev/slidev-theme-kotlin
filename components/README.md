@@ -173,12 +173,11 @@ are not available there.
 
 `wait` (on by default) holds the drawing back until the annotated element has
 stopped moving, so a mark is never drawn across a Magic Move step or a slide
-transition that is still travelling. It watches both the measured geometry and
-the animations running in the slot, because Magic Move fades new tokens in
-where they already belong — they never move, but the code is visibly still
-arriving. It only delays the entrance: an annotation that is already on screen
-stays on screen through the next step. Set `:wait="false"` to draw as soon as
-the click arrives.
+transition that is still travelling. It waits on the actual finite animations
+running in the slot rather than guessing their duration; this also catches
+Magic Move fading new tokens in where they already belong. It only delays the
+entrance: an annotation that is already on screen stays on screen through the
+next step. Set `:wait="false"` to draw as soon as the click arrives.
 
 ## How it looks
 
@@ -261,3 +260,53 @@ Magic Move step that legitimately does not contain the text never causes one.
   ordering is not available.
 - **`on` is `at` and `until` in one** — drop the separate `at` / `until` when
   `on` is given; they are ignored.
+
+# `InlineCompilerError`
+
+`<InlineCompilerError>` places an IntelliJ-style squiggle under a compiler
+error and anchors its message beside the relevant code. Wrap exactly one fenced
+code block; the component supports ordinary Shiki fences and `magic-move`
+blocks, and remains hidden when its target is not part of the current step.
+
+````md
+<InlineCompilerError text="userName" message="Unresolved reference: userName" :on="1">
+
+```kotlin
+println(userName)
+```
+
+</InlineCompilerError>
+````
+
+## Target
+
+Give `text` to mark an exact rendered fragment, even when Shiki split it across
+syntax-token spans. `occurrence` selects its one-based occurrence (default
+`1`). Add `line` to limit the text search to that one-based source line.
+
+Alternatively, give only `line` to underline the line's non-whitespace code.
+A target on an empty line cannot be displayed. In development, a missing,
+ambiguous, or invalid target produces a console warning after Magic Move has had
+time to settle.
+
+| prop | required | meaning |
+| --- | --- | --- |
+| `message` | yes | diagnostic text shown beside the code and announced to screen readers |
+| `text` | one of `text` or `line` | exact rendered code text to underline |
+| `line` | one of `text` or `line` | one-based line number; also narrows a `text` search |
+| `occurrence` | no | one-based match of `text` to underline; defaults to `1` |
+
+## Click timing
+
+The timing props match Slidev's click ranges. No timing prop (or `at="0"`)
+shows the diagnostic from the initial slide state. `at` reveals it, and `until`
+hides it at its first exclusive click. Relative values such as `"+1"` are
+supported.
+
+Use `on` for a diagnostic that belongs to one click: `:on="2"` is equivalent
+to `:at="2" :until="3"`; `:on="0"` shows it only before the first click.
+`on` takes precedence over `at` and `until` when both forms are supplied.
+
+The diagnostic waits for a Magic Move transition to finish before it appears,
+then recalculates its position as code, fonts, or slide scale change. In print
+mode it is shown synchronously so exports capture it.
