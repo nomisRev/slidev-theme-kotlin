@@ -180,8 +180,11 @@ npm run build
 # Export presentation to PDF
 npm run export
 
-# Export presentation as PNG screenshots
+# Export every slide and click state as PNG screenshots
 npm run screenshot
+
+# Render this working tree against HEAD and open the generated visual review
+npm run visual:review
 ```
 
 ### Running the Slides
@@ -229,11 +232,41 @@ This will open the example presentation in your browser with hot-reload enabled.
 
 No environment variables are currently required for this theme.
 
-## Testing
+## Visual regression review
 
-<!-- TODO: Add test setup and instructions -->
+Slidev can export each settled click state with `--with-clicks`; this theme
+wraps that exporter in a visual-review command. It renders the current working
+tree and a Git revision with the same browser, compares every PNG with
+`pixelmatch`, and writes a three-column base/current/diff page. Screenshots are
+not committed: the chosen Git revision is the baseline, so accepting an
+intentional visual change is simply reviewing it and committing that change.
 
-No automated tests are currently configured for this theme.
+```bash
+# Compare the working tree with the last commit.
+npm run visual:review
+
+# Compare a branch with its integration base.
+npm run visual:review -- --base origin/main
+
+# Use in automation when any visual difference should fail the command.
+npm run visual:check -- --base origin/main
+```
+
+Open the `file://.../.visual/review/index.html` path printed by the command.
+The `.visual/` directory contains disposable base/current captures and diffs
+and is ignored by Git. `npm run screenshot` is the non-comparison escape hatch
+when raw PNGs are all that is needed.
+
+The visual exporter requires the Chromium binary supplied by
+`playwright-chromium`. If dependency installation is configured not to run
+package install scripts, download it once with:
+
+```bash
+npx playwright install chromium
+```
+
+`npm run lint` validates the deck's frontmatter and Kodee configuration; `npm
+run build` runs that lint before building the Slidev deck.
 
 ## Configuration
 

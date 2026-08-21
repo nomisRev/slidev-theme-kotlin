@@ -332,3 +332,189 @@ kodee: false
 
 </DrawnAnnotation>
 </DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Compiler diagnostics: static code
+
+<InlineCompilerError :line="3" message="Type mismatch: inferred type is String but Int was expected">
+
+```kotlin
+fun retryAfter(attempt: Int): Int {
+    val delay: Int = "later"
+    return attempt + delay
+}
+```
+
+</InlineCompilerError>
+
+---
+kodee: false
+---
+
+# Compiler diagnostics: exact and repeated text
+
+<InlineCompilerError text="accountId" :occurrence="2" message="Unresolved reference: accountId" :on="1">
+
+```kotlin
+val accountId = request.accountId
+val audit = accountId.toString()
+println(accountId)
+```
+
+</InlineCompilerError>
+
+The second occurrence is the diagnostic target; the first two clicks leave the code untouched.
+
+---
+kodee: false
+---
+
+# Compiler diagnostics follow Magic Move
+
+<InlineCompilerError text="displayName" message="Unresolved reference: displayName" :on="2">
+
+````md magic-move
+```kotlin
+fun welcome(user: User) = user.name
+```
+
+```kotlin
+fun welcome(user: User) = displayName
+```
+
+```kotlin
+fun welcome(user: User) = user.displayName
+```
+````
+
+</InlineCompilerError>
+
+---
+kodee: false
+---
+
+# Explicit label sides are directional
+
+<DrawnAnnotation type="circle" selector="[data-up]" placement="up" label="up stays above" :on="1">
+<DrawnAnnotation type="circle" selector="[data-right]" placement="right" label="right stays right" :on="2">
+<DrawnAnnotation type="circle" selector="[data-down]" placement="down" label="down stays below" :on="3">
+<DrawnAnnotation type="circle" selector="[data-left]" placement="left" label="left stays left" :on="4">
+
+<div style="margin: 230px 300px; display: grid; grid-template-columns: repeat(2, 180px); gap: 70px; text-align: center">
+  <b data-up>up</b><b data-right>right</b><b data-left>left</b><b data-down>down</b>
+</div>
+
+</DrawnAnnotation>
+</DrawnAnnotation>
+</DrawnAnnotation>
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Automatic labels share the free space
+
+<DrawnAnnotation selector="[data-first]" type="underline" placement="auto" label="first annotation" avoid-selector="[data-reserved]" :at="1" :until="5">
+<DrawnAnnotation selector="[data-second]" type="circle" placement="auto" label="second annotation remains clear" :at="2" :until="5">
+<DrawnAnnotation selector="[data-third]" type="box" placement="auto" label="third annotation has a longer label that may wrap" :at="3" :until="5">
+
+<div class="grid grid-cols-2 gap-10">
+<div>
+
+- A <b data-first>persistent first label</b> starts the discussion.
+- A <b data-second>second label</b> overlaps it in time.
+- The <b data-third>third label</b> has the least room.
+
+</div>
+<div data-reserved style="border: 3px dashed var(--slidev-theme-primary, #7954f6); padding: 1.5rem">
+
+### Reserved teaching space
+
+`avoid-selector` keeps labels out of this arbitrary element.
+
+</div>
+</div>
+
+</DrawnAnnotation>
+</DrawnAnnotation>
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Later clicks are label obstacles
+
+<DrawnAnnotation type="underline" selector="[data-source]" placement="auto" label="This label remains clear when the detail appears" :at="1" :until="4">
+
+<div class="grid grid-cols-2 gap-12">
+<div>
+
+## Immutable configuration
+
+The <b data-source>configuration value</b> is read once at startup.
+
+</div>
+<div>
+
+<div v-click="2" class="card">
+
+### Later detail
+
+A later click introduces this explanation. A persistent label must not cover it.
+
+</div>
+</div>
+</div>
+
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# A label belongs to its Magic Move step
+
+<DrawnAnnotation type="underline" text="val token" placement="right" label="a read-only local value" :at="2" :until="3">
+
+````md magic-move [Session.kt]
+```kotlin
+fun session() = connect()
+```
+
+```kotlin
+fun session(): String {
+    val token = connect()
+    return token
+}
+```
+
+```kotlin
+fun session(): String = connect()
+```
+````
+
+</DrawnAnnotation>
+
+---
+kodee: false
+---
+
+# Leader lines do not become lassos
+
+<DrawnAnnotation type="circle" text="remove" placement="down" label="remove only the matching entry" :on="1" arrow>
+
+```kotlin
+fun prune(values: MutableList<String>, remove: String) {
+    values.remove(remove)
+    println("removed $remove")
+}
+```
+
+</DrawnAnnotation>
+
+The requested down placement is deliberate: it must remain below the source or fail cleanly, never drift into the code panel.
