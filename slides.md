@@ -374,7 +374,7 @@ kodee: false
 
 # Compiler diagnostics follow Magic Move
 
-<InlineCompilerError text="displayName" message="Unresolved reference: displayName" :on="2">
+<InlineCompilerError text="displayName" message="Unresolved reference: displayName" :on="1">
 
 ````md magic-move
 ```kotlin
@@ -479,7 +479,7 @@ kodee: false
 
 # A label belongs to its Magic Move step
 
-<DrawnAnnotation text="val token" placement="right" label="a read-only local value" :on="1">
+<DrawnAnnotation text="val token" placement="down" label="a read-only local value" :on="1">
 
 ````md magic-move [Session.kt]
 ```kotlin

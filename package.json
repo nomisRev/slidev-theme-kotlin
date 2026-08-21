@@ -28,7 +28,8 @@
     "export": "slidev export slides.md",
     "screenshot": "slidev export slides.md --format png --with-clicks",
     "visual:review": "node scripts/visual-review.mjs",
-    "visual:check": "node scripts/visual-review.mjs --check"
+    "visual:check": "node scripts/visual-review.mjs --check",
+    "test": "vitest run"
   },
   "dependencies": {
     "@slidev/types": "^52.2.5",
@@ -39,7 +40,8 @@
     "@slidev/parser": "^52.2.5",
     "pixelmatch": "^7.2.0",
     "playwright-chromium": "^1.62.1",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "vitest": "^4.1.11"
   },
   "slidev": {
     "colorSchema": "both",

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Render every Slidev slide/click state at two revisions and make a local
- * visual-review bundle. Unlike a checked-in screenshot baseline, the baseline
- * is rendered from a Git ref, so it cannot get stale and no PNGs need to live
+ * Render every Slidev slide/click state at two revisions for the theme deck and
+ * its local consumer deck, then make a local visual-review bundle. Unlike a
+ * checked-in screenshot baseline, the baseline is rendered from a Git ref, so
+ * it cannot get stale and no PNGs need to live
  * in the repository. Review `.visual/review/index.html` and accept an intended
  * change by committing it; the next comparison uses that commit as its base.
  *
@@ -11,13 +12,17 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { basename, dirname, extname, join, relative, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pixelmatch from 'pixelmatch'
 import { PNG } from 'pngjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// Kotlin Fundamentals exercises the theme more extensively than the bundled
+// example deck. Keep it optional so the theme repository still works elsewhere.
+const consumerProjectRoot = resolve(homedir(), 'Developer/kotlin-fundamentals')
+const reviewConsumer = existsSync(join(consumerProjectRoot, 'slides.md'))
 const outputRoot = resolve(projectRoot, '.visual')
 const currentDir = join(outputRoot, 'current')
 const baselineDir = join(outputRoot, 'baseline')
@@ -73,6 +78,41 @@ function capture(cwd, destination) {
   ], { cwd })
 }
 
+function linkDependencies(source, destination) {
+  mkdirSync(destination, { recursive: true })
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    if (entry.name === 'slidev-theme-kotlin')
+      continue
+    symlinkSync(join(source, entry.name), join(destination, entry.name), entry.isDirectory() ? 'dir' : 'file')
+  }
+}
+
+function withConsumerProject(themeRoot, callback) {
+  const worktree = mkdtempSync(join(tmpdir(), 'slidev-visual-consumer-'))
+  try {
+    // Keep the consumer's source and assets intact, but give it a private
+    // node_modules directory so its theme package can point at the revision
+    // being reviewed without changing the consumer's working tree.
+    cpSync(consumerProjectRoot, worktree, {
+      recursive: true,
+      filter: (path) => {
+        const pathFromRoot = relative(consumerProjectRoot, path)
+        return ![
+          'node_modules',
+          '.git',
+          'dist',
+        ].some((excluded) => pathFromRoot === excluded || pathFromRoot.startsWith(`${excluded}${sep}`))
+      },
+    })
+    linkDependencies(join(consumerProjectRoot, 'node_modules'), join(worktree, 'node_modules'))
+    symlinkSync(themeRoot, join(worktree, 'node_modules/slidev-theme-kotlin'), 'dir')
+    return callback(worktree)
+  }
+  finally {
+    rmSync(worktree, { recursive: true, force: true })
+  }
+}
+
 function exportRevision(ref) {
   const worktree = mkdtempSync(join(tmpdir(), 'slidev-visual-'))
   try {
@@ -85,6 +125,12 @@ function exportRevision(ref) {
       throw new Error(`Could not unpack Git revision ${ref}.`)
     symlinkSync(join(projectRoot, 'node_modules'), join(worktree, 'node_modules'), 'dir')
     capture(worktree, baselineDir)
+
+    if (reviewConsumer) {
+      withConsumerProject(worktree, (consumerWorktree) => {
+        capture(consumerWorktree, join(baselineDir, 'kotlin-fundamentals'))
+      })
+    }
   }
   finally {
     rmSync(worktree, { recursive: true, force: true })
@@ -174,10 +220,17 @@ if (!existsSync(join(projectRoot, '.git')))
   throw new Error('Visual comparison needs a Git checkout so it can render a base revision.')
 
 empty(outputRoot)
+if (reviewConsumer)
+  console.log(`Including consumer deck: ${consumerProjectRoot}`)
+else
+  console.log(`Consumer deck not found at ${consumerProjectRoot}; reviewing the theme deck only.`)
 console.log(`\nCapturing base revision ${base}…`)
 exportRevision(base)
 console.log('\nCapturing the working tree…')
 capture(projectRoot, currentDir)
+if (reviewConsumer) {
+  capture(consumerProjectRoot, join(currentDir, 'kotlin-fundamentals'))
+}
 
 const names = [...new Set([...listPngs(baselineDir), ...listPngs(currentDir)])]
 const results = names.map(file => ({ file }))
