@@ -403,7 +403,7 @@ kodee: false
 <DrawnAnnotation type="circle" selector="[data-down]" placement="down" label="down stays below" :on="3">
 <DrawnAnnotation type="circle" selector="[data-left]" placement="left" label="left stays left" :on="4">
 
-<div style="margin: 230px 300px; display: grid; grid-template-columns: repeat(2, 180px); gap: 70px; text-align: center">
+<div style="margin: 230px 180px; display: grid; grid-template-columns: repeat(2, 180px); gap: 70px; text-align: center">
   <b data-up>up</b><b data-right>right</b><b data-left>left</b><b data-down>down</b>
 </div>
 
@@ -479,7 +479,7 @@ kodee: false
 
 # A label belongs to its Magic Move step
 
-<DrawnAnnotation type="underline" text="val token" placement="right" label="a read-only local value" :at="2" :until="3">
+<DrawnAnnotation text="val token" placement="right" label="a read-only local value" :on="1">
 
 ````md magic-move [Session.kt]
 ```kotlin
