@@ -1,3 +1,93 @@
+<script lang="ts">
+// Module scope, shared by every annotation instance. Several annotations on
+// one slide all measure the same content on the same animation frame while a
+// Magic Move step or a transition is travelling; scanning the slide once per
+// frame and letting each instance convert the shared viewport rects into its
+// own coordinates removes the most expensive duplicated work.
+
+// Elements considered while measuring obstacles, capped: the collectors run on
+// animation frames while the slide moves, and a slide with more elements than
+// this has no room for an automatic label anyway.
+const OBSTACLE_ELEMENT_CAP = 600
+const MEDIA_TAGS = ['IMG', 'VIDEO', 'CANVAS', 'SVG']
+
+/**
+ * Elements whose whole box matters to label placement, not just their rendered
+ * text: a label must not land in the padding of a code block or a card.
+ * `.card` and `.kodee-character` are the Kotlin theme's callouts and mascot.
+ */
+const BLOCK_OBSTACLES = 'pre, .slidev-code, .slidev-code-wrapper, .card, table, blockquote, .kodee-character'
+
+function isMedia(element: HTMLElement) {
+  return MEDIA_TAGS.includes(element.tagName.toUpperCase())
+}
+
+/**
+ * The slide elements obstacle collection looks at. Excludes annotation
+ * strokes and labels, content still hidden behind a later click, and the
+ * internals of inline SVGs — parts of an illustration do not count on their
+ * own; the whole graphic does.
+ */
+function obstacleCandidates(slide: HTMLElement): HTMLElement[] {
+  return Array.from(slide.querySelectorAll<HTMLElement>('*'))
+    .slice(0, OBSTACLE_ELEMENT_CAP)
+    .filter(element => !element.closest('.annotation-ignore, .slidev-vclick-hidden')
+      && !element.parentElement?.closest('svg'))
+}
+
+/** One slide scan, in viewport coordinates, valid for the current frame. */
+interface ObstacleScan {
+  /** Whole boxes of images, videos, canvases and inline SVG roots. */
+  media: DOMRect[]
+  /** Whole boxes of BLOCK_OBSTACLES elements, padding included. */
+  blocks: DOMRect[]
+  /** Tight boxes of the rendered text lines. */
+  texts: DOMRect[]
+}
+
+const scanCache = new Map<HTMLElement, ObstacleScan>()
+
+function scanObstacles(slide: HTMLElement): ObstacleScan {
+  const cached = scanCache.get(slide)
+  if (cached)
+    return cached
+
+  const scan: ObstacleScan = { media: [], blocks: [], texts: [] }
+  for (const element of obstacleCandidates(slide)) {
+    if (isMedia(element)) {
+      const rect = element.getBoundingClientRect()
+      if (rect.width >= 6 && rect.height >= 6)
+        scan.media.push(rect)
+      continue
+    }
+    if (element.matches(BLOCK_OBSTACLES)) {
+      const rect = element.getBoundingClientRect()
+      if (rect.width >= 6 && rect.height >= 6)
+        scan.blocks.push(rect)
+    }
+    // Read direct text nodes from every element rather than only using leaf
+    // element boxes. A list item commonly contains both plain text and a <b>
+    // target; its plain text otherwise disappears from the obstacle map.
+    for (const node of Array.from(element.childNodes)) {
+      if (node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim())
+        continue
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      for (const rect of Array.from(range.getClientRects())) {
+        if (rect.width >= 4 && rect.height >= 4)
+          scan.texts.push(rect)
+      }
+    }
+  }
+
+  scanCache.set(slide, scan)
+  // The scan stays valid until the next frame paints: annotations measuring in
+  // the same frame reuse it, and nothing they draw is part of it.
+  requestAnimationFrame(() => scanCache.delete(slide))
+  return scan
+}
+</script>
+
 <script setup lang="ts">
 import type { Options as RoughOptions } from 'roughjs/bin/core'
 import type { ClicksContext } from '@slidev/types'
@@ -478,6 +568,19 @@ const geometry = reactive({
   ready: false,
 })
 
+/**
+ * Replaces one of the path lists only when it actually changed. Geometry is
+ * re-measured on animation frames, and an unconditional assignment would be a
+ * new array every time — re-rendering and re-patching every <path> element
+ * even in a frame where nothing moved.
+ */
+function assignPaths(key: 'mark' | 'leader' | 'arrow' | 'targetMark', next: string[]) {
+  const previous = geometry[key]
+  if (previous.length === next.length && previous.every((d, index) => d === next[index]))
+    return
+  geometry[key] = next
+}
+
 // Identity of this annotation's own clicks in the slide's click count, used
 // when it resolves them itself instead of leaving that to the `v-click` marker.
 const ownClicks = Symbol('drawn-annotation-clicks') as unknown as HTMLElement
@@ -680,6 +783,9 @@ let paintFrame = 0
 let trackFrame = 0
 let trackUntil = 0
 let mounted = false
+// Fingerprint of the mark's last measured boxes. While the slide animates, a
+// frame in which the mark has not moved recomputes nothing.
+let lastMarkKey = ''
 // The images whose load re-measures geometry, kept so unmount removes exactly
 // the listeners that were added.
 const watchedImages: HTMLImageElement[] = []
@@ -724,8 +830,10 @@ async function settleAfterAnimations(run: number) {
     if (!animations.length) {
       await nextFrame()
       if (mounted && run === settleRun && !relevantAnimations().length) {
-        updateGeometry()
+        // Settle before measuring: the settled pass is the one full
+        // recomputation per click that the animation-frame passes lean on.
         settled.value = true
+        updateGeometry()
       }
       return
     }
@@ -740,6 +848,9 @@ async function settleAfterAnimations(run: number) {
  */
 function unsettle() {
   const run = ++settleRun
+  // A click can restyle the slide, so measured label sizes go stale here —
+  // once per click, which leaves them shared by every frame of the animation.
+  labelSizeCache.clear()
   if (!props.wait || !props.track) {
     settled.value = true
     return
@@ -769,6 +880,12 @@ const CLICK_TRACK_DURATION = 120
 
 function track(duration = 700) {
   if (!props.track)
+    return
+  // A still-hidden (or already-ended) annotation has nothing on screen that
+  // must glide with the animation. Its geometry is refreshed once per click by
+  // the settled measurement instead of on every frame — including the strokes
+  // other annotations route around while it waits for its click.
+  if (!withinRange.value || $clicks.value < Math.min(resolvedClick.value, resolvedLabelClick.value))
     return
   trackUntil = Math.max(trackUntil, performance.now() + duration)
   if (trackFrame)
@@ -873,9 +990,19 @@ function updateGeometry() {
   const multiline = props.multiline ?? (sourceMarkType.value === 'underline' || sourceMarkType.value === 'strike-through')
   const shapeBoxes = multiline ? boxes : [marked]
 
+  // While the slide is still animating, a mark that has not moved since the
+  // previous frame needs nothing recomputed: the paths, the leader and the
+  // label placement all derive from it. The settled pass at the end of every
+  // click always recomputes, because other content can have moved around a
+  // stationary mark.
+  const markKey = `${width}x${height}|${shapeBoxes.map(box => `${box.left.toFixed(2)},${box.top.toFixed(2)},${box.right.toFixed(2)},${box.bottom.toFixed(2)}`).join(';')}`
+  if (!settled.value && geometry.ready && markKey === lastMarkKey)
+    return
+  lastMarkKey = markKey
+
   geometry.width = width
   geometry.height = height
-  geometry.mark = shapeBoxes.flatMap(box => markPaths(box, sourceMarkType.value))
+  assignPaths('mark', shapeBoxes.flatMap(box => markPaths(box, sourceMarkType.value)))
 
   paintDestination(root, toLocal, marked, width, height)
 
@@ -938,10 +1065,24 @@ function paintDestination(
   width: number,
   height: number,
 ) {
-  geometry.leader = []
-  geometry.arrow = []
-  geometry.targetMark = []
+  // Computed into locals first: the stable rough.js seed makes an unchanged
+  // layout produce identical path strings, which assignPaths then drops
+  // instead of re-patching the SVG.
+  const paths = { leader: [] as string[], arrow: [] as string[], targetMark: [] as string[] }
+  paintDestinationInto(paths, root, toLocal, marked, width, height)
+  assignPaths('leader', paths.leader)
+  assignPaths('arrow', paths.arrow)
+  assignPaths('targetMark', paths.targetMark)
+}
 
+function paintDestinationInto(
+  paths: { leader: string[], arrow: string[], targetMark: string[] },
+  root: HTMLElement,
+  toLocal: (rect: DOMRect) => Box,
+  marked: Box,
+  width: number,
+  height: number,
+) {
   const markBox = padBox(marked, sourceMarkType.value === 'none' ? 4 : props.padding + 6)
   const targetEl = props.target ? (root.querySelector<HTMLElement>(props.target) ?? document.querySelector<HTMLElement>(props.target)) : undefined
   if (props.target && !targetEl && missingIsAnError.value)
@@ -959,7 +1100,7 @@ function paintDestination(
     endPoint = { x, y }
     // The target is its own stage after the connection. A zero padding keeps
     // target-radius the exact outer size authors position over screenshots.
-    geometry.targetMark = markPaths(destination, targetMarkType.value, 0)
+    paths.targetMark = markPaths(destination, targetMarkType.value, 0)
   }
 
   if (hasLabel.value) {
@@ -987,7 +1128,7 @@ function paintDestination(
   if (!route)
     return
   const { start, end, c1x, c1y, c2x, c2y } = route
-  geometry.leader = toPaths(generator.path(
+  paths.leader = toPaths(generator.path(
     `M ${start.x} ${start.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${end.x} ${end.y}`,
     roughOptions(),
   ))
@@ -1000,7 +1141,7 @@ function paintDestination(
       end.x - Math.cos(angle + spread) * size,
       end.y - Math.sin(angle + spread) * size,
     ] as [number, number]
-    geometry.arrow = [
+    paths.arrow = [
       ...toPaths(generator.linearPath([wing(0.42), [end.x, end.y]], roughOptions())),
       ...toPaths(generator.linearPath([wing(-0.42), [end.x, end.y]], roughOptions())),
     ]
@@ -1172,29 +1313,6 @@ function routeLeader(root: HTMLElement, toLocal: (rect: DOMRect) => Box, markBox
   return straight.curve
 }
 
-// Elements considered while measuring obstacles, capped: the collectors run on
-// animation frames while the slide moves, and a slide with more elements than
-// this has no room for an automatic label anyway.
-const OBSTACLE_ELEMENT_CAP = 600
-const MEDIA_TAGS = ['IMG', 'VIDEO', 'CANVAS', 'SVG']
-
-function isMedia(element: HTMLElement) {
-  return MEDIA_TAGS.includes(element.tagName.toUpperCase())
-}
-
-/**
- * The slide elements obstacle collection looks at. Excludes this component's
- * own strokes and labels, content still hidden behind a later click, and the
- * internals of inline SVGs — parts of an illustration do not count on their
- * own; the whole graphic does.
- */
-function obstacleCandidates(slide: HTMLElement): HTMLElement[] {
-  return Array.from(slide.querySelectorAll<HTMLElement>('*'))
-    .slice(0, OBSTACLE_ELEMENT_CAP)
-    .filter(element => !element.closest('.annotation-ignore, .slidev-vclick-hidden')
-      && !element.parentElement?.closest('svg'))
-}
-
 /**
  * The slide's text and media, as the tight boxes of the rendered lines rather
  * than the elements around them. This is what a leader line must not strike
@@ -1203,25 +1321,8 @@ function obstacleCandidates(slide: HTMLElement): HTMLElement[] {
  */
 function collectTextObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
   const slide = slideRoot() ?? root
-  const boxes: Box[] = []
-  for (const element of obstacleCandidates(slide)) {
-    if (isMedia(element)) {
-      const rect = element.getBoundingClientRect()
-      if (rect.width >= 6 && rect.height >= 6)
-        boxes.push(toLocal(rect))
-      continue
-    }
-    for (const node of Array.from(element.childNodes)) {
-      if (node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim())
-        continue
-      const range = document.createRange()
-      range.selectNodeContents(node)
-      for (const rect of Array.from(range.getClientRects())) {
-        if (rect.width >= 4 && rect.height >= 4)
-          boxes.push(toLocal(rect))
-      }
-    }
-  }
+  const scan = scanObstacles(slide)
+  const boxes: Box[] = [...scan.media, ...scan.texts].map(toLocal)
   // The marks and labels of the other annotations on the slide. A leader that
   // dives through a circled word or a written label reads as marking it. Their
   // paths are in the DOM from the first measurement — merely hidden until
@@ -1261,7 +1362,18 @@ const LATERAL_OFFSETS = (() => {
   return offsets
 })()
 
+// Measured label sizes per width cap. Writing a candidate max-width and
+// reading the resulting box back forces a synchronous layout, and the answer
+// only changes with the label's text or font — never from frame to frame while
+// the slide animates. Sizes are in slide coordinates, so they survive window
+// resizes too. Cleared on every click and whenever the props or fonts change.
+const labelSizeCache = new Map<number | 'natural', { width: number, height: number }>()
+
 function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
+  const cached = labelSizeCache.get(maxWidth ?? 'natural')
+  if (cached)
+    return cached
+
   const label = labelEl.value
   if (!label)
     return { width: maxWidth ?? 0, height: FALLBACK_LABEL_HEIGHT }
@@ -1276,10 +1388,14 @@ function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
   const rect = label.getBoundingClientRect()
   label.style.maxWidth = previousMaxWidth
 
+  // Only a real measurement is worth remembering; the fallbacks stand in for a
+  // label that cannot be measured yet.
   if (!rect.width)
     return { width: maxWidth ?? 0, height: FALLBACK_LABEL_HEIGHT }
   const box = toLocal(rect)
-  return { width: box.width, height: box.height }
+  const size = { width: box.width, height: box.height }
+  labelSizeCache.set(maxWidth ?? 'natural', size)
+  return size
 }
 
 /**
@@ -1295,8 +1411,17 @@ function fitLabel(
   width: number,
   height: number,
 ): { box: Box, width: number | undefined } {
+  // Collected once for every width candidate tried below: the obstacles do not
+  // depend on how the label wraps. Inflated so the label breathes — a label
+  // that ends up flush against the bottom of a code block reads as part of it.
+  // An explicitly positioned label ignores obstacles entirely.
+  const obstacles = props.labelX !== undefined || props.labelY !== undefined
+    ? []
+    : collectObstacles(root, toLocal)
+        .map(box => padBox(box, props.clearance))
+        .concat(padBox(anchor, 8))
   const natural = measureLabel(toLocal)
-  const unwrapped = placeLabel(root, toLocal, anchor, natural, width, height)
+  const unwrapped = placeLabel(anchor, natural, width, height, obstacles)
   const fitsSlide = natural.width <= width - SLIDE_MARGIN * 2 && natural.height <= height - SLIDE_MARGIN * 2
   const respectsExplicitMaximum = props.labelWidth === undefined || natural.width <= props.labelWidth
 
@@ -1314,7 +1439,7 @@ function fitLabel(
   // Magic Move animations.
   for (let cap = maximum; cap >= minimum; cap -= 48) {
     const size = measureLabel(toLocal, cap)
-    const placed = placeLabel(root, toLocal, anchor, size, width, height)
+    const placed = placeLabel(anchor, size, width, height, obstacles)
     if (placed.overlap === 0)
       return { box: placed.box, width: cap }
     if (!best || placed.overlap < best.overlap)
@@ -1324,7 +1449,7 @@ function fitLabel(
   // Include the lower bound when the step above did not land on it.
   if (!best || best.width !== minimum) {
     const size = measureLabel(toLocal, minimum)
-    const placed = placeLabel(root, toLocal, anchor, size, width, height)
+    const placed = placeLabel(anchor, size, width, height, obstacles)
     if (placed.overlap === 0)
       return { box: placed.box, width: minimum }
     if (!best || placed.overlap < best.overlap)
@@ -1335,12 +1460,11 @@ function fitLabel(
 }
 
 function placeLabel(
-  root: HTMLElement,
-  toLocal: (rect: DOMRect) => Box,
   anchor: Box,
   size: { width: number, height: number },
   width: number,
   height: number,
+  obstacles: Box[],
 ): { box: Box, overlap: number } {
   const halfW = size.width / 2
   const halfH = size.height / 2
@@ -1356,11 +1480,6 @@ function placeLabel(
     }
   }
 
-  // Obstacles are inflated so the label breathes: a label that ends up flush
-  // against the bottom of a code block reads as part of it.
-  const obstacles = collectObstacles(root, toLocal)
-    .map(box => padBox(box, props.clearance))
-    .concat(padBox(anchor, 8))
   const placement = resolvedPlacement.value
   const preferred = placement === 'auto'
     ? (anchor.cy < height / 2 ? 'down' : 'up')
@@ -1409,40 +1528,14 @@ function placeLabel(
 /**
  * Everything the label has to stay clear of: every rendered text fragment and
  * image on the slide, plus whole boxes for content whose padding also matters
- * and anything the slide opted in through `avoid-selector`. Text nodes must be
- * measured directly: prose such as `before <b>marked</b> after` belongs to a
- * non-leaf element, so collecting only leaf elements loses both surrounding
- * fragments and lets a label land on top of them.
- * `.card` and `.kodee-character` are the Kotlin theme's callouts and mascot.
+ * and anything the slide opted in through `avoid-selector`. Blocks are added
+ * whole, so a label never lands in the padding of a code block or a card,
+ * which their text fragments alone would leave free.
  */
-const BLOCK_OBSTACLES = 'pre, .slidev-code, .slidev-code-wrapper, .card, table, blockquote, .kodee-character'
-
 function collectObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
   const slide = slideRoot() ?? root
-  const boxes: Box[] = []
-  for (const element of obstacleCandidates(slide)) {
-    // Blocks are added whole, so a label never lands in the padding of a code
-    // block or a card, which their text fragments alone would leave free.
-    if (element.matches(BLOCK_OBSTACLES) || isMedia(element)) {
-      const rect = element.getBoundingClientRect()
-      if (rect.width >= 6 && rect.height >= 6)
-        boxes.push(toLocal(rect))
-    }
-
-    // Read direct text nodes from every element rather than only using leaf
-    // element boxes. A list item commonly contains both plain text and a <b>
-    // target; its plain text otherwise disappears from the obstacle map.
-    for (const node of Array.from(element.childNodes)) {
-      if (node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim())
-        continue
-      const range = document.createRange()
-      range.selectNodeContents(node)
-      for (const rect of Array.from(range.getClientRects())) {
-        if (rect.width >= 4 && rect.height >= 4)
-          boxes.push(toLocal(rect))
-      }
-    }
-  }
+  const scan = scanObstacles(slide)
+  const boxes: Box[] = [...scan.blocks, ...scan.media, ...scan.texts].map(toLocal)
   if (props.avoidSelector) {
     for (const element of Array.from(slide.querySelectorAll<HTMLElement>(props.avoidSelector)))
       boxes.push(toLocal(element.getBoundingClientRect()))
@@ -1551,7 +1644,10 @@ onMounted(async () => {
       mutationObserver.observe(element, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] })
   }
 
-  document.fonts?.ready.then(scheduleUpdate)
+  document.fonts?.ready.then(() => {
+    labelSizeCache.clear()
+    scheduleUpdate()
+  })
   window.addEventListener('resize', scheduleUpdate)
 })
 
@@ -1579,7 +1675,12 @@ watch($clicks, () => {
 
 // Any prop can change what is drawn or where the label may go, so re-measure
 // on all of them instead of maintaining a list that can silently go stale.
-watch(props, scheduleUpdate)
+// The caches assume unchanged props, so they are dropped along the way.
+watch(props, () => {
+  labelSizeCache.clear()
+  lastMarkKey = ''
+  scheduleUpdate()
+})
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useSlideContext } from '@slidev/client'
 
 interface Props {
   variant?: string
@@ -123,16 +124,27 @@ const positionStyles = computed(() => {
   return styles
 })
 
+const { $frontmatter, $slidev } = useSlideContext()
+
+// Whether slide navigation hands Kodee to the browser's View Transition (the
+// `view-transition-name` below) instead of v-motion. That is only the case
+// when the deck — or this slide — actually uses the `view-transition`
+// transition AND the browser implements the API; checking API support alone
+// would silently disable the entrance animation in every modern browser,
+// even in decks using a different transition. Slidev falls back to a normal
+// transition in browsers without the API, so v-motion takes over there too.
+const usesViewTransition = computed(() =>
+  ($frontmatter?.transition ?? $slidev?.configs.transition) === 'view-transition'
+  && typeof document !== 'undefined' && 'startViewTransition' in document)
+
 // Compute v-motion animation config
 const motionConfig = computed(() => {
-  const baseScale = props.scale || 1
-
-  // Check if we're in a view transition (Kodee staying the same between slides)
-  const isViewTransitioning = typeof document !== 'undefined' && document.startViewTransition
+  const baseScale = props.scale ?? 1
+  const viewTransition = usesViewTransition.value
 
   return {
     initial: {
-      opacity: isViewTransitioning ? 1 : 0,
+      opacity: viewTransition ? 1 : 0,
       scale: baseScale,
     },
     enter: {
@@ -143,14 +155,14 @@ const motionConfig = computed(() => {
         stiffness: 100,
         damping: 15,
         mass: 1,
-        duration: isViewTransitioning ? 0 : undefined,
+        duration: viewTransition ? 0 : undefined,
       },
     },
     leave: {
-      opacity: isViewTransitioning ? 1 : 0,
+      opacity: viewTransition ? 1 : 0,
       scale: baseScale,
       transition: {
-        duration: isViewTransitioning ? 0 : 300,
+        duration: viewTransition ? 0 : 300,
       },
     },
   }
