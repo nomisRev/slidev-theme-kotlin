@@ -587,12 +587,12 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 <style scoped>
 .inline-compiler-error-host { position: relative; }
 .inline-compiler-error-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .38rem; color: #e95757; font-family: var(--slidev-font-sans); font-size: 1.53rem; font-weight: 700; line-height: 1.15; pointer-events: none; transform: translateY(-50%); }
+.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: #e95757; font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, 12px); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
 .compiler-error-enter-active,
 .compiler-error-leave-active { transition: opacity .18s ease; }
 .compiler-error-enter-from,
 .compiler-error-leave-to { opacity: 0; }
-.inline-compiler-error-message i { color: #f05b5b; font-size: .62rem; font-style: normal; }
+.inline-compiler-error-message i { color: #f05b5b; font-size: .55em; font-style: normal; }
 .inline-compiler-error-underline {
   position: absolute;
   z-index: 2;
