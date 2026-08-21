@@ -1004,7 +1004,7 @@ function updateGeometry() {
   geometry.height = height
   assignPaths('mark', shapeBoxes.flatMap(box => markPaths(box, sourceMarkType.value)))
 
-  paintDestination(root, toLocal, marked, width, height)
+  paintDestination(root, toLocal, marked)
 
   const firstMeasurement = !geometry.ready
   geometry.ready = true
@@ -1062,14 +1062,12 @@ function paintDestination(
   root: HTMLElement,
   toLocal: (rect: DOMRect) => Box,
   marked: Box,
-  width: number,
-  height: number,
 ) {
   // Computed into locals first: the stable rough.js seed makes an unchanged
   // layout produce identical path strings, which assignPaths then drops
   // instead of re-patching the SVG.
   const paths = { leader: [] as string[], arrow: [] as string[], targetMark: [] as string[] }
-  paintDestinationInto(paths, root, toLocal, marked, width, height)
+  paintDestinationInto(paths, root, toLocal, marked)
   assignPaths('leader', paths.leader)
   assignPaths('arrow', paths.arrow)
   assignPaths('targetMark', paths.targetMark)
@@ -1080,8 +1078,6 @@ function paintDestinationInto(
   root: HTMLElement,
   toLocal: (rect: DOMRect) => Box,
   marked: Box,
-  width: number,
-  height: number,
 ) {
   const markBox = padBox(marked, sourceMarkType.value === 'none' ? 4 : props.padding + 6)
   const targetEl = props.target ? (root.querySelector<HTMLElement>(props.target) ?? document.querySelector<HTMLElement>(props.target)) : undefined
@@ -1107,7 +1103,12 @@ function paintDestinationInto(
     // Start with the label's natural width, which is a single line. Only give
     // it a maximum width when that line cannot stay on the slide or cannot be
     // placed clear of the slide's content.
-    const label = fitLabel(root, toLocal, destination ?? markBox, width, height)
+    // An annotation nested in a positioned component (for example
+    // InlineCompilerError) has an SVG canvas limited to that component. The
+    // label is allowed to leave that canvas, so constrain it to the slide,
+    // expressed in the SVG's local coordinates, rather than to the canvas.
+    const slide = slideRoot() ?? root
+    const label = fitLabel(root, toLocal, destination ?? markBox, toLocal(slide.getBoundingClientRect()))
     geometry.labelLeft = label.box.cx
     geometry.labelTop = label.box.cy
     geometry.labelWidth = label.width
@@ -1408,8 +1409,7 @@ function fitLabel(
   root: HTMLElement,
   toLocal: (rect: DOMRect) => Box,
   anchor: Box,
-  width: number,
-  height: number,
+  bounds: Box,
 ): { box: Box, width: number | undefined } {
   // Collected once for every width candidate tried below: the obstacles do not
   // depend on how the label wraps. Inflated so the label breathes — a label
@@ -1421,8 +1421,8 @@ function fitLabel(
         .map(box => padBox(box, props.clearance))
         .concat(padBox(anchor, 8))
   const natural = measureLabel(toLocal)
-  const unwrapped = placeLabel(anchor, natural, width, height, obstacles)
-  const fitsSlide = natural.width <= width - SLIDE_MARGIN * 2 && natural.height <= height - SLIDE_MARGIN * 2
+  const unwrapped = placeLabel(anchor, natural, bounds, obstacles)
+  const fitsSlide = natural.width <= bounds.width - SLIDE_MARGIN * 2 && natural.height <= bounds.height - SLIDE_MARGIN * 2
   const respectsExplicitMaximum = props.labelWidth === undefined || natural.width <= props.labelWidth
 
   if (fitsSlide && unwrapped.overlap === 0 && respectsExplicitMaximum)
@@ -1430,7 +1430,7 @@ function fitLabel(
 
   // An explicit `label-width` remains a useful author override. Without one,
   // the slide edges are the only width limit.
-  const maximum = Math.min(natural.width, props.labelWidth ?? natural.width, width - SLIDE_MARGIN * 2)
+  const maximum = Math.min(natural.width, props.labelWidth ?? natural.width, bounds.width - SLIDE_MARGIN * 2)
   const minimum = Math.min(maximum, 160)
   let best: { box: Box, width: number, overlap: number } | undefined
 
@@ -1439,7 +1439,7 @@ function fitLabel(
   // Magic Move animations.
   for (let cap = maximum; cap >= minimum; cap -= 48) {
     const size = measureLabel(toLocal, cap)
-    const placed = placeLabel(anchor, size, width, height, obstacles)
+    const placed = placeLabel(anchor, size, bounds, obstacles)
     if (placed.overlap === 0)
       return { box: placed.box, width: cap }
     if (!best || placed.overlap < best.overlap)
@@ -1449,7 +1449,7 @@ function fitLabel(
   // Include the lower bound when the step above did not land on it.
   if (!best || best.width !== minimum) {
     const size = measureLabel(toLocal, minimum)
-    const placed = placeLabel(anchor, size, width, height, obstacles)
+    const placed = placeLabel(anchor, size, bounds, obstacles)
     if (placed.overlap === 0)
       return { box: placed.box, width: minimum }
     if (!best || placed.overlap < best.overlap)
@@ -1462,8 +1462,7 @@ function fitLabel(
 function placeLabel(
   anchor: Box,
   size: { width: number, height: number },
-  width: number,
-  height: number,
+  bounds: Box,
   obstacles: Box[],
 ): { box: Box, overlap: number } {
   const halfW = size.width / 2
@@ -1473,8 +1472,8 @@ function placeLabel(
   if (props.labelX !== undefined || props.labelY !== undefined) {
     return {
       box: centred(
-        props.labelX !== undefined ? width * props.labelX / 100 : anchor.cx,
-        props.labelY !== undefined ? height * props.labelY / 100 : anchor.cy,
+        props.labelX !== undefined ? bounds.left + bounds.width * props.labelX / 100 : anchor.cx,
+        props.labelY !== undefined ? bounds.top + bounds.height * props.labelY / 100 : anchor.cy,
       ),
       overlap: 0,
     }
@@ -1482,7 +1481,7 @@ function placeLabel(
 
   const placement = resolvedPlacement.value
   const preferred = placement === 'auto'
-    ? (anchor.cy < height / 2 ? 'down' : 'up')
+    ? (anchor.cy < bounds.cy ? 'down' : 'up')
     : placement
   const directions = placement === 'auto'
     ? [preferred, preferred === 'down' ? 'up' : 'down', 'right', 'left'] as const
@@ -1502,8 +1501,8 @@ function placeLabel(
           : anchor.cy + lateral
 
         const box = centred(
-          clamp(cx, SLIDE_MARGIN + halfW, width - SLIDE_MARGIN - halfW),
-          clamp(cy, SLIDE_MARGIN + halfH, height - SLIDE_MARGIN - halfH),
+          clamp(cx, bounds.left + SLIDE_MARGIN + halfW, bounds.right - SLIDE_MARGIN - halfW),
+          clamp(cy, bounds.top + SLIDE_MARGIN + halfH, bounds.bottom - SLIDE_MARGIN - halfH),
         )
         const overlap = obstacles.reduce((total, obstacle) => total + overlapArea(box, obstacle), 0)
         const score = overlap * 6 + gap + Math.abs(lateral) * 0.6 + order * 400
