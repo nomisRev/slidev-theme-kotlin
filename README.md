@@ -183,9 +183,29 @@ npm run export
 # Export every slide and click state as PNG screenshots
 npm run screenshot
 
+# Export one slide; --click is zero-based (0 is the initial state)
+npm run export:slide -- --slide 12 --click 3
+
 # Render this working tree against HEAD and open the generated visual review
 npm run visual:review
 ```
+
+### Exporting One Slide
+
+`npm run export:slide` is an AI-agent-friendly wrapper around `slidev export`. It writes one PNG rather than a directory of all exported pages:
+
+```bash
+# Initial state of slide 12
+npm run export:slide -- --slide 12
+
+# State after the third click of slide 12
+npm run export:slide -- --slide 12 --click 3 --output artifacts/slide-12-click-3.png
+
+# Use another deck entry
+npm run export:slide -- --entry path/to/talk.md --slide 4 --click 0
+```
+
+`--slide` is one-based. `--click` is optional and zero-based, so `--click 0` is the initial slide state, `--click 1` is the state after one click, and so on. Without `--output`, screenshots are written under `.slidev/exports/`, which is ignored by Git. Run `npm run export:slide -- --help` for timeout, wait, and dark-mode options.
 
 ### Running the Slides
 
@@ -234,12 +254,18 @@ No environment variables are currently required for this theme.
 
 ## Visual regression review
 
-Slidev can export each settled click state with `--with-clicks`; this theme
-wraps that exporter in a visual-review command. It renders the current working
-tree and a Git revision with the same browser, compares every PNG with
-`pixelmatch`, and writes a three-column base/current/diff page. Screenshots are
-not committed: the chosen Git revision is the baseline, so accepting an
-intentional visual change is simply reviewing it and committing that change.
+Visual review starts a temporary Slidev server and uses Playwright Chromium to
+capture every settled click state from Slidev's normal presenter/player route
+(`/<slide>?clicks=<click>`), rather than the print-export `?print=clicks` route.
+It renders the current working tree and a Git revision with the same browser,
+compares every PNG with `pixelmatch`, and writes a three-column
+base/current/diff page. When the local
+`~/Developer/kotlin-fundamentals` consumer deck is available, its baseline is
+rendered from its clean `HEAD` and its current capture includes its working-tree
+changes, with each capture linked to the corresponding theme revision.
+Screenshots are not committed: the chosen Git revision is the baseline, so
+accepting an intentional visual change is simply reviewing it and committing
+that change.
 
 ```bash
 # Compare the working tree with the last commit.

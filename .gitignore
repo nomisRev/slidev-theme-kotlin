@@ -5,6 +5,7 @@ dist
 *.local
 .vite-inspect
 .remote-assets
+.slidev/
 .idea/
 components.d.ts
 debug.js

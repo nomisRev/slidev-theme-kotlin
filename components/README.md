@@ -59,13 +59,25 @@ the label next to it.
 
 ## Where the label goes
 
-A label is placed out of the slide's normal flow. Its position is searched at
-runtime so it does not cover anything else on the slide, preferring downwards
-for marks in the upper half and upwards for marks in the lower half.
+A label is placed out of the slide's normal flow. Automatic placement uses
+hard collision checks against settled click-state snapshots and labels whose
+visibility intervals overlap. It prefers the vertical direction away from the
+slide centre, then tries the opposite vertical direction and the sides. The
+unused body of a code window is available as label space, while its title and
+tab strip remain reserved; labels therefore use a large code window without
+ever reading as part of its chrome. Future click states are collected
+incrementally, so a persistent label can move atomically before a newly
+revealed obstacle is painted.
+
+An explicit `placement` is a directional contract: `down` remains below the
+mark, for example. If no clear candidate exists on that side, the label is
+hidden with a development warning rather than silently moved elsewhere. A
+manual `label-x` or `label-y` is an author assertion and bypasses collision and
+safe-area checks.
 
 | prop | default | meaning |
 | --- | --- | --- |
-| `placement` | `auto` | preferred side: `up`, `down`, `left` or `right`; `auto` picks by vertical position |
+| `placement` | `auto` | strict side (`up`, `down`, `left`, `right`), or teaching-oriented automatic side selection |
 | `label-x`, `label-y` | – | label centre as a percentage of the slide; disables the search |
 | `label-width` | – | maximum width in slide pixels before the label wraps; by default a label stays on one line and only wraps when that line cannot fit or stay clear of content |
 | `gap` | `28` | smallest distance between the mark and the label, in slide pixels |

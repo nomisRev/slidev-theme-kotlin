@@ -13,10 +13,16 @@ const MEDIA_TAGS = ['IMG', 'VIDEO', 'CANVAS', 'SVG']
 
 /**
  * Elements whose whole box matters to label placement, not just their rendered
- * text: a label must not land in the padding of a code block or a card.
- * `.card` and `.kodee-character` are the Kotlin theme's callouts and mascot.
+ * text: a label must not land in the padding of a card or in code-window
+ * chrome. `.card` and `.kodee-character` are the Kotlin theme's callouts and
+ * mascot.
+ *
+ * Code surfaces deliberately are not in this list. Their rendered code lines
+ * are still text obstacles, but their unused body is a useful, readable place
+ * for a short explanation. The title/tab strip remains a whole-box obstacle:
+ * a label in that chrome looks like a broken window title rather than a note.
  */
-const BLOCK_OBSTACLES = 'pre, .slidev-code, .slidev-code-wrapper, .card, table, blockquote, .kodee-character'
+const BLOCK_OBSTACLES = '.slidev-code-block-title, .slidev-code-group-tabs, .card, table, blockquote, .kodee-character'
 
 function isMedia(element: HTMLElement) {
   return MEDIA_TAGS.includes(element.tagName.toUpperCase())
@@ -1527,9 +1533,10 @@ function placeLabel(
 /**
  * Everything the label has to stay clear of: every rendered text fragment and
  * image on the slide, plus whole boxes for content whose padding also matters
- * and anything the slide opted in through `avoid-selector`. Blocks are added
- * whole, so a label never lands in the padding of a code block or a card,
- * which their text fragments alone would leave free.
+ * and anything the slide opted in through `avoid-selector`. Cards and similar
+ * blocks remain solid obstacles, but a code block's body is intentionally not:
+ * its blank area is a good label surface. Its title/tab strip is a block
+ * obstacle, so annotations can never be placed in window chrome.
  */
 function collectObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
   const slide = slideRoot() ?? root
