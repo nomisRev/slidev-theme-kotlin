@@ -29,7 +29,12 @@ const { $clicksContext, $clicks, $scale, $zoom } = useSlideContext()
 const { isPrintMode } = useNav()
 const id = useId()
 const container = ref<HTMLElement>()
-const position = ref({ left: '0px', top: '0px', maxWidth: 'none' })
+const position = ref({
+  left: '0px',
+  top: '0px',
+  maxWidth: 'none',
+  '--inline-compiler-error-target-size': '12px',
+})
 // The wavy underline is one absolutely positioned element spanning the whole
 // offending expression: per-token `text-decoration: underline wavy` restarts
 // the wave's phase at every Shiki span boundary, breaking the squiggle.
@@ -461,10 +466,20 @@ function sync() {
   // The slide clips at its own edge; wrap the message within the remaining
   // room instead of letting it run off the canvas.
   const slideBox = (host.closest('.slidev-layout') ?? host).getBoundingClientRect()
+  // The diagnostic is a sibling of the code block, so it does not inherit
+  // the code element's font size. Read the computed size from the actual
+  // text node being annotated and expose it as a fallback for the message.
+  // The public `--inline-compiler-error-message-size` variable remains an
+  // explicit override when a deck wants a different diagnostic size.
+  const targetElement = range.startContainer instanceof HTMLElement
+    ? range.startContainer
+    : range.startContainer.parentElement
+  const targetSize = targetElement ? getComputedStyle(targetElement).fontSize : '12px'
   position.value = {
     left: `${(messageRight - hostBox.left) / scale + 10}px`,
     top: `${(top - hostBox.top + (bottom - top) / 2) / scale}px`,
     maxWidth: `${Math.max(60, (slideBox.right - messageRight) / scale - 34)}px`,
+    '--inline-compiler-error-target-size': targetSize || '12px',
   }
   underline.value = {
     left: `${(left - hostBox.left) / scale}px`,
@@ -587,7 +602,7 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 <style scoped>
 .inline-compiler-error-host { position: relative; }
 .inline-compiler-error-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: #e95757; font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, 12px); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
+.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: #e95757; font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
 .compiler-error-enter-active,
 .compiler-error-leave-active { transition: opacity .18s ease; }
 .compiler-error-enter-from,
