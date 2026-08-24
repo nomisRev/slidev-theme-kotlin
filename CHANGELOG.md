@@ -1,10 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 ### Added
 
 - Bundle `InlineCompilerError`, a click-aware inline diagnostic component that marks source lines or exact code text in static Shiki and Magic Move blocks.
+- Add IntelliJ-style identity icons to code windows for Kotlin, Gradle, Amper, Java, terminal, Maven, and PostgreSQL fences, including Kotlin and Gradle fence aliases.
+- Add `export:slide` for exporting an individual slide at an exact click state.
+- Add visual regression review and check scripts for comparing the theme and consumer decks across revisions.
+
+### Changed
+
+- Make code-window icon border colours and column-based code sizing customizable through CSS variables.
+- Improve `DrawnAnnotation` tracking, label placement, obstacle detection, and animation timing across Magic Move and view transitions.
+- Update Slidev dependencies to 52.19.1 and require Node.js 20.12 or newer.
+
+### Documentation
+
+- Document inline compiler diagnostics, code-window icons and sizing, single-slide export, and visual regression review workflows.
 
 ## 0.10.0
 
