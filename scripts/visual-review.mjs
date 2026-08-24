@@ -33,7 +33,9 @@ if (baseIndex !== -1 && !base)
   throw new Error('`--base` needs a Git revision, for example `--base origin/main`.')
 
 function empty(dir) {
-  rmSync(dir, { recursive: true, force: true })
+  // macOS may recreate .DS_Store while this directory is being removed.
+  // Retry ENOTEMPTY failures rather than making a visual review flaky.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   mkdirSync(dir, { recursive: true })
 }
 

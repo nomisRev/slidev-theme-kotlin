@@ -41,6 +41,99 @@ fun greet(name: String): Result<String> =
 ```
 
 ---
+kodee: false
+---
+
+# Kotlin and Gradle fence aliases
+
+<div class="grid grid-cols-3 gap-4 text-sm">
+<div>
+
+## `kotlin`
+
+```kotlin
+fun main() = println("Kotlin")
+```
+
+## `kotlin gradle`
+
+```kotlin gradle
+plugins { kotlin("jvm") }
+```
+
+</div>
+<div>
+
+## `kt`
+
+```kt
+val answer = 42
+```
+
+## `kt gradle`
+
+```kt gradle
+repositories { mavenCentral() }
+```
+
+</div>
+<div>
+
+## `kts`
+
+```kts
+val language = "Kotlin"
+```
+
+## `kts gradle`
+
+```kts gradle
+kotlin { jvmToolchain(21) }
+```
+
+</div>
+</div>
+
+---
+kodee: false
+---
+
+# Tooling fence identities
+
+<div class="grid grid-cols-2 gap-x-10 gap-y-2 text-sm">
+<div>
+
+## `yaml toolchain`
+
+```yaml toolchain
+product: jvm/app
+```
+
+## `java`
+
+```java
+record User(String name) {}
+```
+
+</div>
+<div>
+
+## `bash`
+
+```bash
+./gradlew test
+```
+
+## `xml maven`
+
+```xml maven
+<artifactId>demo</artifactId>
+```
+
+</div>
+</div>
+
+---
 kodee: wink
 ---
 

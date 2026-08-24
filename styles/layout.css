@@ -4,8 +4,113 @@
     --slidev-theme-primary: #7954F6;
 }
 
+:root {
+    /* IntelliJ Light editor surface. */
+    --editor-bg: #fff;
+    --editor-fg: #080808;
+    --editor-border: #d1d3d6;
+    --editor-shadow: rgb(31 32 35 / 12%);
+}
+
+html.dark {
+    /* IntelliJ Darcula editor surface. */
+    --editor-bg: #2b2b2b;
+    --editor-fg: #a9b7c6;
+    --editor-border: #515151;
+    --editor-shadow: rgb(0 0 0 / 30%);
+}
+
+/* Code snippets are a single editor surface. Slidev titles are deliberately
+   hidden: the fence identity is shown as a compact icon in the top-right
+   corner instead of a separate code-window header. */
+.slidev-code-wrapper {
+    position: relative;
+}
+
 .slidev-code {
-    background: #1F2023FF;
+    border: 1px solid var(--editor-border);
+    border-radius: 0.5rem;
+    background: var(--editor-bg) !important;
+    color: var(--editor-fg) !important;
+    box-shadow: 0 0.4rem 1.2rem var(--editor-shadow);
+}
+
+.slidev-code-wrapper:has(.slidev-code-block-title) .slidev-code-block-title {
+    display: none;
+}
+
+.slidev-code-wrapper:has(.slidev-code-block-title) .slidev-code {
+    border-radius: 0.5rem !important;
+}
+
+/* The Shiki setup turns the fence language and its optional modifier into one
+   of these classes. For example, `kts gradle` gets the Gradle mark while a
+   plain `kts` block gets the Kotlin mark. */
+/* Ordinary fences carry the class on their <code>. Magic Move carries it on
+   its wrapper because it renders precompiled tokens rather than a <code> node. */
+.slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
+    --code-window-icon: url('/kotlin.svg');
+}
+
+.slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
+    --code-window-icon: url('/gradle.svg');
+}
+
+.slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
+    --code-window-icon: url('/amper-icon.svg');
+}
+
+.slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
+    --code-window-icon: url('/java.svg');
+}
+
+.slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
+    --code-window-icon: url('/terminal.svg');
+}
+
+.slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
+    --code-window-icon: url('/maven.svg');
+}
+
+.slidev-code-wrapper:is([class*='code-window-icon--'], :has(code[class*='code-window-icon--']))::after {
+    position: absolute;
+    z-index: 1;
+    /* Slidev's 2rem copy control centres its padded 1rem glyph 1rem from
+       the top and right edges. Match that centre with this 1rem marker. */
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 1rem;
+    height: 1rem;
+    background: center / contain no-repeat var(--code-window-icon);
+    content: '';
+    pointer-events: none;
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
+    --code-window-icon: url('/kotlin_dark.svg');
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
+    --code-window-icon: url('/gradle_dark.svg');
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
+    --code-window-icon: url('/java_dark.svg');
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
+    --code-window-icon: url('/terminal_dark.svg');
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
+    --code-window-icon: url('/maven_dark.svg');
+}
+
+/* Keep Slidev's copy control and its hover/focus behavior, but place it where
+   the archetype mark used to be. The mark itself owns the far-right corner. */
+.slidev-code-wrapper > .slidev-code-copy {
+    /* The glyph centres are 1.8rem apart (10% tighter than 2rem). */
+    right: 1.8rem !important;
 }
 
 /* View Transition for Kodee Magic Move */

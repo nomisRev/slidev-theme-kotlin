@@ -1,342 +1,292 @@
 import type { ShikiSetupReturn } from '@slidev/types'
 import { defineShikiSetup } from '@slidev/types'
-import type { ShikiTransformer } from 'shiki'
+import type { ShikiTransformer, ThemeRegistration } from 'shiki'
+import { codeWindowIcon } from './code-window-icon'
 
-// Transformer to handle v-mark spans inside code blocks
-// NOTE: This transformer will NOT work with magic-move blocks (````md magic-move)
-// as Shiki Magic Move does not support transformers.
-// For magic-move blocks, use alternative approaches like CSS styling or line highlighting.
+
+/** Add the fence identity to Shiki's code node for the theme CSS to render. */
+function transformerCodeWindowIcon(): ShikiTransformer {
+  return {
+    name: 'kotlin-theme:code-window-icon',
+    code(node) {
+      const meta = this.options.meta as { __raw?: string } | undefined
+      const icon = codeWindowIcon(this.options.lang, meta?.__raw ?? '')
+      if (icon)
+        this.addClassToHast(node, `code-window-icon--${icon}`)
+    },
+  }
+}
+
 function transformerVMark(): ShikiTransformer {
-    const PLACEHOLDER_PREFIX = '___VMARK_'
-    const placeholders = new Map<string, string>()
+  const placeholderPrefix = '___VMARK_'
+  const placeholders = new Map<string, { vMarkAttr: string, content: string }>()
 
-    return {
-        name: 'slidev:v-mark-transformer',
-        preprocess(code) {
-            // Reset placeholders for each code block
-            placeholders.clear()
-            let counter = 0
+  return {
+    name: 'slidev:v-mark-transformer',
+    preprocess(code) {
+      placeholders.clear()
+      let counter = 0
+      return code.replace(/<span\s+(v-mark[^>]*)>([^<]*)<\/span>/g, (_match, vMarkAttr, content) => {
+        const placeholder = `${placeholderPrefix}${counter++}___`
+        placeholders.set(placeholder, { vMarkAttr, content })
+        return placeholder
+      })
+    },
+    postprocess(html) {
+      let result = html
+      placeholders.forEach(({ vMarkAttr, content }, placeholder) => {
+        const escapedPlaceholder = placeholder
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+        const replacement = `<span ${vMarkAttr}>${content}</span>`
 
-            // Replace <span v-mark.*>...</span> with placeholders before tokenization
-            return code.replace(/<span\s+(v-mark[^>]*)>([^<]*)<\/span>/g, (match, vMarkAttr, content) => {
-                const placeholder = `${PLACEHOLDER_PREFIX}${counter++}___`
-                placeholders.set(placeholder, { vMarkAttr, content })
-                return placeholder
-            })
-        },
-        postprocess(html) {
-            // Restore the v-mark spans after HTML generation
-            let result = html
+        result = result.replace(escapedPlaceholder, replacement)
+        result = result.replace(placeholder, replacement)
 
-            placeholders.forEach(({ vMarkAttr, content }, placeholder) => {
-                // Find and replace the placeholder with the v-mark span
-                // The placeholder might be HTML-escaped or split across spans
-                const escapedPlaceholder = placeholder
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-
-                const replacement = `<span ${vMarkAttr}>${content}</span>`
-
-                // Try to replace both escaped and unescaped versions
-                result = result.replace(escapedPlaceholder, replacement)
-                result = result.replace(placeholder, replacement)
-
-                // Handle case where placeholder is split across multiple <span> tags
-                const escapedParts = escapedPlaceholder.split('_')
-                let pattern = escapedParts.join('(?:<\\/span><span[^>]*>)?_?')
-                result = result.replace(new RegExp(pattern, 'g'), replacement)
-            })
-
-            return result
-        }
-    }
+        // Shiki can split a placeholder into adjacent token spans.
+        const pattern = escapedPlaceholder
+          .split('_')
+          .join('(?:<\\/span><span[^>]*>)?_?')
+        result = result.replace(new RegExp(pattern, 'g'), replacement)
+      })
+      return result
+    },
+  }
 }
 
 /**
- * From: `node debug.js Test.kt`:
+ * IntelliJ IDEA's default light editor palette.
  *
- *   comment.block.javadoc.kotlin
- *   comment.line.double-slash.kotlin
- *   constant.character.escape.kotlin
- *   constant.language.boolean.kotlin
- *   constant.language.null.kotlin
- *   constant.numeric.binary.kotlin
- *   constant.numeric.decimal.kotlin
- *   constant.numeric.hex.kotlin
- *   entity.name.function.call.kotlin
- *   entity.name.function.declaration.kotlin
- *   entity.name.package.kotlin
- *   entity.name.type.annotation.kotlin
- *   entity.name.type.class.extension.kotlin
- *   entity.name.type.class.kotlin
- *   entity.name.type.kotlin
- *   entity.name.type.object.kotlin
- *   keyword.control.kotlin
- *   keyword.hard.class.kotlin
- *   keyword.hard.fun.kotlin
- *   keyword.hard.kotlin
- *   keyword.hard.object.kotlin
- *   keyword.hard.package.kotlin
- *   keyword.hard.typealias.kotlin
- *   keyword.operator.arithmetic.kotlin
- *   keyword.operator.assignment.kotlin
- *   keyword.operator.comparison.kotlin
- *   keyword.operator.logical.kotlin
- *   keyword.operator.range.kotlin
- *   keyword.soft.kotlin
- *   meta.import.kotlin
- *   meta.package.kotlin
- *   meta.template.expression.kotlin
- *   punctuation.definition.template-expression.begin
- *   punctuation.definition.template-expression.end
- *   source.kotlin
- *   storage.modifier.other.kotlin
- *   storage.type.function.arrow.kotlin
- *   string.quoted.double.kotlin
- *   string.quoted.single.kotlin
- *   variable.language.this.kotlin
- *   variable.language.wildcard.kotlin
- *   variable.string-escape.kotlin
+ * Keep the rules language-agnostic where possible: this presentation uses
+ * Kotlin, XML, YAML, and Bash, and all of them should look like they belong to
+ * the same IDE rather than falling back to Shiki's unstyled foreground.
  */
-const intellijDarkTheme = {
-    name: 'intellij-dark',
-    type: 'dark',
-    colors: {
-        // Editor colors
-        'editor.background': '#1e1f22',
-        'editor.foreground': '#bcbec4',
+const intellijLight: ThemeRegistration = {
+  name: 'intellij-light',
+  type: 'light',
+  colors: {
+    'editor.background': '#ffffff',
+    'editor.foreground': '#080808',
+  },
+  settings: [
+    {
+      settings: {
+        background: '#ffffff',
+        foreground: '#080808',
+      },
     },
-    settings: [
-        // Base foreground/background
-        {
-            settings: {
-                foreground: '#bcbec4',
-                background: '#1e1f22',
-            }
-        },
-        // Comments - line and block comments (gray)
-        {
-            scope: [
-                'comment.line.double-slash.kotlin',
-                'comment.block.kotlin',
-                'comment',
-            ],
-            settings: {
-                foreground: '#7a7e85',
-            }
-        },
-        // Documentation comments (greenish, italic)
-        {
-            scope: [
-                'comment.block.javadoc.kotlin',
-                'comment.block.documentation',
-            ],
-            settings: {
-                foreground: '#5f826b',
-                fontStyle: 'italic',
-            }
-        },
-        // Keywords - all hard keywords (orange-brown)
-        {
-            scope: [
-                'keyword.hard.kotlin',
-                'keyword.hard.fun.kotlin',
-                'keyword.hard.class.kotlin',
-                'keyword.hard.object.kotlin',
-                'keyword.hard.package.kotlin',
-                'keyword.hard.typealias.kotlin',
-                'keyword.control.kotlin',
-                'keyword.soft.kotlin',
-                'keyword',
-            ],
-            settings: {
-                foreground: '#cf8e6d',
-            }
-        },
-        // Storage modifiers (orange-brown, same as keywords)
-        {
-            scope: [
-                'storage.modifier.other.kotlin',
-                'storage.modifier',
-            ],
-            settings: {
-                foreground: '#cf8e6d',
-            }
-        },
-        // Boolean and null constants (orange-brown, same as keywords)
-        {
-            scope: [
-                'constant.language.boolean.kotlin',
-                'constant.language.null.kotlin',
-                'constant.language',
-            ],
-            settings: {
-                foreground: '#cf8e6d',
-            }
-        },
-        // Strings (green)
-        {
-            scope: [
-                'string.quoted.double.kotlin',
-                'string.quoted.single.kotlin',
-                'string',
-            ],
-            settings: {
-                foreground: '#6aab73',
-            }
-        },
-        // String escape sequences (orange-brown, same as keywords)
-        {
-            scope: [
-                'constant.character.escape.kotlin',
-                'variable.string-escape.kotlin',
-                'constant.character.escape',
-            ],
-            settings: {
-                foreground: '#cf8e6d',
-            }
-        },
-        // String template expressions (default color for the delimiters)
-        {
-            scope: [
-                'punctuation.definition.template-expression.begin',
-                'punctuation.definition.template-expression.end',
-                'meta.template.expression.kotlin',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-        // Numbers - all numeric literals (cyan)
-        {
-            scope: [
-                'constant.numeric.decimal.kotlin',
-                'constant.numeric.hex.kotlin',
-                'constant.numeric.binary.kotlin',
-                'constant.numeric',
-            ],
-            settings: {
-                foreground: '#2aacb8',
-            }
-        },
-        // Function declarations (blue)
-        {
-            scope: [
-                'entity.name.function.declaration.kotlin',
-                'entity.name.function',
-            ],
-            settings: {
-                foreground: '#56a8f5',
-            }
-        },
-        // Function calls (blue)
-        {
-            scope: [
-                'entity.name.function.call.kotlin',
-                'meta.function-call',
-            ],
-            settings: {
-                foreground: '#b5b7bd',
-            }
-        },
-        // Class names (default color)
-        {
-            scope: [
-                'entity.name.type.class.kotlin',
-                'entity.name.type.class.extension.kotlin',
-                'entity.name.type.kotlin',
-                'entity.name.type',
-                'entity.name.class',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-        // Object names (default color)
-        {
-            scope: [
-                'entity.name.type.object.kotlin',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-        // Package names (default color)
-        {
-            scope: [
-                'entity.name.package.kotlin',
-                'meta.package.kotlin',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-        // Annotations (yellow-green)
-        {
-            scope: [
-                'entity.name.type.annotation.kotlin',
-                'storage.type.annotation',
-                'meta.annotation',
-            ],
-            settings: {
-                foreground: '#b3ae60',
-            }
-        },
-        // Operators (default color)
-        {
-            scope: [
-                'keyword.operator.arithmetic.kotlin',
-                'keyword.operator.assignment.kotlin',
-                'keyword.operator.comparison.kotlin',
-                'keyword.operator.logical.kotlin',
-                'keyword.operator.range.kotlin',
-                'keyword.operator',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-        // Arrow function type (default color)
-        {
-            scope: [
-                'storage.type.function.arrow.kotlin',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-        // Language keywords like 'this' (orange-brown, same as keywords)
-        {
-            scope: [
-                'variable.language.this.kotlin',
-                'variable.language.wildcard.kotlin',
-                'variable.language',
-            ],
-            settings: {
-                foreground: '#cf8e6d',
-            }
-        },
-        // Import statements (default color)
-        {
-            scope: [
-                'meta.import.kotlin',
-            ],
-            settings: {
-                foreground: '#bcbec4',
-            }
-        },
-    ]
+    {
+      scope: ['comment', 'punctuation.definition.comment'],
+      settings: { foreground: '#8c8c8c' },
+    },
+    {
+      scope: ['comment.block.documentation', 'comment.block.javadoc'],
+      settings: { foreground: '#8c8c8c', fontStyle: 'italic' },
+    },
+    {
+      scope: ['keyword', 'storage.type', 'storage.modifier'],
+      settings: { foreground: '#0033b3' },
+    },
+    {
+      scope: ['constant.language', 'variable.language'],
+      settings: { foreground: '#0033b3' },
+    },
+    {
+      scope: ['string', 'string.quoted', 'string.unquoted'],
+      settings: { foreground: '#067d17' },
+    },
+    {
+      scope: [
+        'constant.character.escape',
+        'constant.character.string.escape',
+        'variable.string-escape',
+      ],
+      settings: { foreground: '#0037a6' },
+    },
+    {
+      scope: ['constant.numeric'],
+      settings: { foreground: '#1750eb' },
+    },
+    {
+      scope: [
+        'entity.name.function',
+        'support.function',
+        'meta.function-call',
+        'support.function.builtin.shell',
+      ],
+      settings: { foreground: '#00627a' },
+    },
+    {
+      scope: [
+        'entity.name.type',
+        'entity.name.class',
+        'support.type',
+        'support.class',
+      ],
+      settings: { foreground: '#000000' },
+    },
+    {
+      scope: [
+        'entity.name.type.annotation',
+        'storage.type.annotation',
+        'meta.annotation',
+      ],
+      settings: { foreground: '#9e880d' },
+    },
+    {
+      scope: [
+        'variable.other',
+        'variable.parameter',
+        'entity.name.variable',
+        'support.variable',
+      ],
+      settings: { foreground: '#871094' },
+    },
+    {
+      scope: [
+        'entity.name.tag',
+        'punctuation.definition.tag',
+        'punctuation.definition.tag.begin',
+        'punctuation.definition.tag.end',
+      ],
+      settings: { foreground: '#0033b3' },
+    },
+    {
+      scope: ['entity.other.attribute-name'],
+      settings: { foreground: '#174ad4' },
+    },
+    {
+      scope: [
+        'entity.name.tag.yaml',
+        'entity.name.type.anchor.yaml',
+        'variable.other.alias.yaml',
+        'variable.other.key',
+      ],
+      settings: { foreground: '#871094' },
+    },
+    {
+      scope: ['invalid', 'invalid.illegal'],
+      settings: { foreground: '#e00000' },
+    },
+  ],
 }
 
-export default defineShikiSetup((): ShikiSetupReturn => {
-    return {
-        themes: {
-            dark: intellijDarkTheme,
-            light: intellijDarkTheme, // Using dark theme for both for now
-        },
-        transformers: [
-            transformerVMark(),
-        ],
-    }
-})
+/** IntelliJ IDEA's classic Darcula editor palette. */
+const intellijDarcula: ThemeRegistration = {
+  name: 'intellij-darcula',
+  type: 'dark',
+  colors: {
+    'editor.background': '#2b2b2b',
+    'editor.foreground': '#a9b7c6',
+  },
+  settings: [
+    {
+      settings: {
+        background: '#2b2b2b',
+        foreground: '#a9b7c6',
+      },
+    },
+    {
+      scope: ['comment', 'punctuation.definition.comment'],
+      settings: { foreground: '#808080' },
+    },
+    {
+      scope: ['comment.block.documentation', 'comment.block.javadoc'],
+      settings: { foreground: '#629755', fontStyle: 'italic' },
+    },
+    {
+      scope: ['keyword', 'storage.type', 'storage.modifier'],
+      settings: { foreground: '#cc7832' },
+    },
+    {
+      scope: ['constant.language', 'variable.language'],
+      settings: { foreground: '#cc7832' },
+    },
+    {
+      scope: ['string', 'string.quoted', 'string.unquoted'],
+      settings: { foreground: '#6a8759' },
+    },
+    {
+      scope: [
+        'constant.character.escape',
+        'constant.character.string.escape',
+        'variable.string-escape',
+      ],
+      settings: { foreground: '#cc7832' },
+    },
+    {
+      scope: ['constant.numeric'],
+      settings: { foreground: '#6897bb' },
+    },
+    {
+      scope: [
+        'entity.name.function',
+        'support.function',
+        'meta.function-call',
+        'support.function.builtin.shell',
+      ],
+      settings: { foreground: '#ffc66d' },
+    },
+    {
+      scope: [
+        'entity.name.type',
+        'entity.name.class',
+        'support.type',
+        'support.class',
+      ],
+      settings: { foreground: '#a9b7c6' },
+    },
+    {
+      scope: [
+        'entity.name.type.annotation',
+        'storage.type.annotation',
+        'meta.annotation',
+      ],
+      settings: { foreground: '#bbb529' },
+    },
+    {
+      scope: [
+        'variable.other',
+        'variable.parameter',
+        'entity.name.variable',
+        'support.variable',
+      ],
+      settings: { foreground: '#9876aa' },
+    },
+    {
+      scope: [
+        'entity.name.tag',
+        'punctuation.definition.tag',
+        'punctuation.definition.tag.begin',
+        'punctuation.definition.tag.end',
+      ],
+      settings: { foreground: '#e8bf6a' },
+    },
+    {
+      scope: ['entity.other.attribute-name'],
+      settings: { foreground: '#bababa' },
+    },
+    {
+      scope: [
+        'entity.name.tag.yaml',
+        'entity.name.type.anchor.yaml',
+        'variable.other.alias.yaml',
+        'variable.other.key',
+      ],
+      settings: { foreground: '#ffc66d' },
+    },
+    {
+      scope: ['invalid', 'invalid.illegal'],
+      settings: { foreground: '#ff6b68' },
+    },
+  ],
+}
+
+export default defineShikiSetup((): ShikiSetupReturn => ({
+  themes: {
+    light: intellijLight,
+    dark: intellijDarcula,
+  },
+  transformers: [transformerCodeWindowIcon(), transformerVMark()],
+}))
