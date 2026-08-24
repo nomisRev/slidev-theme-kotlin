@@ -76,6 +76,27 @@ uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` u
 Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
 remain plain code surfaces.
 
+The identity border colours are exposed as theme variables and can be
+customized from a deck stylesheet. Each variable has a light and dark-mode
+value:
+
+```css
+:root {
+  --code-window-kotlin-color: #834df0;
+  --code-window-gradle-color: #6c707e;
+  --code-window-amper-color: #087cfa;
+  --code-window-java-color: #e66d17;
+  --code-window-terminal-color: #6c707e;
+  --code-window-maven-color: #3574f0;
+  --code-window-postgresql-color: #336791;
+}
+
+html.dark {
+  --code-window-kotlin-color: #a571e6;
+  /* Override any of the other dark-mode values as needed. */
+}
+```
+
 ### Code sizing
 
 Every code window uses one font size calculated from the slide canvas width. By

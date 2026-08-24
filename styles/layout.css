@@ -5,6 +5,16 @@
 }
 
 :root {
+    /* Identity colours for code-window borders. Keep these as theme tokens so
+       decks can tune the palette without reimplementing icon matching. */
+    --code-window-kotlin-color: #834df0;
+    --code-window-gradle-color: #6c707e;
+    --code-window-amper-color: #087cfa;
+    --code-window-java-color: #e66d17;
+    --code-window-terminal-color: #6c707e;
+    --code-window-maven-color: #3574f0;
+    --code-window-postgresql-color: #336791;
+
     /* Size every code window for the same number of monospace columns. The
        calculation uses the slide canvas, not the individual code block, so a
        deck gets one consistent font size. 8rem + 2px accounts for the default
@@ -29,6 +39,16 @@ html.dark {
     --editor-fg: #a9b7c6;
     --editor-border: #515151;
     --editor-shadow: rgb(0 0 0 / 30%);
+
+    /* Dark variants preserve each identity hue while staying legible on
+       Darcula's dark editor surface. */
+    --code-window-kotlin-color: #a571e6;
+    --code-window-gradle-color: #ced0d6;
+    --code-window-amper-color: #087cfa;
+    --code-window-java-color: #c77d55;
+    --code-window-terminal-color: #ced0d6;
+    --code-window-maven-color: #548af7;
+    --code-window-postgresql-color: #336791;
 }
 
 /* Container units make the column count follow a custom Slidev canvas width
@@ -83,37 +103,37 @@ html.dark {
    border above. */
 .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
     --code-window-icon: url('/kotlin.svg');
-    --code-window-border: #834df0;
+    --code-window-border: var(--code-window-kotlin-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
     --code-window-icon: url('/gradle.svg');
-    --code-window-border: #6c707e;
+    --code-window-border: var(--code-window-gradle-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
     --code-window-icon: url('/amper-icon.svg');
-    --code-window-border: #087cfa;
+    --code-window-border: var(--code-window-amper-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
     --code-window-icon: url('/java.svg');
-    --code-window-border: #e66d17;
+    --code-window-border: var(--code-window-java-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
     --code-window-icon: url('/terminal.svg');
-    --code-window-border: #6c707e;
+    --code-window-border: var(--code-window-terminal-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
     --code-window-icon: url('/maven.svg');
-    --code-window-border: #3574f0;
+    --code-window-border: var(--code-window-maven-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-window-icon--postgresql)) {
     --code-window-icon: url('/Postgresql_elephant.svg');
-    --code-window-border: #336791;
+    --code-window-border: var(--code-window-postgresql-color);
 }
 
 .slidev-code-wrapper:is([class*='code-window-icon--'], :has(code[class*='code-window-icon--']))::after {
@@ -132,35 +152,35 @@ html.dark {
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
     --code-window-icon: url('/kotlin_dark.svg');
-    --code-window-border: #a571e6;
+    --code-window-border: var(--code-window-kotlin-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
     --code-window-icon: url('/gradle_dark.svg');
-    --code-window-border: #ced0d6;
+    --code-window-border: var(--code-window-gradle-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
-    --code-window-border: #087cfa;
+    --code-window-border: var(--code-window-amper-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
     --code-window-icon: url('/java_dark.svg');
-    --code-window-border: #c77d55;
+    --code-window-border: var(--code-window-java-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
     --code-window-icon: url('/terminal_dark.svg');
-    --code-window-border: #ced0d6;
+    --code-window-border: var(--code-window-terminal-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
     --code-window-icon: url('/maven_dark.svg');
-    --code-window-border: #548af7;
+    --code-window-border: var(--code-window-maven-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-window-icon--postgresql)) {
-    --code-window-border: #336791;
+    --code-window-border: var(--code-window-postgresql-color);
 }
 
 /* Keep Slidev's copy control and its hover/focus behavior, but place it where
