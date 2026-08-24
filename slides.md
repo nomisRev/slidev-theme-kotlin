@@ -46,14 +46,17 @@ kodee: false
 
 # Kotlin and Gradle fence aliases
 
-<div class="grid grid-cols-3 gap-4 text-sm">
-<div>
-
 ## `kotlin`
 
 ```kotlin
 fun main() = println("Kotlin")
 ```
+
+---
+kodee: false
+---
+
+# Kotlin and Gradle fence aliases
 
 ## `kotlin gradle`
 
@@ -61,8 +64,11 @@ fun main() = println("Kotlin")
 plugins { kotlin("jvm") }
 ```
 
-</div>
-<div>
+---
+kodee: false
+---
+
+# Kotlin and Gradle fence aliases
 
 ## `kt`
 
@@ -70,14 +76,23 @@ plugins { kotlin("jvm") }
 val answer = 42
 ```
 
+---
+kodee: false
+---
+
+# Kotlin and Gradle fence aliases
+
 ## `kt gradle`
 
 ```kt gradle
 repositories { mavenCentral() }
 ```
 
-</div>
-<div>
+---
+kodee: false
+---
+
+# Kotlin and Gradle fence aliases
 
 ## `kts`
 
@@ -85,14 +100,17 @@ repositories { mavenCentral() }
 val language = "Kotlin"
 ```
 
+---
+kodee: false
+---
+
+# Kotlin and Gradle fence aliases
+
 ## `kts gradle`
 
 ```kts gradle
 kotlin { jvmToolchain(21) }
 ```
-
-</div>
-</div>
 
 ---
 kodee: false
@@ -100,14 +118,17 @@ kodee: false
 
 # Tooling fence identities
 
-<div class="grid grid-cols-2 gap-x-10 gap-y-2 text-sm">
-<div>
-
 ## `yaml toolchain`
 
 ```yaml toolchain
 product: jvm/app
 ```
+
+---
+kodee: false
+---
+
+# Tooling fence identities
 
 ## `java`
 
@@ -115,8 +136,11 @@ product: jvm/app
 record User(String name) {}
 ```
 
-</div>
-<div>
+---
+kodee: false
+---
+
+# Tooling fence identities
 
 ## `bash`
 
@@ -124,20 +148,29 @@ record User(String name) {}
 ./gradlew test
 ```
 
+---
+kodee: false
+---
+
+# Tooling fence identities
+
 ## `xml maven`
 
 ```xml maven
 <artifactId>demo</artifactId>
 ```
 
+---
+kodee: false
+---
+
+# Tooling fence identities
+
 ## `sql`
 
 ```sql
 SELECT * FROM presentations;
 ```
-
-</div>
-</div>
 
 ---
 kodee: wink
