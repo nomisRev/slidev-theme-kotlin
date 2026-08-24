@@ -33,10 +33,13 @@ if (baseIndex !== -1 && !base)
   throw new Error('`--base` needs a Git revision, for example `--base origin/main`.')
 
 function empty(dir) {
-  // macOS may recreate .DS_Store while this directory is being removed.
-  // Retry ENOTEMPTY failures rather than making a visual review flaky.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  // Do not remove the directory itself: Finder/macOS can recreate .DS_Store in
+  // it while Node's recursive rm is trying to rmdir it, causing ENOTEMPTY.
+  // Keeping the directory and clearing its contents also preserves the output
+  // contract for callers, while a newly recreated .DS_Store is harmless.
   mkdirSync(dir, { recursive: true })
+  for (const entry of readdirSync(dir))
+    rmSync(join(dir, entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 }
 
 function listPngs(dir) {

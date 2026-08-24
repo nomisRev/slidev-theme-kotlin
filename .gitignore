@@ -8,5 +8,4 @@ dist
 .slidev/
 .idea/
 components.d.ts
-debug.js
 */*.iml

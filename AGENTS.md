@@ -3,4 +3,4 @@
   - node scripts/export-slide.mjs --slide 7 --click 2 --output artifacts/slide-7-click-2.png
   - node scripts/export-slide.mjs --entry talk.md --slide 7 --click 0
 - You can find Slidev SKILLS here, node_modules/@slidev/cli/skills/slidev/SKILL.md
-- In doubt read code in node_modules to understand the libraries you need to work with 
+- In doubt read code in node_modules to understand the libraries you need to work with
