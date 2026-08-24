@@ -276,7 +276,8 @@ const props = withDefaults(defineProps<{
   // bindings. Anything that needs an actual colour cannot read this raw.
   color: 'var(--drawn-annotation-color, currentColor)',
   strokeWidth: 2,
-  duration: 800,
+  // Keep the hand-drawn stage aligned with Magic Move and page transitions.
+  duration: 500,
   sequential: true,
   at: undefined,
   until: undefined,
@@ -387,8 +388,14 @@ const showImmediately = ref(false)
 // renders the slot provided, which plain `inject` walks straight past. Slidev's
 // own clicks context reaches nested components the same way.
 const outerClicksContext = injectLocal(realClicksKey, null)
-const $clicksContext = outerClicksContext ?? useSlideContext().$clicksContext
+const slideContext = useSlideContext()
+const $nav = slideContext.$nav
+const $clicksContext = outerClicksContext ?? slideContext.$clicksContext
 const $clicks = toRef($clicksContext, 'current')
+// Slidev mounts the previous and next slides ahead of time. An annotation on
+// one of those hidden slides must not paint before that slide becomes current,
+// otherwise the view-transition snapshot captures the finished mark.
+const isCurrentSlide = computed(() => slideContext.$page.value === $nav.value.currentSlideNo)
 provide(realClicksKey, $clicksContext)
 // Slidev's click ordering runs in the context the markers are rendered in, and
 // that one is shifted here. So these annotations resolve and register their
@@ -427,7 +434,7 @@ const withinRange = computed(() => $clicks.value < rangeEnd.value)
 // slide would inherit the delay too.
 const fadingOut = ref(false)
 /** How long the strokes' exit fade takes, mirrored into CSS as `--exit-fade`. */
-const EXIT_FADE_DURATION = 280
+const EXIT_FADE_DURATION = 300
 let exitFadeTimer: ReturnType<typeof setTimeout> | undefined
 watch(withinRange, (inside, wasInside) => {
   clearTimeout(exitFadeTimer)
@@ -435,7 +442,10 @@ watch(withinRange, (inside, wasInside) => {
   if (fadingOut.value)
     exitFadeTimer = setTimeout(() => fadingOut.value = false, EXIT_FADE_DURATION)
 })
-const reached = (click: Ref<number>) => computed(() => $clicks.value >= click.value && withinRange.value && painted.value)
+const reached = (click: Ref<number>) => computed(() => isCurrentSlide.value
+  && $clicks.value >= click.value
+  && withinRange.value
+  && painted.value)
 
 /**
  * Holds a stage back until everything has stopped moving, and then keeps it
@@ -509,7 +519,7 @@ const ARROW_FRACTION = 0.2
 const TARGET_FRACTION = 0.5
 const LABEL_HEAD_START = 0.1
 /** How long the label's opacity fade takes, mirrored into CSS as `--label-fade`. */
-const LABEL_FADE_DURATION = 240
+const LABEL_FADE_DURATION = 250
 
 // Whether a leader line is drawn at all: it needs somewhere to go.
 const connectsLine = computed(() => props.connect && (hasTarget.value || hasLabel.value))
@@ -805,15 +815,30 @@ function relevantAnimations() {
   const root = container.value
   if (!root?.getAnimations)
     return []
-  return root.getAnimations({ subtree: true }).filter((animation) => {
+
+  // A view transition is owned by the document, not by the incoming slide's
+  // slot. Its pseudo-elements therefore never appear in the annotation
+  // container's subtree, even though they are exactly the animation we must
+  // wait for before drawing on the new slide.
+  const viewTransitionAnimations = typeof document !== 'undefined'
+    ? document.getAnimations().filter((animation) => {
+        const pseudo = (animation.effect as KeyframeEffect | null)?.pseudoElement
+        return typeof pseudo === 'string' && pseudo.startsWith('::view-transition-')
+      })
+    : []
+  const animations = [...root.getAnimations({ subtree: true }), ...viewTransitionAnimations]
+
+  return [...new Set(animations)].filter((animation) => {
     if (animation.playState !== 'running' && !animation.pending)
       return false
     const target = (animation.effect as KeyframeEffect | null)?.target
-    // Pseudo-element and infinite animations cannot describe geometry we can
-    // measure to begin with. Most importantly, never wait for our own strokes:
+    const pseudo = (animation.effect as KeyframeEffect | null)?.pseudoElement
+    // Pseudo-elements belong to the page transition and are intentionally
+    // included. For regular elements, never wait for our own strokes or label:
     // they only start after `settled` opens the annotation.
-    return target instanceof Element
-      && !target.closest('.annotation-ignore')
+    const belongsToPageTransition = typeof pseudo === 'string' && pseudo.startsWith('::view-transition-')
+    const belongsToSlot = target instanceof Element && !target.closest('.annotation-ignore')
+    return (belongsToPageTransition || belongsToSlot)
       && Number.isFinite(animation.effect?.getComputedTiming().endTime)
   })
 }
@@ -828,7 +853,16 @@ function nextFrame() {
  * next transition while completing the previous one. A final frame lets the
  * browser commit the finished layout before it is measured for drawing.
  */
-async function settleAfterAnimations(run: number) {
+const VIEW_TRANSITION_START_GRACE = 100
+
+async function settleAfterAnimations(run: number, grace = 0) {
+  // Slidev starts document.startViewTransition() after a short timeout. A
+  // preloaded annotation can therefore observe the route change before the
+  // browser has created the view-transition pseudo-elements. Give that start
+  // callback time to run instead of concluding that there is nothing to wait
+  // for.
+  if (grace > 0)
+    await new Promise<void>(resolve => setTimeout(resolve, grace))
   await nextTick()
   await nextFrame()
   while (mounted && run === settleRun) {
@@ -852,7 +886,7 @@ async function settleAfterAnimations(run: number) {
  * Marks the annotation as moving again and keeps measuring until it stops.
  * Called on every click, because that is what starts a Magic Move step.
  */
-function unsettle() {
+function unsettle(grace = 0) {
   const run = ++settleRun
   // A click can restyle the slide, so measured label sizes go stale here —
   // once per click, which leaves them shared by every frame of the animation.
@@ -863,7 +897,7 @@ function unsettle() {
   }
   settled.value = false
   track(0)
-  void settleAfterAnimations(run)
+  void settleAfterAnimations(run, grace)
 }
 
 function scheduleUpdate() {
@@ -919,7 +953,7 @@ let everFound = false
 // click has been reached and the slide has stopped moving; before that, it may
 // simply not have arrived yet.
 const missingIsAnError = computed(() =>
-  settled.value && $clicks.value >= resolvedClick.value && withinRange.value)
+  isCurrentSlide.value && settled.value && $clicks.value >= resolvedClick.value && withinRange.value)
 
 /** Explains why nothing was drawn, once something should have been. */
 function explainMissing(match?: { range?: Range, matches: number }) {
@@ -1624,7 +1658,9 @@ onMounted(async () => {
   }
   // Navigating backwards remounts the slide. If this click was already reached,
   // render the final state instead of replaying the entrance animation.
-  showImmediately.value = $clicks.value >= resolvedClick.value && withinRange.value
+  showImmediately.value = isCurrentSlide.value
+    && $clicks.value >= resolvedClick.value
+    && withinRange.value
   unsettle()
   scheduleUpdate()
 
@@ -1677,6 +1713,18 @@ onBeforeUnmount(() => {
 watch($clicks, () => {
   unsettle()
   track(CLICK_TRACK_DURATION)
+}, { flush: 'sync' })
+
+// Preloaded slides can already contain their annotations before navigation
+// starts, so mount-time detection alone is not enough. Watching this annotation's
+// active-slide state also covers a preloaded component becoming visible inside
+// document.startViewTransition(); the grace period lets the browser create the
+// document-level pseudo-elements before the first animation scan.
+watch(isCurrentSlide, (current) => {
+  if (current) {
+    unsettle(VIEW_TRANSITION_START_GRACE)
+    track()
+  }
 }, { flush: 'sync' })
 
 // Any prop can change what is drawn or where the label may go, so re-measure
@@ -1830,8 +1878,8 @@ watch(props, () => {
      made them disappear much more harshly than the content around them.
      `--exit-fade` mirrors the EXIT_FADE_DURATION constant in the script. */
   transition:
-    stroke-dashoffset 1ms linear var(--exit-fade, 280ms),
-    opacity var(--exit-fade, 280ms) ease-out;
+    stroke-dashoffset 1ms linear var(--exit-fade, 300ms),
+    opacity var(--exit-fade, 300ms) ease-out;
 }
 
 .is-active .annotation-mark {
@@ -1879,7 +1927,7 @@ watch(props, () => {
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
-  transition: opacity var(--label-fade, 240ms) ease-out;
+  transition: opacity var(--label-fade, 250ms) ease-out;
 }
 
 /* Measured before it is placed, so keep it laid out but invisible until then. */

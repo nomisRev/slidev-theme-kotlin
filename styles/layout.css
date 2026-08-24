@@ -260,5 +260,5 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
    replaces begins its own click transition. */
 .slidev-layout:has(.drawn-annotation.is-fading-out)
   .slidev-vclick-target.slidev-vclick-current:not(.slidev-vclick-anim-none) {
-    transition-delay: 280ms;
+    transition-delay: 300ms;
 }
