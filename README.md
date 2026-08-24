@@ -76,6 +76,23 @@ uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` u
 Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
 remain plain code surfaces.
 
+### Code sizing
+
+Every code window uses one font size calculated from the slide canvas width. By
+default, a full-width window fits 68 monospace characters. Override the column
+count once in the deck's stylesheet:
+
+```css
+:root {
+  --code-window-columns: 72;
+}
+```
+
+The calculation accounts for the standard layout and code padding. A custom
+layout with different horizontal spacing can override
+`--code-window-inline-space`. To bypass column-based sizing entirely, set an
+explicit `--code-window-font-size`, for example `1.25rem`.
+
 ### Using Kodee Mascot
 
 Enable Kodee once for the whole deck with `themeConfig`:

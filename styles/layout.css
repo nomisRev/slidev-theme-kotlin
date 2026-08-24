@@ -5,6 +5,17 @@
 }
 
 :root {
+    /* Size every code window for the same number of monospace columns. The
+       calculation uses the slide canvas, not the individual code block, so a
+       deck gets one consistent font size. 8rem + 2px accounts for the default
+       layout padding, code padding, and border. */
+    --code-window-columns: 68;
+    --code-window-inline-space: calc(8rem + 2px);
+    /* JetBrains Mono is nominally .6em; the small allowance also covers
+       fallback monospace fonts without putting the last glyph on the border. */
+    --code-window-character-width: 0.61;
+    --code-window-line-height: 1.42;
+
     /* IntelliJ Light editor surface. */
     --editor-bg: #fff;
     --editor-fg: #080808;
@@ -20,11 +31,26 @@ html.dark {
     --editor-shadow: rgb(0 0 0 / 30%);
 }
 
-/* Code snippets are a single editor surface. Slidev titles are deliberately
-   hidden: the fence identity is shown as a compact icon in the top-right
-   corner instead of a separate code-window header. */
+/* Container units make the column count follow a custom Slidev canvas width
+   while remaining identical for full-width and nested code windows. */
+.slidev-page {
+    container: code-window-slide / inline-size;
+}
+
+/* Code snippets are a single editor surface. Code and toolbar sizing live on
+   the wrapper so they do not accidentally inherit a deck's enlarged body copy.
+   --code-window-font-size remains an optional explicit escape hatch. */
 .slidev-code-wrapper {
     position: relative;
+    font-size: var(
+        --code-window-font-size,
+        calc(
+            (100cqw - var(--code-window-inline-space))
+            / var(--code-window-columns)
+            / var(--code-window-character-width)
+        )
+    );
+    line-height: var(--code-window-line-height);
 }
 
 .slidev-code {
@@ -33,8 +59,12 @@ html.dark {
     background: var(--editor-bg) !important;
     color: var(--editor-fg) !important;
     box-shadow: 0 0.4rem 1.2rem var(--editor-shadow);
+    font-size: inherit !important;
+    line-height: inherit !important;
 }
 
+/* Slidev titles are deliberately hidden: the fence identity is shown as a
+   compact icon in the top-right corner instead of a separate header. */
 .slidev-code-wrapper:has(.slidev-code-block-title) .slidev-code-block-title {
     display: none;
 }
@@ -136,6 +166,17 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
 /* Keep Slidev's copy control and its hover/focus behavior, but place it where
    the archetype mark used to be. The mark itself owns the far-right corner. */
 .slidev-code-wrapper > .slidev-code-copy {
+    /* Give the control its own fixed coordinate system. Slidev otherwise lets
+       the button inherit the slide's body font and line-height while its SVG
+       remains 2rem, which moves the glyph when a deck enlarges regular copy. */
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+
     /* The glyph centres are 1.8rem apart (10% tighter than 2rem). */
     right: 1.8rem !important;
 
@@ -143,6 +184,11 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
        adds `top-10` to its clipboard button, leaving it well below the mark
        (and especially conspicuous as later steps grow). */
     top: 0 !important;
+}
+
+.slidev-code-wrapper > .slidev-code-copy > svg {
+    width: 2rem;
+    height: 2rem;
 }
 
 /* View Transition for Kodee Magic Move */
