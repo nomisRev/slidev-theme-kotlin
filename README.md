@@ -43,6 +43,39 @@ transition: view-transition
 # Your Presentation Title
 ```
 
+### Code icons
+
+Code fences are rendered as one IntelliJ Light/Darcula editor surface without a
+title bar. A compact identity icon is placed in its top-right corner and follows
+the presentation color scheme:
+
+````md
+```kotlin
+fun main() = println("Hello")
+```
+
+```kts gradle
+plugins { kotlin("jvm") }
+```
+
+```yaml toolchain
+product: jvm/app
+```
+
+```xml maven
+<artifactId>demo</artifactId>
+```
+
+```sql
+SELECT * FROM presentations;
+```
+````
+
+`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle` modifier
+uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the
+Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
+remain plain code surfaces.
+
 ### Using Kodee Mascot
 
 Enable Kodee once for the whole deck with `themeConfig`:
@@ -240,7 +273,7 @@ This will open the example presentation in your browser with hot-reload enabled.
 ├── styles/             # Theme styles
 │   ├── index.ts        # Style entry point
 │   └── layout.css      # Layout styles
-├── debug.js            # Utility script for enumerating Shiki Kotlin tokens
+├── .pi/extensions/inspect-shiki-token-scopes.ts # Local Pi tool for inspecting Shiki token scopes
 ├── slides.md           # Example presentation used for local development and GitHub Pages
 ├── package.json        # Package configuration and dependencies
 └── LICENSE             # Apache License 2.0

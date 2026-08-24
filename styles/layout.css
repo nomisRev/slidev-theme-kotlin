@@ -48,37 +48,42 @@ html.dark {
    plain `kts` block gets the Kotlin mark. */
 /* Ordinary fences carry the class on their <code>. Magic Move carries it on
    its wrapper because it renders precompiled tokens rather than a <code> node. */
-/* Each editor keeps the neutral IntelliJ surface, with only a low-saturation
-   outline tint taken from its identity mark. Plain fences retain the neutral
-   editor border above. */
+/* Each editor keeps the neutral IntelliJ surface, with its outline color
+   taken directly from its identity mark. Plain fences retain the neutral editor
+   border above. */
 .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
     --code-window-icon: url('/kotlin.svg');
-    --code-window-border: #cfc1ff;
+    --code-window-border: #834df0;
 }
 
 .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
     --code-window-icon: url('/gradle.svg');
-    --code-window-border: #a8d2d7;
+    --code-window-border: #6c707e;
 }
 
 .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
     --code-window-icon: url('/amper-icon.svg');
-    --code-window-border: #b9c9ff;
+    --code-window-border: #087cfa;
 }
 
 .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
     --code-window-icon: url('/java.svg');
-    --code-window-border: #efc695;
+    --code-window-border: #e66d17;
 }
 
 .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
     --code-window-icon: url('/terminal.svg');
-    --code-window-border: #acd4ae;
+    --code-window-border: #6c707e;
 }
 
 .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
     --code-window-icon: url('/maven.svg');
-    --code-window-border: #e0b5c0;
+    --code-window-border: #3574f0;
+}
+
+.slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-window-icon--postgresql)) {
+    --code-window-icon: url('/Postgresql_elephant.svg');
+    --code-window-border: #336791;
 }
 
 .slidev-code-wrapper:is([class*='code-window-icon--'], :has(code[class*='code-window-icon--']))::after {
@@ -97,31 +102,35 @@ html.dark {
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
     --code-window-icon: url('/kotlin_dark.svg');
-    --code-window-border: #5c4b91;
+    --code-window-border: #a571e6;
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
     --code-window-icon: url('/gradle_dark.svg');
-    --code-window-border: #416b70;
+    --code-window-border: #ced0d6;
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
-    --code-window-border: #4b5f96;
+    --code-window-border: #087cfa;
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
     --code-window-icon: url('/java_dark.svg');
-    --code-window-border: #805c38;
+    --code-window-border: #c77d55;
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
     --code-window-icon: url('/terminal_dark.svg');
-    --code-window-border: #496e4a;
+    --code-window-border: #ced0d6;
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
     --code-window-icon: url('/maven_dark.svg');
-    --code-window-border: #7d4c58;
+    --code-window-border: #548af7;
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-window-icon--postgresql)) {
+    --code-window-border: #336791;
 }
 
 /* Keep Slidev's copy control and its hover/focus behavior, but place it where
@@ -129,6 +138,11 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-windo
 .slidev-code-wrapper > .slidev-code-copy {
     /* The glyph centres are 1.8rem apart (10% tighter than 2rem). */
     right: 1.8rem !important;
+
+    /* Fence titles are hidden above. ShikiMagicMove still sees its title and
+       adds `top-10` to its clipboard button, leaving it well below the mark
+       (and especially conspicuous as later steps grow). */
+    top: 0 !important;
 }
 
 /* View Transition for Kodee Magic Move */

@@ -13,4 +13,6 @@ export function codeWindowIcon(language: string, meta = ''): string | undefined 
     return 'java'
   if (language === 'bash')
     return 'terminal'
+  if (language === 'sql')
+    return 'postgresql'
 }

@@ -130,6 +130,12 @@ record User(String name) {}
 <artifactId>demo</artifactId>
 ```
 
+## `sql`
+
+```sql
+SELECT * FROM presentations;
+```
+
 </div>
 </div>
 
@@ -280,15 +286,11 @@ kodee: tiny
 Every bundled mascot variant is ready to use in your slides.
 
 ---
-kodee: false
----
 
 # Drawn annotations
 
 `DrawnAnnotation` is bundled with the theme: it can mark an element or exact code text, then explain it with a label or connector.
 
----
-kodee: false
 ---
 
 # Annotate Kotlin code
@@ -303,8 +305,6 @@ fun main() {
 
 </DrawnAnnotation>
 
----
-kodee: false
 ---
 
 # Connect two elements
@@ -325,8 +325,6 @@ kodee: false
 </DrawnAnnotation>
 
 ---
-kodee: false
----
 
 # Four ways to mark something
 
@@ -346,8 +344,6 @@ kodee: false
 </DrawnAnnotation>
 
 ---
-kodee: false
----
 
 # Labels find room automatically
 
@@ -365,8 +361,6 @@ kodee: false
 </DrawnAnnotation>
 </DrawnAnnotation>
 
----
-kodee: false
 ---
 
 # Annotate a Magic Move step
@@ -398,8 +392,6 @@ fun main() {
 </DrawnAnnotation>
 
 ---
-kodee: false
----
 
 # Sequential marks share one click
 
@@ -411,8 +403,6 @@ The <b data-circled>circle</b> is drawn first; the <b data-underlined>underline<
 </DrawnAnnotation>
 </DrawnAnnotation>
 
----
-kodee: false
 ---
 
 # Control the sketch
@@ -426,8 +416,6 @@ kodee: false
 </DrawnAnnotation>
 </DrawnAnnotation>
 
----
-kodee: false
 ---
 
 # Compiler diagnostics: static code
@@ -444,8 +432,6 @@ fun retryAfter(attempt: Int): Int {
 </InlineCompilerError>
 
 ---
-kodee: false
----
 
 # Compiler diagnostics: exact and repeated text
 
@@ -461,8 +447,6 @@ println(accountId)
 
 The second occurrence is the diagnostic target; the first two clicks leave the code untouched.
 
----
-kodee: false
 ---
 
 # Compiler diagnostics follow Magic Move
@@ -486,8 +470,6 @@ fun welcome(user: User) = user.displayName
 </InlineCompilerError>
 
 ---
-kodee: false
----
 
 # Explicit label sides are directional
 
@@ -505,8 +487,6 @@ kodee: false
 </DrawnAnnotation>
 </DrawnAnnotation>
 
----
-kodee: false
 ---
 
 # Automatic labels share the free space
@@ -537,8 +517,6 @@ kodee: false
 </DrawnAnnotation>
 
 ---
-kodee: false
----
 
 # Later clicks are label obstacles
 
@@ -567,8 +545,6 @@ A later click introduces this explanation. A persistent label must not cover it.
 </DrawnAnnotation>
 
 ---
-kodee: false
----
 
 # A label belongs to its Magic Move step
 
@@ -593,8 +569,6 @@ fun session(): String = connect()
 
 </DrawnAnnotation>
 
----
-kodee: false
 ---
 
 # Leader lines do not become lassos
