@@ -45,7 +45,7 @@ The review-page introduction says it contains “167 rendered states from 61 sli
 
 ### Directional evidence
 
-The ink denotes **areas that are acceptable**, not a single chosen label centre. Across the 157 drawn valid areas:
+The ink denotes **areas that are acceptable**, not a single chosen label centre. The table below counts state-side pairs (157); the export contains 168 individual area strokes (up 28, right 70, down 69, left 1):
 
 | Accepted-side ink | Areas | Good states containing the side | Bad states containing the side |
 | --- | ---: | ---: | ---: |
@@ -250,6 +250,14 @@ The qualitative requirements are already strong enough to start a solver redesig
 5. **Area semantics are not formal.** It is unclear whether a valid circle means the label centre must be inside it, the entire label must fit in it, or it is a loose direction/region suggestion. The report assumes it means an acceptable label region/centre, but this should be confirmed.
 6. **Connector direction is implicit.** The route point order probably records drawing order, but it is not guaranteed to identify source → label. Export explicit `fromAnnotationId`, `to: 'label' | targetId`, start/end ports, and whether the route is a desired path or merely a route corridor.
 7. **Snapshot/render mismatch.** `exposed-fundamentals/008-09` notes that the exported image did not render correctly and judgment came from the dev server. Mark it as a manual-only fixture or re-export it before using it as a pixel/geometry regression.
+
+### Post-review clarifications (2026-08-27, confirmed with the reviewer)
+
+- Notes naming a technology refer to the **annotation related to it**, not to window chrome: "jdbc is rendered on the code window border" (`exposed-fundamentals/022-01`) means the JDBC-related label straddles the 1px window border. This is evidence for a code-window-border obstacle rule, now locked in the rewrite plan.
+- The per-record `validPlacementArea`/`label`/`connector` booleans are per-aspect "this is OK" verdicts. Their disagreements with the overall verdict are usable evidence — notably three `Good` states with `connector: false` (`kotlin-fundamentals/048-03`, `053-01`, `exposed-fundamentals/008-02`) and `exposed-fundamentals/039-03` (`Good`, `label` and `validPlacementArea` false, "not sure why so far away").
+- The single `left` valid area comes from a slide that deliberately centres content and places the annotation to its left — an extreme edge case that motivates strict explicit `left` and nothing more.
+- The item-3 disagreement count (22) is definition-dependent; a plain side-checkbox-versus-ink comparison yields 16. Regenerate such counts by script when building fixtures.
+- Of the §7 recommendations, the plan adopted `stability`, `layout-group`/`group-layout`, and diagnostics; palette cycling became the locked coexisting-rotation decision; multi-source annotations (one label over several marked elements, one solver-chosen connector) were added; `placement-fallback` and a `connector` mode prop were rejected — `connect` already disables, and strict sides stay strict.
 
 ## 10. Recommended re-export schema
 

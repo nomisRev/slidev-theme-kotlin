@@ -32,6 +32,8 @@ The raw review is evidence, not yet a direct automated oracle:
 - regions are approximate preferred areas, not exact required polygons;
 - current source/label boxes and logical connector geometry were not captured;
 - some checkbox summaries disagree with the drawn ink;
+- notes naming a technology (JDBC, R2DBC) refer to the annotation related to it, not to the code-window identity badges;
+- the per-record `validPlacementArea`/`label`/`connector` booleans are per-aspect "this is OK" verdicts; where they disagree with the overall verdict they classify what is wrong (placement versus connector);
 - `exposed-fundamentals/008-09` was judged from the development server because its captured image was incorrect.
 
 Before automated assertions are derived, curated fixtures must add stable annotation IDs, map feedback to those IDs, and define tolerant fixture-specific placement/route checks. See `docs/drawn-annotation-rewrite-plan.md`.

@@ -2,7 +2,7 @@
 
 **Status:** architecture and product decisions agreed; implementation has not started.  
 **Evidence:** `docs/drawn-annotation-positioning-review.md`, `review/drawn-annotation-review.json`, and `review/manifest.json`.  
-**Scope:** replace positioning, obstacle measurement, slide-level coordination, and connector routing. Preserve the existing source-marking, Slidev click, animation, Magic Move, target, RoughJS, and accessibility behaviour.  
+**Scope:** replace positioning, obstacle measurement, slide-level coordination, and connector routing. Preserve the existing source-marking, Slidev click, animation, Magic Move, target, RoughJS, and accessibility behaviour. Additionally extend the authoring contract with multi-source annotations (one label marking several elements) and deterministic palette rotation for coexisting annotations.  
 **Primary review gates:** annotation-specific geometry regression tests, curated visual review across all three decks, then manual browser/iPad review.
 
 ## 1. Locked decisions
@@ -17,6 +17,11 @@
 | Label motion | Once revealed, a label does not move until it disappears. A moving source can update its mark and the source-facing portion of its leader only. |
 | Full slides | Keep the annotation visible at the deterministic least-bad result and warn. The author then chooses a manual location, shorter label, reserved region, different reveal, or another presentation solution. |
 | Code windows | The code-window background is usable label and route space. Rendered code/text remains an obstacle. The theme no longer has code title/tab chrome, so no special title-strip model is required. Custom consumer chrome can be reserved with `avoid-selector`/`reserve-selector`. |
+| Code-window border | The window's border line is a hard label obstacle with clearance on both sides: a label may sit inside the code body or outside the window, never straddling the border (`exposed-fundamentals/022-01`). Routes may still cross the border to connect inside and outside. |
+| Theme-owned chrome | The code-window identity mark (a `::after` pseudo-element invisible to DOM collectors), the JDBC/R2DBC identity text badges (being moved into the base theme), and the copy control are theme-owned reserved boxes computed by the measurement adapter. `avoid-selector`/`reserve-selector` remain for genuinely custom consumer chrome only. |
+| Multi-source annotations | One annotation may mark several elements through the `source` union. All source marks draw simultaneously in one colour and share one label; exactly one connector runs from the mark best positioned for the solved label, and the connecting mark is chosen jointly with the label position, not after it. |
+| Automatic palette | Annotations without an explicit `color` that are visible in the same state rotate deterministically through the theme palette (`--drawn-annotation-color-1..n`, overridable by consumers): the first keeps the primary colour, later coexisting ones take the next slots in reveal order, with authored order as the tie-break. A revealed annotation's colour freezes with its box. Annotations that never coexist all keep the primary colour, explicit `color` always wins, and colour still never creates a layout group. |
+| RoughJS seed | Source and target marks keep the current seed recipe so existing wobble is unchanged in the good-state review; only new geometry (leaders, routes) uses the resolved-ID seed. An explicit seed still wins. |
 | Future content | Guarantee only current geometry and future geometry that is already measurably represented in the DOM. Do not claim knowledge of arbitrary future Magic Move or conditionally rendered states. Unknown future geometry is handled by diagnostics and author reservations. |
 | Grouping | Colour never creates a layout group. Every annotation has an identity; an explicit group key and group layout express intentional composition. |
 | Stable identity | Add optional `id`. Without it, derive a deterministic ID from authored source information and stable slide-local annotation marker order—not measured coordinates, mount time, or observer order. |
@@ -42,7 +47,7 @@
 - Inferring arbitrary future Vue or Magic Move states that are not in the DOM.
 - Finding a mathematically optimal layout for unbounded annotation counts.
 - Automatically reproducing freehand reviewer strokes pixel for pixel.
-- Rewriting click registration, source text matching, mark animation, or accessibility.
+- Rewriting click registration, mark animation, or accessibility. The text-matching algorithm itself is retained; source lookup is only extended to accept the `source` union.
 - Eliminating the need for author direction on exceptionally dense slides.
 
 ## 3. Architectural boundary
@@ -90,6 +95,28 @@ The source slot remains where it was authored. Existing mark animation can eithe
 
 ## 4. Public positioning contract
 
+### Source contract
+
+```ts
+type SourceItem =
+  | string                                                  // exact text match, occurrence 1
+  | { text: string, occurrence?: number, multiline?: boolean }
+  | { selector: string }
+type Source = SourceItem | SourceItem[]
+```
+
+- A bare string is always a text match; selectors always use the object form. Strings such as `<A>` are not valid CSS, so a bare string must never be interpreted as a selector.
+- `text`, `selector`, `occurrence`, and `multiline` remain supported single-source shorthands; `source` and the shorthands are mutually exclusive on one annotation.
+- With several items, every resolvable item is marked; an item that is legitimately absent (for example in another Magic Move step) is skipped, and the existing missing-source diagnostics apply per item once the annotation's click is reached and settled.
+- All marks of one annotation draw simultaneously over the shared mark stage and share the annotation's colour.
+- Exactly one connector runs from the source group to the label; the connecting mark is a solver decision made jointly with the label position (typically the nearest mark), with the deterministic tie-break tuple deciding equal candidates.
+
+### Palette
+
+The base theme defines `--drawn-annotation-color` (primary, existing) plus a numbered rotation palette `--drawn-annotation-color-1..n` that consumers can redefine. Rotation applies only to annotations without an explicit `color` that are visible in the same state, per the locked decision above.
+
+### Positioning props
+
 ```ts
 type Placement = 'auto' | 'up' | 'right' | 'down' | 'left'
 type GroupLayout = 'auto' | 'stack-right' | 'stack-down'
@@ -121,7 +148,7 @@ interface PositioningProps {
 - `layoutGroup` declares annotations that should compose as a set. It is never inferred.
 - `groupLayout` provides the reliable escape hatch for an ordered right-side or downward stack. Non-`auto` group layout requires `layoutGroup` and emits a development warning otherwise.
 
-All existing non-positioning props remain in the component contract. Before implementation, add a characterization checklist covering `text`, `selector`, `occurrence`, `multiline`, source/target mark types, target coordinates, `connect`, `arrow`, `curve`, `at`, `labelAt`, `until`, `on`, `insert`, `sequential`, `wait`, `track`, RoughJS options, and screen-reader announcements.
+All existing non-positioning props remain in the component contract. Before implementation, add a characterization checklist covering `text`, `selector`, `occurrence`, `multiline`, source/target mark types, target coordinates, `connect`, `arrow`, `curve`, `at`, `labelAt`, `until`, `on`, `insert`, `sequential`, `wait`, `track`, `padding`, `iterations`, `duration`, `color`, `stroke-width`, RoughJS options, and screen-reader announcements. The checklist must also cover retained behaviours, not only props: backward navigation rendering the final state without replaying the entrance, the exit-fade geometry freeze while an annotation leaves its click range, `on` deriving its range end from the label's click when `labelAt` is later, the `insert` click-shift proxy's `register` adjustment, warning deduplication, and the Magic Move settle/track interplay including reversed navigation through animated steps.
 
 ## 5. Identity and registration
 
@@ -131,7 +158,7 @@ Fallback IDs use this stable tuple:
 
 ```text
 slide identity
-+ source descriptor (`selector`, or `text` + occurrence)
++ canonical serialised source union (each item's `selector`, or `text` + occurrence, in authored order)
 + label/target descriptor
 + click contract
 + stable annotation-marker ordinal in authored slide DOM order
@@ -139,7 +166,7 @@ slide identity
 
 Measured source coordinates are not part of identity because they can change across clicks, fonts, responsive layout, and Magic Move. A module counter, Vue instance UID, mount time, and observer order are also forbidden.
 
-Explicit IDs are required for curated review fixtures and strongly recommended for layout groups and otherwise duplicate annotations. The resolved ID participates in deterministic tie-breaking and the default RoughJS seed; an explicit RoughJS seed still wins.
+Explicit IDs are required for curated review fixtures and strongly recommended for layout groups and otherwise duplicate annotations. The resolved ID participates in deterministic tie-breaking and seeds the RoughJS wobble of new geometry (leaders and routes); source and target marks keep the current seed recipe so existing wobble stays unchanged, and an explicit RoughJS seed still wins.
 
 The coordinator registry is keyed by the actual slide root, not a global current-slide number, because Slidev can preload slides and print/export multiple slide instances.
 
@@ -158,6 +185,8 @@ A `Box` is `{ left, top, right, bottom }`; width, height, and centre are derived
 | Images, videos, canvases, SVG illustrations | hard | hard |
 | Cards, tables, block quotes | hard whole box by default | text/media hard; outer box configurable/soft unless explicitly reserved |
 | Empty code-window body/background | permitted | permitted |
+| Code-window border line | hard, with clearance on both sides — a label never straddles it | permitted to cross |
+| Theme-owned window chrome: identity icon (`::after`), identity text badges, copy control | hard, reserved by the measurement adapter itself | hard |
 | Current/frozen labels | hard | hard |
 | Other annotation marks and owned destinations | excluded/owned as appropriate | hard except at owned ports |
 | `avoidSelector` boxes | hard in current state | hard |
@@ -306,6 +335,8 @@ Every label revealed in the same state is solved together, whether grouped or no
 
 `layoutGroup` strengthens composition but does not isolate the group from other labels.
 
+For a multi-source annotation, the connecting mark is one of the joint solver's decision variables: each candidate label position is evaluated with the best port over all of the annotation's marks, so the label lands where some mark connects cleanly rather than connecting to a pre-chosen mark. The coordinator also assigns palette slots here, because only it sees which unstyled annotations coexist in the state.
+
 For `stack-right`:
 
 - preserve authored/source vertical order when source geometry is known;
@@ -377,8 +408,15 @@ Before the review data becomes an automated oracle:
 2. attach each accepted region and desired route to an annotation ID;
 3. re-export the known mismatched `exposed-fundamentals/008-09` state;
 4. resolve materially useful no-verdict states;
-5. record whether each fixture checks placement, route, both, or only manual visual quality;
+5. record whether each fixture checks placement, route, both, or only manual visual quality — seeded from the export's per-aspect `validPlacementArea`/`label`/`connector` booleans, whose disagreements with the overall verdict are first-class evidence: `Good` states with `connector: false` (`kotlin-fundamentals/048-03`, `053-01`, `exposed-fundamentals/008-02`) become route-quality fixtures, and `exposed-fundamentals/039-03` (`Good`, `label`/`validPlacementArea` false, "not sure why so far away") becomes a distance/region-waste score fixture;
 6. translate approximate freehand regions into fixture-specific tolerances rather than treating their path pixels as exact boundaries.
+
+Interpretation rules for the raw export, confirmed with the reviewer:
+
+- notes naming a technology refer to the annotation related to it, not to window chrome — "jdbc is rendered on the code window border" means the JDBC-related *label* straddles the window border;
+- the single `left` valid area comes from a slide that deliberately centres its content and places the annotation left of it; it is the strict-explicit-left fixture, not evidence for automatic left placement;
+- the per-aspect booleans mean "this aspect is OK" and are usable evidence despite sparse coverage;
+- the directional table in the analysis report counts state-side pairs (157); the export contains 168 individual area strokes.
 
 For approximate regions, automated checks may use expected side plus tolerant box/region overlap or distance-to-region. The exact tolerance is stored per fixture. Label-centre inclusion alone is insufficient for a large label, while full polygon containment is too strict for loose freehand ink.
 
@@ -444,6 +482,7 @@ Mandatory:
 - code-body whitespace cases;
 - strict directional examples including explicit left;
 - nested-component and manual-position examples;
+- new multi-source and palette-rotation demo fixtures (no reviewed states exist yet for either);
 - a representative good-state regression set from every deck.
 
 Final approval remains manual. iPad/Safari review checks label jumps, clipping, route association, code-window readability, font-metric differences, transition timing, and click-navigation performance.
@@ -471,19 +510,21 @@ Prove seven end-to-end vertical slices:
 4. frozen label plus later label;
 5. unknown future Magic Move geometry;
 6. nested positioned component with shared slide-local rendering;
-7. export/print capture.
+7. export/print capture;
+8. target-only connector participating in route coordination;
+9. multi-source annotation whose connecting mark is chosen jointly with the label.
 
 **Gate:** coordinate ownership, readiness, freezing, and transaction lifecycle are demonstrated before broad implementation.
 
 ### Phase 2 — pure engine
 
-Implement geometry, width candidates, strict side semantics, feasibility ordering, deterministic scoring, direct logical routes, and diagnostics.
+Implement geometry, width candidates, strict side semantics, feasibility ordering, deterministic scoring, direct logical routes, and diagnostics. Engine input models an annotation as one or more mark boxes from the start, so multi-source needs no later input-shape change.
 
 **Gate:** comprehensive unit/property tests pass, including reordered inputs and infeasible fallbacks.
 
 ### Phase 3 — coordinator and single-label integration
 
-Implement registry, IDs, hidden host, readiness, immutable snapshots, shared rendering layer, atomic publication, manual positions, and frozen state. Keep group search disabled initially.
+Implement registry, IDs, hidden host, readiness, immutable snapshots, shared rendering layer, atomic publication, manual positions, and frozen state. Extend the adapter's source lookup to the `source` union (multi-range measurement, per-item diagnostics) and add the theme-owned chrome and code-window border reservations to the measurement adapter. Keep group search disabled initially.
 
 **Gate:** repeatable geometry across cold mounts, navigation, scale, delayed assets, nested components, settled transitions, and export.
 
@@ -495,9 +536,9 @@ Tune bounded all-direction auto placement and direct connectors against reviewed
 
 ### Phase 5 — online multi-label and groups
 
-Add joint solving of newly revealed labels, frozen-obstacle handling, explicit groups, stacks, and route lanes.
+Add joint solving of newly revealed labels, frozen-obstacle handling, explicit groups, stacks, and route lanes. Add the coordinator's palette rotation for coexisting unstyled annotations, with the base theme's `--drawn-annotation-color-1..n` variables.
 
-**Gate:** multi-label fixtures are deterministic, non-jumping, ordered, and visually accepted.
+**Gate:** multi-label fixtures are deterministic, non-jumping, ordered, and visually accepted; palette assignment is deterministic and frozen colours never change.
 
 ### Phase 6 — known-future reservations
 

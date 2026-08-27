@@ -54,6 +54,14 @@ the presentation color scheme:
 fun main() = println("Hello")
 ```
 
+```kotlin jdbc
+val database = Database.connect("jdbc:postgresql://localhost/example")
+```
+
+```kotlin r2dbc
+val database = R2dbcDatabase.connect("r2dbc:postgresql://localhost/example")
+```
+
 ```kts gradle
 plugins { kotlin("jvm") }
 ```
@@ -71,7 +79,8 @@ SELECT * FROM presentations;
 ```
 ````
 
-`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle` modifier
+`kotlin`, `kt`, and `kts` use the Kotlin icon. Kotlin fences with the `jdbc` or
+`r2dbc` modifier use matching text badges and border colours; the `gradle` modifier
 uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the
 Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
 remain plain code surfaces.
@@ -83,6 +92,8 @@ value:
 ```css
 :root {
   --code-window-kotlin-color: #834df0;
+  --code-window-jdbc-color: #f59e0b;
+  --code-window-r2dbc-color: #06b6d4;
   --code-window-gradle-color: #6c707e;
   --code-window-amper-color: #087cfa;
   --code-window-java-color: #e66d17;
