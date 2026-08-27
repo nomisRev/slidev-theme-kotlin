@@ -8,6 +8,8 @@
     /* Identity colours for code-window borders. Keep these as theme tokens so
        decks can tune the palette without reimplementing icon matching. */
     --code-window-kotlin-color: #834df0;
+    --code-window-jdbc-color: #f59e0b;
+    --code-window-r2dbc-color: #06b6d4;
     --code-window-gradle-color: #6c707e;
     --code-window-amper-color: #087cfa;
     --code-window-java-color: #e66d17;
@@ -43,6 +45,8 @@ html.dark {
     /* Dark variants preserve each identity hue while staying legible on
        Darcula's dark editor surface. */
     --code-window-kotlin-color: #a571e6;
+    --code-window-jdbc-color: #f59e0b;
+    --code-window-r2dbc-color: #06b6d4;
     --code-window-gradle-color: #ced0d6;
     --code-window-amper-color: #087cfa;
     --code-window-java-color: #c77d55;
@@ -110,6 +114,14 @@ html.dark {
     --code-window-border: var(--code-window-kotlin-color);
 }
 
+.slidev-code-wrapper:is(.code-window-icon--jdbc, :has(code.code-window-icon--jdbc)) {
+    --code-window-border: var(--code-window-jdbc-color);
+}
+
+.slidev-code-wrapper:is(.code-window-icon--r2dbc, :has(code.code-window-icon--r2dbc)) {
+    --code-window-border: var(--code-window-r2dbc-color);
+}
+
 .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
     --code-window-icon: url('/gradle.svg');
     --code-window-border: var(--code-window-gradle-color);
@@ -153,6 +165,29 @@ html.dark {
     pointer-events: none;
 }
 
+/* JDBC and R2DBC are transport identities, so name them directly instead of
+   showing the Kotlin logo. The modifier on a Kotlin fence selects the badge. */
+.slidev-code-wrapper:is(.code-window-icon--jdbc, :has(code.code-window-icon--jdbc))::after,
+.slidev-code-wrapper:is(.code-window-icon--r2dbc, :has(code.code-window-icon--r2dbc))::after {
+    width: auto;
+    height: auto;
+    background: none;
+    font-family: var(--font-sans, sans-serif);
+    font-size: 1.2rem;
+    font-weight: 800;
+    line-height: 1rem;
+}
+
+.slidev-code-wrapper:is(.code-window-icon--jdbc, :has(code.code-window-icon--jdbc))::after {
+    color: var(--code-window-jdbc-color);
+    content: 'JDBC';
+}
+
+.slidev-code-wrapper:is(.code-window-icon--r2dbc, :has(code.code-window-icon--r2dbc))::after {
+    color: var(--code-window-r2dbc-color);
+    content: 'R2DBC';
+}
+
 html.dark .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
     --code-window-icon: url('/kotlin_dark.svg');
     --code-window-border: var(--code-window-kotlin-color);
@@ -188,6 +223,15 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
 
 /* Keep Slidev's copy control and its hover/focus behavior, but place it where
    the archetype mark used to be. The mark itself owns the far-right corner. */
+.slidev-code-wrapper:is(
+    .code-window-icon--jdbc,
+    .code-window-icon--r2dbc,
+    :has(code.code-window-icon--jdbc),
+    :has(code.code-window-icon--r2dbc)
+) > .slidev-code-copy {
+    right: 4rem !important;
+}
+
 .slidev-code-wrapper > .slidev-code-copy {
     /* Give the control its own fixed coordinate system. Slidev otherwise lets
        the button inherit the slide's body font and line-height while its SVG
