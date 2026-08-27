@@ -139,12 +139,11 @@ html.dark {
 .slidev-code-wrapper:is([class*='code-window-icon--'], :has(code[class*='code-window-icon--']))::after {
     position: absolute;
     z-index: 1;
-    /* Slidev's 2rem copy control centres its padded 1rem glyph 1rem from
-       the top and right edges. Match that centre with this 1rem marker. */
+    /* Keep the 2rem mark inset by half a rem from the editor edges. */
     top: 0.5rem;
     right: 0.5rem;
-    width: 1rem;
-    height: 1rem;
+    width: 2rem;
+    height: 2rem;
     background: center / contain no-repeat var(--code-window-icon);
     content: '';
     pointer-events: none;
@@ -197,18 +196,20 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
     font-size: 1rem;
     line-height: 1;
 
-    /* The glyph centres are 1.8rem apart (10% tighter than 2rem). */
-    right: 1.8rem !important;
+    /* Leave a 0.3rem gap beside the 2rem identity mark. */
+    right: 2.8rem !important;
 
-    /* Fence titles are hidden above. ShikiMagicMove still sees its title and
-       adds `top-10` to its clipboard button, leaving it well below the mark
-       (and especially conspicuous as later steps grow). */
-    top: 0 !important;
+    /* Align the 2rem clipboard glyph with the identity mark: both sit a half
+       rem below the top border. This also neutralizes Magic Move's `top-10`. */
+    top: 0.5rem !important;
 }
 
 .slidev-code-wrapper > .slidev-code-copy > svg {
+    /* Slidev pads its 2rem SVG down to a 1rem glyph. Remove that padding so
+       the clipboard matches the 2rem language/database mark beside it. */
     width: 2rem;
     height: 2rem;
+    padding: 0;
 }
 
 /* View Transition for Kodee Magic Move */
