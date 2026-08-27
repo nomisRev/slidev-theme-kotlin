@@ -259,6 +259,12 @@ The qualitative requirements are already strong enough to start a solver redesig
 - The item-3 disagreement count (22) is definition-dependent; a plain side-checkbox-versus-ink comparison yields 16. Regenerate such counts by script when building fixtures.
 - Of the §7 recommendations, the plan adopted `stability`, `layout-group`/`group-layout`, and diagnostics; palette cycling became the locked coexisting-rotation decision; multi-source annotations (one label over several marked elements, one solver-chosen connector) were added; `placement-fallback` and a `connector` mode prop were rejected — `connect` already disables, and strict sides stay strict.
 
+The three ambiguous states are resolved by the reviewer as follows:
+
+- **`exposed-fundamentals/008-05`** (previously no verdict): the drawn right area belongs to the `CASCADE, SET_NULL, …` annotation. Its current label rendered too low on the slide and straddling the code-window border — a second instance of the border-straddling defect from `022-01`. It should sit entirely inside the code window, close to the annotated code. The state's other label was fine.
+- **`kotlin-fundamentals/060-02`** (previously no verdict): the two right-side areas, circled one below the other inside the code window, map to two sequential annotated lines — the top area to the first line, the bottom area to the second. The first label was placed fine but its connector was bad; the second label was drawn too far up, landing close to the first line and confusing the association, and should move down. Direct evidence for the source-to-label ordering and association costs.
+- **`kotlin-fundamentals/059-01`** (`Bad`): two annotated elements/groups are visible at once, each with its own areas — not one shared right column. The top annotation is boxed in by surrounding code: it must go below everything (down is the best position) or tuck into the right-bottom. The second annotated element (`name`) should be placed up/right close to itself, in the open code-window space beside it.
+
 ## 10. Recommended re-export schema
 
 A small schema upgrade would make the next review directly actionable:
