@@ -2113,6 +2113,7 @@ onBeforeUnmount(() => {
       <g
         v-if="connectorEditable && annotationEditMode && geometry.connectorStart && geometry.connectorEnd"
         class="annotation-connector-editor"
+        @click.stop
       >
         <!-- Visible ports make snapping discoverable; they are decorative,
              unlike the keyboard-accessible endpoint controls below. -->
@@ -2159,6 +2160,7 @@ onBeforeUnmount(() => {
       @pointermove="moveLabelDrag"
       @pointerup="endLabelDrag"
       @pointercancel="cancelLabelDrag"
+      @click.stop
       :style="{
         '--annotation-color': props.color,
         '--label-delay': `${delays.label}ms`,
