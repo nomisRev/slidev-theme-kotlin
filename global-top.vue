@@ -195,6 +195,7 @@ async function resetAll() {
       <span class="drawn-annotation-toolbar__selection">{{ selected ? `Selected: ${selected}` : 'Select a visible annotation' }}</span>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('label')">Reset label</button>
+      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('connector')">Reset connector</button>
       <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorAttachment">
         {{ selectedConnectorManual ? 'Use automatic connector' : 'Make connector manual' }}
       </button>

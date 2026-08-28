@@ -33,6 +33,29 @@ describe('DrawnAnnotation writer client', () => {
     ])
   })
 
+  it('resets only connector endpoints, preserving saved label geometry', async () => {
+    let revision = 'initial'
+    const requests: { expectedRevision: string, annotations: Record<string, Record<string, number | null> | null> }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (!init?.method)
+        return Response.json({ geometry: { note: { x: .1, y: .2, width: .3, x1: .3, y1: .4, x2: .5, y2: .6 } }, revision })
+      const request = JSON.parse(init.body as string)
+      requests.push(request)
+      expect(request.expectedRevision).toBe(revision)
+      revision = 'connector-reset'
+      return Response.json({ geometry: { note: { x: .1, y: .2, width: .3 } }, revision })
+    }))
+
+    const writer = await import('./writer-client')
+    await writer.loadAnnotationGeometry()
+    await writer.resetAnnotationGeometry('note', 'connector')
+
+    expect(requests).toEqual([{
+      expectedRevision: 'initial',
+      annotations: { note: { x1: null, y1: null, x2: null, y2: null } },
+    }])
+  })
+
   it('restores an exact snapshot, clearing connector fields introduced by a later edit', async () => {
     let revision = 'initial'
     const requests: { expectedRevision: string, annotations: Record<string, Record<string, number | null> | null> }[] = []

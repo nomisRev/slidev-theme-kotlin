@@ -64,8 +64,9 @@ ports; hold `Alt` while dragging to place freely. Arrow keys nudge whichever
 control was selected: labels move their label, endpoint handles move that
 endpoint, and a connector body moves the complete line (`Shift` makes larger
 steps). The toolbar can undo completed saves (or press **Cmd/Ctrl+Z** while an
-annotation is selected) and explicitly switch the selected connector between a
-manual frozen route and its automatic attached route.
+annotation is selected), reset a selected label, connector, or complete
+annotation to its authored defaults, and explicitly switch the selected
+connector between a manual frozen route and its automatic attached route.
 Configure a different generated file beneath the deck root with
 `drawnAnnotationEditor({ output: 'styles/my-annotations.css' })`, and import
 that same file from the deck stylesheet.
