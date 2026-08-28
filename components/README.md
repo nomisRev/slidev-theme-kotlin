@@ -192,8 +192,9 @@ next step. Set `:wait="false"` to draw as soon as the click arrives.
 ## Visual-editor geometry
 
 `id` is an optional stable, deck-wide identity for a `DrawnAnnotation`. It is
-required by the development-only visual editor, but annotations without
-one continue to render normally. Use CSS-safe IDs matching
+required by the development-only visual editor for annotations with a label or
+connector, but annotations without one (including source-only marks) continue
+to render normally. Use CSS-safe IDs matching
 `[A-Za-z][A-Za-z0-9_.-]*`:
 
 ```html

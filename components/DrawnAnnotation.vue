@@ -294,6 +294,11 @@ const resolvedPlacement = computed(() => {
 // decided once, and an empty string counts as absent everywhere.
 const hasLabel = computed(() => !!props.label)
 const hasTarget = computed(() => !!props.target)
+// A source-only mark exposes no visual-editor operation. Do not make a deck
+// that deliberately uses those marks look invalid merely because they have no
+// persistence identity; IDs are required only where the editor can move a
+// label or connector.
+const editorRelevant = computed(() => hasLabel.value || (props.connect && hasTarget.value))
 
 if (props.on !== undefined && (props.at !== undefined || props.until !== undefined))
   warn('`on` is `at` and `until` in one, so the separate `at` / `until` given here are ignored. Use either `on` alone, or `at` and `until`.')
@@ -1439,7 +1444,7 @@ function backOff(point: { x: number, y: number }, from: { x: number, y: number }
 
 onMounted(async () => {
   mounted = true
-  if (isAnnotationEditorDevelopment) {
+  if (isAnnotationEditorDevelopment && editorRelevant.value) {
     unregisterEditorId = registerAnnotationEditorId(props.id, !!props.id && DRAWN_ANNOTATION_ID.test(props.id))
     if (props.id && DRAWN_ANNOTATION_ID.test(props.id)) {
       unregisterEditorActions = registerAnnotationEditorActions(props.id, {
