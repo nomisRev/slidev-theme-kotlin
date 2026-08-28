@@ -92,3 +92,11 @@ export function clearLabelDraft(id: string) {
   annotationDrafts.delete(id)
   annotationGeometryVersion.value++
 }
+
+/** Drop every local preview after a document-wide reset. */
+export function clearAllAnnotationDrafts() {
+  if (!annotationDrafts.size)
+    return
+  annotationDrafts.clear()
+  annotationGeometryVersion.value++
+}

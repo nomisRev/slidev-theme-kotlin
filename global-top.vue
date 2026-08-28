@@ -3,9 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   annotationEditMode,
   annotationEditorStatus,
+  clearAllAnnotationDrafts,
   clearLabelDraft,
   duplicateAnnotationIds,
   missingAnnotationIds,
+  recordAnnotationUndo,
   selectedAnnotationId,
   takeAnnotationUndo,
 } from './components/drawn-annotation/editor-store'
@@ -56,11 +58,15 @@ async function resetSelected(part: 'label' | 'connector' | 'all') {
   try {
     if (!import.meta.env.DEV)
       return
-    const { resetAnnotationGeometry, saveLabelGeometry } = await import('./components/drawn-annotation/writer-client')
+    const { cachedAnnotationGeometry, resetAnnotationGeometry, saveLabelGeometry } = await import('./components/drawn-annotation/writer-client')
+    // Resetting is a completed edit too: keep the rule we are about to remove
+    // so Undo can restore it instead of making reset a destructive dead end.
+    const previous = cachedAnnotationGeometry(selected.value)
     if (part === 'all')
       await saveLabelGeometry(selected.value, null)
     else
       await resetAnnotationGeometry(selected.value, part)
+    recordAnnotationUndo(selected.value, previous)
     // A local draft has higher precedence than CSS, so drop it after a reset.
     clearLabelDraft(selected.value)
     annotationEditorStatus.value = `${selected.value} reset to authored defaults`
@@ -99,8 +105,16 @@ async function resetAll() {
   try {
     if (!import.meta.env.DEV)
       return
-    const { resetAllAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
+    const { loadAnnotationGeometry, resetAllAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
+    // Preserve each existing rule independently. This makes Reset all
+    // recoverable by selecting an annotation and using Undo afterwards.
+    const current = await loadAnnotationGeometry()
     await resetAllAnnotationGeometry()
+    for (const [id, geometry] of Object.entries(current.geometry))
+      recordAnnotationUndo(id, geometry)
+    // Drafts render ahead of CSS HMR. Leaving one behind would make a reset-all
+    // look like it failed until the slide was reloaded.
+    clearAllAnnotationDrafts()
     annotationEditorStatus.value = 'All annotations reset to authored defaults'
   }
   catch (error) {
