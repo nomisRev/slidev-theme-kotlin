@@ -59,30 +59,28 @@ the label next to it.
 
 ## Where the label goes
 
-A label is placed out of the slide's normal flow. Automatic placement uses
-hard collision checks against settled click-state snapshots and labels whose
-visibility intervals overlap. It prefers the vertical direction away from the
-slide centre, then tries the opposite vertical direction and the sides. The
-unused body of a code window is available as label space, while its title and
-tab strip remain reserved; labels therefore use a large code window without
-ever reading as part of its chrome. Future click states are collected
-incrementally, so a persistent label can move atomically before a newly
-revealed obstacle is painted.
+A label is placed out of the slide's normal flow. Its automatic fallback is
+intentionally small and deterministic: `auto` chooses below a mark in the
+upper half of the slide and above one in the lower half; an explicit
+`placement` chooses that side. The result is constrained to the slide margin
+and wraps only when its natural width cannot fit. It does **not** scan the
+slide, future click states, or other annotations for obstacles. This prevents
+unrelated content and click changes from moving an already composed label.
 
-An explicit `placement` is a directional contract: `down` remains below the
-mark, for example. If no clear candidate exists on that side, the label is
-hidden with a development warning rather than silently moved elsewhere. A
-manual `label-x` or `label-y` is an author assertion and bypasses collision and
-safe-area checks.
+Use `label-x`, `label-y`, and `label-width` for a fixed authored position, or
+the development visual editor for the same geometry persisted as normalized
+CSS. A saved editor value wins over the matching Markdown prop. The legacy
+`clearance` and `avoid-selector` props are accepted for compatibility but no
+longer affect placement.
 
 | prop | default | meaning |
 | --- | --- | --- |
-| `placement` | `auto` | strict side (`up`, `down`, `left`, `right`), or teaching-oriented automatic side selection |
-| `label-x`, `label-y` | – | label centre as a percentage of the slide; disables the search |
-| `label-width` | – | maximum width in slide pixels before the label wraps; by default a label stays on one line and only wraps when that line cannot fit or stay clear of content |
-| `gap` | `28` | smallest distance between the mark and the label, in slide pixels |
-| `clearance` | `16` | space the label keeps from everything else on the slide |
-| `avoid-selector` | – | extra elements the label must not cover |
+| `placement` | `auto` | fallback side: `up`, `down`, `left`, `right`, or automatic vertical choice |
+| `label-x`, `label-y` | – | label centre as a percentage of the concrete slide; disables automatic placement for that axis |
+| `label-width` | – | maximum width in slide pixels before wrapping |
+| `gap` | `28` | distance between the mark and automatically placed label, in slide pixels |
+| `clearance` | `16` | deprecated; has no effect |
+| `avoid-selector` | – | deprecated; has no effect |
 
 ## When it is drawn
 
@@ -292,11 +290,10 @@ Slidev. To move it into a theme:
 3. define `--drawn-annotation-color` (and, if wanted, the label variables
    above) in the theme's styles to pick the theme-wide default look.
 
-Nothing in the component reads deck-specific state: every colour, font and
-duration flows in through props or the CSS variables above. The label's
-automatic placement knows about the Kotlin theme's `.card` callouts and its
-`.kodee-character` mascot, keeps clear of code blocks, tables, quotes and
-images on any slide, and `avoid-selector` opts in anything else.
+Nothing in the component reads deck-specific layout state: every colour,
+font and duration flows in through props or CSS variables. Automatic placement
+uses only the marked box, requested side, and concrete slide bounds; final
+composition belongs in explicit props or saved editor geometry.
 
 ## When nothing appears
 

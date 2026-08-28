@@ -21,6 +21,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
 // never carry interactive controls or a browser write client.
 const isAnnotationEditorDevelopment = import.meta.env.MODE === 'development'
 
+// Do not let the optional browser writer become a production chunk. Vite
+// serves this explicit TypeScript module during development; production cannot
+// reach it because every caller is guarded by `isAnnotationEditorDevelopment`.
+const writerClientModule = './drawn-annotation/writer-client.ts'
+function loadWriterClient() {
+  return import(/* @vite-ignore */ writerClientModule)
+}
+
 /**
  * Hand-drawn annotation for anything on a slide.
  *
@@ -1670,7 +1678,7 @@ async function saveDraft(id: string, session?: DragSaveSession) {
     // decks neither render controls nor include browser write-client code.
     if (!isAnnotationEditorDevelopment)
       return
-    const { cachedAnnotationGeometry, saveLabelGeometry } = await import('./drawn-annotation/writer-client')
+    const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
     // The writer is loaded before edit mode opens, so this is the actual
     // persisted rule, not a local partial drag patch. Store it for Undo before
     // replacing it with the newly saved geometry.
@@ -1719,7 +1727,7 @@ async function toggleConnectorAttachment() {
   if (manualConnector()) {
     annotationEditorStatus.value = 'Restoring automatic connector…'
     try {
-      const { cachedAnnotationGeometry, resetAnnotationGeometry } = await import('./drawn-annotation/writer-client')
+      const { cachedAnnotationGeometry, resetAnnotationGeometry } = await loadWriterClient()
       const previous = cachedAnnotationGeometry(props.id)
       await resetAnnotationGeometry(props.id, 'connector')
       recordAnnotationUndo(props.id, previous)
@@ -1772,7 +1780,7 @@ function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry 
     return
   // Writer-client writes are serialized. This restore runs after any autosave
   // already in flight, preventing CSS HMR from resurrecting a cancelled drag.
-  void import('./drawn-annotation/writer-client').then(({ restoreAnnotationGeometry }) =>
+  void loadWriterClient().then(({ restoreAnnotationGeometry }) =>
     restoreAnnotationGeometry(id, session.persistedBefore ?? null),
   ).then(() => {
     clearLabelDraft(id)

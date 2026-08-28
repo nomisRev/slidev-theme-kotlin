@@ -21,6 +21,16 @@ import {
 // deck. The Vite mode is the reliable boundary: authoring controls exist only
 // for the explicit `slidev` serve/development mode, never a built deck.
 const isDevelopment = import.meta.env.MODE === 'development'
+
+// Keep the writer out of production output entirely. A variable plus
+// `@vite-ignore` leaves this as a normal Vite-served module request in the
+// development browser, while the explicit development guard at every caller
+// makes it unreachable in a built deck (and prevents Rollup from emitting a
+// writer-client chunk with a local file-writing endpoint).
+const writerClientModule = './components/drawn-annotation/writer-client.ts'
+function loadWriterClient() {
+  return import(/* @vite-ignore */ writerClientModule)
+}
 // Slidev's CLI export can run through a development-mode server, so mode alone
 // is not an export guard. Keep authoring controls exclusively on the primary
 // normal-slide route: no print/export, presenter, overview, notes, or preview
@@ -64,7 +74,7 @@ async function toggleEditor() {
   try {
     if (!isDevelopment)
       return
-    const { loadAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
+    const { loadAnnotationGeometry } = await loadWriterClient()
     await loadAnnotationGeometry()
     canWrite.value = true
     annotationEditMode.value = true
@@ -108,7 +118,7 @@ async function resetSelected(part: 'label' | 'connector' | 'all') {
   try {
     if (!isDevelopment)
       return
-    const { cachedAnnotationGeometry, resetAnnotationGeometry, saveLabelGeometry } = await import('./components/drawn-annotation/writer-client')
+    const { cachedAnnotationGeometry, resetAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
     // Resetting is a completed edit too: keep the rule we are about to remove
     // so Undo can restore it instead of making reset a destructive dead end.
     const previous = cachedAnnotationGeometry(selected.value)
@@ -138,7 +148,7 @@ async function undoSelected() {
   try {
     if (!isDevelopment)
       return
-    const { restoreAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
+    const { restoreAnnotationGeometry } = await loadWriterClient()
     await restoreAnnotationGeometry(undo.id, undo.geometry)
     clearLabelDraft(undo.id)
     annotationEditorStatus.value = `${undo.id} restored`
@@ -155,7 +165,7 @@ async function resetAll() {
   try {
     if (!isDevelopment)
       return
-    const { loadAnnotationGeometry, resetAllAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
+    const { loadAnnotationGeometry, resetAllAnnotationGeometry } = await loadWriterClient()
     // Preserve each existing rule independently. This makes Reset all
     // recoverable by selecting an annotation and using Undo afterwards.
     const current = await loadAnnotationGeometry()

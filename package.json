@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "lint": "node scripts/lint-slides.mjs slides.md",
-    "build": "npm run lint && slidev build slides.md",
+    "build": "npm run lint && slidev build slides.md && node scripts/assert-production-annotation-editor.mjs",
     "dev": "slidev slides.md --open",
     "export": "slidev export slides.md",
     "export:slide": "node scripts/export-slide.mjs",
