@@ -7,6 +7,7 @@ import {
   duplicateAnnotationIds,
   missingAnnotationIds,
   selectedAnnotationId,
+  takeAnnotationUndo,
 } from './components/drawn-annotation/editor-store'
 
 const isDevelopment = import.meta.env.DEV
@@ -14,6 +15,10 @@ const checkingWriter = ref(false)
 const canWrite = ref(false)
 const selected = computed(() => selectedAnnotationId.value)
 const hasIdProblems = computed(() => duplicateAnnotationIds.value.size > 0 || missingAnnotationIds.value > 0)
+// An unrelated legacy annotation without an ID must not prevent editing a
+// correctly identified annotation. Duplicates remain unsafe only for the ID
+// currently selected; the component itself also refuses to make it editable.
+const selectedHasDuplicateId = computed(() => !!selected.value && duplicateAnnotationIds.value.has(selected.value))
 
 async function toggleEditor() {
   if (annotationEditMode.value) {
@@ -65,6 +70,28 @@ async function resetSelected(part: 'label' | 'connector' | 'all') {
   }
 }
 
+async function undoSelected() {
+  if (!selected.value || !canWrite.value)
+    return
+  const undo = takeAnnotationUndo(selected.value)
+  if (!undo) {
+    annotationEditorStatus.value = 'Nothing to undo for this annotation'
+    return
+  }
+  annotationEditorStatus.value = `Undoing ${undo.id}…`
+  try {
+    if (!import.meta.env.DEV)
+      return
+    const { restoreAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
+    await restoreAnnotationGeometry(undo.id, undo.geometry)
+    clearLabelDraft(undo.id)
+    annotationEditorStatus.value = `${undo.id} restored`
+  }
+  catch (error) {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to undo annotation geometry'
+  }
+}
+
 async function resetAll() {
   if (!canWrite.value || !confirm('Reset all saved DrawnAnnotation geometry?'))
     return
@@ -91,16 +118,17 @@ async function resetAll() {
     </button>
     <template v-if="annotationEditMode">
       <span class="drawn-annotation-toolbar__selection">{{ selected ? `Selected: ${selected}` : 'Select a visible annotation' }}</span>
-      <button type="button" :disabled="!selected || hasIdProblems" @click="resetSelected('label')">Reset label</button>
-      <button type="button" :disabled="!selected || hasIdProblems" @click="resetSelected('connector')">Reset connector</button>
-      <button type="button" :disabled="!selected || hasIdProblems" @click="resetSelected('all')">Reset selected</button>
-      <button type="button" :disabled="hasIdProblems" @click="resetAll">Reset all</button>
+      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="undoSelected">Undo</button>
+      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('label')">Reset label</button>
+      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('connector')">Use automatic connector</button>
+      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('all')">Reset selected</button>
+      <button type="button" :disabled="duplicateAnnotationIds.size > 0" @click="resetAll">Reset all</button>
     </template>
     <span v-if="annotationEditorStatus" class="drawn-annotation-toolbar__status" role="status">{{ annotationEditorStatus }}</span>
     <span v-if="annotationEditMode && hasIdProblems" class="drawn-annotation-toolbar__error" role="alert">
       {{ duplicateAnnotationIds.size ? `Duplicate IDs: ${[...duplicateAnnotationIds].join(', ')}.` : '' }}
       {{ missingAnnotationIds ? `${missingAnnotationIds} annotation${missingAnnotationIds === 1 ? '' : 's'} without a valid ID.` : '' }}
-      Saving is disabled until fixed.
+Annotations with missing or duplicate IDs cannot be saved; fix them before editing those annotations.
     </span>
   </aside>
 </template>

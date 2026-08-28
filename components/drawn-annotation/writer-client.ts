@@ -10,9 +10,12 @@ interface WriterResponse {
 }
 
 let revision: string | undefined
+let cachedGeometry: Record<string, WriterGeometry> = {}
 
 async function response(response: Response): Promise<WriterResponse> {
   const body = await response.json() as WriterResponse
+  if (body.geometry)
+    cachedGeometry = body.geometry
   // A conflict response includes the server's current revision. Retaining it
   // lets the next deliberate drag save against that revision instead of being
   // stuck returning the same 409 forever.
@@ -30,6 +33,12 @@ export async function loadAnnotationGeometry() {
 }
 
 /** Save one property-wise geometry patch through the optional local Vite plugin. */
+/** Snapshot known from the writer, before making a new edit. */
+export function cachedAnnotationGeometry(id: string): WriterGeometry | null {
+  const geometry = cachedGeometry[id]
+  return geometry ? { ...geometry } : null
+}
+
 export async function saveLabelGeometry(id: string, geometry: PersistedAnnotationGeometry | null) {
   if (!revision)
     await loadAnnotationGeometry()
@@ -71,6 +80,12 @@ export async function resetAllAnnotationGeometry() {
   return saved
 }
 
+/** Restore a full prior snapshot for Undo (or delete the generated rule). */
+export async function restoreAnnotationGeometry(id: string, geometry: PersistedAnnotationGeometry | null) {
+  return saveLabelGeometry(id, geometry)
+}
+
 export function forgetWriterRevision() {
   revision = undefined
+  cachedGeometry = {}
 }

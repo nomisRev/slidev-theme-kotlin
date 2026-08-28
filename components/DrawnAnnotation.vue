@@ -105,7 +105,7 @@ import { useSlideContext } from '@slidev/client'
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
 /**
@@ -1897,6 +1897,12 @@ function sameGeometry(a: PersistedAnnotationGeometry | undefined, b: PersistedAn
     a[key as keyof PersistedAnnotationGeometry] === b[key as keyof PersistedAnnotationGeometry])
 }
 
+/** Whether CSS has caught up with every property this local draft changed. */
+function geometryContains(whole: PersistedAnnotationGeometry, patch: PersistedAnnotationGeometry) {
+  return Object.entries(patch).every(([key, value]) =>
+    whole[key as keyof PersistedAnnotationGeometry] === value)
+}
+
 /**
  * Keep the in-memory drag geometry until Vite has applied the rewritten CSS.
  * Clearing it immediately would briefly re-render the old rule between the
@@ -1909,7 +1915,7 @@ function clearDraftAfterCssHmr(id: string, saved: PersistedAnnotationGeometry) {
     const draft = annotationDrafts.get(id)
     if (!sameGeometry(draft, saved))
       return
-    if (sameGeometry(persistedLabelGeometry(), saved)) {
+    if (geometryContains(persistedLabelGeometry(), saved)) {
       clearLabelDraft(id)
       return
     }
@@ -1930,8 +1936,13 @@ async function saveDraft(id: string) {
     // decks neither render controls nor include browser write-client code.
     if (!import.meta.env.DEV)
       return
-    const { saveLabelGeometry } = await import('./drawn-annotation/writer-client')
+    const { cachedAnnotationGeometry, saveLabelGeometry } = await import('./drawn-annotation/writer-client')
+    // The writer is loaded before edit mode opens, so this is the actual
+    // persisted rule, not a local partial drag patch. Store it for Undo before
+    // replacing it with the newly saved geometry.
+    const previous = cachedAnnotationGeometry(id)
     await saveLabelGeometry(id, savedDraft)
+    recordAnnotationUndo(id, previous)
     clearDraftAfterCssHmr(id, savedDraft)
     annotationEditorStatus.value = 'Annotation saved'
   }
@@ -2013,6 +2024,32 @@ async function endConnectorDrag(event: PointerEvent) {
   await saveDraft(props.id)
 }
 
+let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Arrow keys move the selected label in slide fractions at any presentation scale. */
+function nudgeSelectedLabel(event: KeyboardEvent) {
+  if (!annotationEditMode.value || selectedAnnotationId.value !== props.id || !editable.value || labelDrag || connectorDrag || !props.id)
+    return
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
+    return
+  // Do not steal arrow keys from toolbar controls or a deck's editable text.
+  const target = event.target instanceof Element ? event.target : undefined
+  if (target?.closest('button, input, textarea, select, [contenteditable="true"]'))
+    return
+  const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
+  if (!current)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const step = event.shiftKey ? .01 : .002
+  setLabelDraft(props.id, {
+    x: fraction(current.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0)),
+    y: fraction(current.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0)),
+  })
+  clearTimeout(keyboardSaveTimer)
+  keyboardSaveTimer = setTimeout(() => void saveDraft(props.id!), 250)
+}
+
 function cancelActiveDrag(event: KeyboardEvent) {
   if (event.key !== 'Escape' || (!labelDrag && !connectorDrag) || !props.id)
     return
@@ -2028,8 +2065,15 @@ function cancelActiveDrag(event: KeyboardEvent) {
   annotationEditorStatus.value = 'Annotation drag cancelled'
 }
 
-onMounted(() => window.addEventListener('keydown', cancelActiveDrag, true))
-onBeforeUnmount(() => window.removeEventListener('keydown', cancelActiveDrag, true))
+onMounted(() => {
+  window.addEventListener('keydown', cancelActiveDrag, true)
+  window.addEventListener('keydown', nudgeSelectedLabel, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', cancelActiveDrag, true)
+  window.removeEventListener('keydown', nudgeSelectedLabel, true)
+  clearTimeout(keyboardSaveTimer)
+})
 </script>
 
 <template>

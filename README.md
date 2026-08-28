@@ -51,7 +51,9 @@ The generated stylesheet is imported by the theme. The plugin exposes a local
 validates IDs and unit-fraction label/connector geometry, rejects stale
 revisions, and atomically rewrites that one file. In development, press
 **Alt+Shift+A**, then drag a visible identified label (or its selected width
-handle), connector body, or connector endpoint. Configure a
+handle), connector body, or connector endpoint. Select a label and use arrow
+keys to nudge it (`Shift` makes larger steps); the toolbar can undo completed
+saves or return a connector to its automatic attached route. Configure a
 different generated file beneath the deck
 root with `drawnAnnotationEditor({ output: 'styles/my-annotations.css' })` and
 import that file from the deck stylesheet.

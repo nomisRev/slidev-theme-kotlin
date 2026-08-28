@@ -8,6 +8,27 @@ export const annotationDrafts = reactive(new Map<string, PersistedAnnotationGeom
 export const annotationGeometryVersion = ref(0)
 export const annotationEditorStatus = ref<string>()
 
+/** Persisted snapshots, one per completed edit, used by the toolbar Undo action. */
+interface AnnotationUndo {
+  id: string
+  geometry: PersistedAnnotationGeometry | null
+}
+const annotationUndoHistory: AnnotationUndo[] = []
+
+export function recordAnnotationUndo(id: string, geometry: PersistedAnnotationGeometry | null) {
+  annotationUndoHistory.push({ id, geometry: geometry ? { ...geometry } : null })
+  // This is an authoring convenience, not a full document-history system.
+  if (annotationUndoHistory.length > 100)
+    annotationUndoHistory.shift()
+}
+
+export function takeAnnotationUndo(id: string) {
+  for (let index = annotationUndoHistory.length - 1; index >= 0; index--) {
+    if (annotationUndoHistory[index].id === id)
+      return annotationUndoHistory.splice(index, 1)[0]
+  }
+}
+
 // IDs are registered by mounted annotations. Keeping this independently of
 // the writer means duplicate IDs are diagnosed before a browser can overwrite
 // another annotation's rule.
