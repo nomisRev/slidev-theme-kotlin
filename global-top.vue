@@ -7,6 +7,7 @@ import {
   annotationEditorRegistryVersion,
   annotationGeometryVersion,
   annotationEditorStatus,
+  annotationDrafts,
   clearAllAnnotationDrafts,
   clearAnnotationSelection,
   clearLabelDraft,
