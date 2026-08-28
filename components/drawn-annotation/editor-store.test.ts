@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { annotationDrafts, annotationGeometryVersion, clearAllAnnotationDrafts, clearAnnotationSelection, recordAnnotationUndo, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft, takeAnnotationUndo } from './editor-store'
+import { annotationDrafts, annotationEditorActionsFor, annotationEditorRegistryVersion, annotationGeometryVersion, clearAllAnnotationDrafts, clearAnnotationSelection, recordAnnotationUndo, registerAnnotationEditorActions, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft, takeAnnotationUndo } from './editor-store'
 
 describe('DrawnAnnotation editor undo history', () => {
   it('keeps independent persisted snapshots per annotation and returns newest first', () => {
@@ -25,6 +25,24 @@ describe('DrawnAnnotation editor undo history', () => {
     clearAnnotationSelection('connector-alpha')
     expect(selectedAnnotationId.value).toBeUndefined()
     expect(selectedAnnotationPart.value).toBeUndefined()
+  })
+
+  it('makes selected-instance connector actions available to the global toolbar only while mounted', async () => {
+    const version = annotationEditorRegistryVersion.value
+    let toggles = 0
+    const unregister = registerAnnotationEditorActions('connector-alpha', {
+      isManualConnector: () => toggles > 0,
+      toggleConnectorAttachment: async () => { toggles++ },
+    })
+
+    const actions = annotationEditorActionsFor('connector-alpha')
+    expect(actions?.isManualConnector()).toBe(false)
+    await actions?.toggleConnectorAttachment()
+    expect(actions?.isManualConnector()).toBe(true)
+    expect(annotationEditorRegistryVersion.value).toBeGreaterThan(version)
+
+    unregister()
+    expect(annotationEditorActionsFor('connector-alpha')).toBeUndefined()
   })
 
   it('clears every in-memory preview after a document-wide reset', () => {

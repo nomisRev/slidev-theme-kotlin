@@ -231,7 +231,8 @@ disable snapping. The first connector drag materializes the currently automatic
 route as two manual endpoints. Pointer release saves through the local writer;
 a pause in a long drag saves a draft too, and local saves are serialized so they
 cannot conflict with each other. The toolbar can reset the selected annotation or all
-saved annotation geometry. **Cmd/Ctrl+Z** restores the latest completed save
+saved annotation geometry, and explicitly switch a selected connector between
+its manual frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest completed save
 for the selected annotation. Missing or duplicate IDs disable saving, and a
 deck without the writer plugin reports its configuration error instead of
 entering an editor that cannot save.

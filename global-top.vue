@@ -3,6 +3,9 @@ import { useNav } from '@slidev/client'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   annotationEditMode,
+  annotationEditorActionsFor,
+  annotationEditorRegistryVersion,
+  annotationGeometryVersion,
   annotationEditorStatus,
   clearAllAnnotationDrafts,
   clearAnnotationSelection,
@@ -32,6 +35,21 @@ const hasIdProblems = computed(() => duplicateAnnotationIds.value.size > 0 || mi
 // correctly identified annotation. Duplicates remain unsafe only for the ID
 // currently selected; the component itself also refuses to make it editable.
 const selectedHasDuplicateId = computed(() => !!selected.value && duplicateAnnotationIds.value.has(selected.value))
+const selectedConnectorManual = computed(() => {
+  // Depend on both registration and local draft changes. A saved CSS update
+  // clears the draft, which also refreshes the attached/manual toolbar state.
+  annotationEditorRegistryVersion.value
+  annotationGeometryVersion.value
+  return annotationEditorActionsFor(selected.value)?.isManualConnector() ?? false
+})
+const canToggleConnector = computed(() => !!annotationEditorActionsFor(selected.value) && !selectedHasDuplicateId.value)
+
+async function toggleSelectedConnectorAttachment() {
+  const actions = annotationEditorActionsFor(selected.value)
+  if (!actions || !canWrite.value)
+    return
+  await actions.toggleConnectorAttachment()
+}
 
 async function toggleEditor() {
   if (!editorAvailable.value)
@@ -167,7 +185,9 @@ async function resetAll() {
       <span class="drawn-annotation-toolbar__selection">{{ selected ? `Selected: ${selected}` : 'Select a visible annotation' }}</span>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('label')">Reset label</button>
-      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('connector')">Use automatic connector</button>
+      <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorAttachment">
+        {{ selectedConnectorManual ? 'Use automatic connector' : 'Make connector manual' }}
+      </button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('all')">Reset selected</button>
       <button type="button" :disabled="duplicateAnnotationIds.size > 0" @click="resetAll">Reset all</button>
     </template>

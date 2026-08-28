@@ -13,7 +13,7 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { draftMatchesPersisted, nudgeConnector, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
 import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorActions, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
@@ -729,6 +729,7 @@ let trackFrame = 0
 let trackUntil = 0
 let mounted = false
 let unregisterEditorId: (() => void) | undefined
+let unregisterEditorActions: (() => void) | undefined
 // Fingerprint of the mark's last measured boxes. While the slide animates, a
 // frame in which the mark has not moved recomputes nothing.
 let lastMarkKey = ''
@@ -1429,8 +1430,15 @@ function backOff(point: { x: number, y: number }, from: { x: number, y: number }
 
 onMounted(async () => {
   mounted = true
-  if (isAnnotationEditorDevelopment)
+  if (isAnnotationEditorDevelopment) {
     unregisterEditorId = registerAnnotationEditorId(props.id, !!props.id && DRAWN_ANNOTATION_ID.test(props.id))
+    if (props.id && DRAWN_ANNOTATION_ID.test(props.id)) {
+      unregisterEditorActions = registerAnnotationEditorActions(props.id, {
+        isManualConnector: () => !!manualConnector(),
+        toggleConnectorAttachment,
+      })
+    }
+  }
   // Registered synchronously, while the clicks context still accepts it.
   if (manualClicks.value) {
     resolvedClick.value = manualClick(atClick.value, props.on !== undefined ? 'on' : 'at')
@@ -1494,6 +1502,8 @@ onBeforeUnmount(() => {
   mounted = false
   unregisterEditorId?.()
   unregisterEditorId = undefined
+  unregisterEditorActions?.()
+  unregisterEditorActions = undefined
   clearAnnotationSelection(props.id)
   settleRun++
   clearTimeout(exitFadeTimer)
@@ -1648,7 +1658,10 @@ async function saveDraft(id: string, session?: DragSaveSession) {
     return
   const savedDraft = { ...draft }
   const signature = draftSignature(savedDraft)
-  if (signature === lastSavedDraftSignature || savingDraftSignatures.has(signature))
+  // A signature is only a duplicate when the current stylesheet still has the
+  // same complete geometry. A reset can deliberately remove a rule and later
+  // materialize the exact same automatic connector again.
+  if ((signature === lastSavedDraftSignature && draftMatchesPersisted(savedDraft, persistedLabelGeometry())) || savingDraftSignatures.has(signature))
     return
   savingDraftSignatures.add(signature)
   annotationEditorStatus.value = 'Saving annotation…'
@@ -1693,6 +1706,38 @@ async function saveDraft(id: string, session?: DragSaveSession) {
   finally {
     savingDraftSignatures.delete(signature)
   }
+}
+
+/**
+ * Switch explicitly between the attached route and a frozen two-endpoint
+ * route. Unlike dragging, this makes the connector state discoverable from
+ * the global toolbar without making the toolbar depend on annotation DOM.
+ */
+async function toggleConnectorAttachment() {
+  if (!props.id || !connectorEditable.value)
+    return
+  if (manualConnector()) {
+    annotationEditorStatus.value = 'Restoring automatic connector…'
+    try {
+      const { cachedAnnotationGeometry, resetAnnotationGeometry } = await import('./drawn-annotation/writer-client')
+      const previous = cachedAnnotationGeometry(props.id)
+      await resetAnnotationGeometry(props.id, 'connector')
+      recordAnnotationUndo(props.id, previous)
+      clearLabelDraft(props.id)
+      annotationEditorStatus.value = 'Connector now follows its source and label'
+    }
+    catch (error) {
+      annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to restore automatic connector'
+    }
+    return
+  }
+
+  const start = geometry.connectorStart && localConnectorFraction(geometry.connectorStart)
+  const end = geometry.connectorEnd && localConnectorFraction(geometry.connectorEnd)
+  if (!start || !end)
+    return
+  setLabelDraft(props.id, { x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+  await saveDraft(props.id)
 }
 
 async function endLabelDrag(event: PointerEvent) {

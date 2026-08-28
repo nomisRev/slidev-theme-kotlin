@@ -10,6 +10,32 @@ export const annotationDrafts = reactive(new Map<string, PersistedAnnotationGeom
 export const annotationGeometryVersion = ref(0)
 export const annotationEditorStatus = ref<string>()
 
+/** Operations supplied by the currently mounted annotation instance. */
+export interface AnnotationEditorActions {
+  isManualConnector: () => boolean
+  toggleConnectorAttachment: () => Promise<void>
+}
+
+// The toolbar lives outside annotation instances, so use this narrow registry
+// rather than giving it access to component DOM or geometry state.
+const annotationEditorActions = new Map<string, AnnotationEditorActions>()
+export const annotationEditorRegistryVersion = ref(0)
+
+export function registerAnnotationEditorActions(id: string, actions: AnnotationEditorActions) {
+  annotationEditorActions.set(id, actions)
+  annotationEditorRegistryVersion.value++
+  return () => {
+    if (annotationEditorActions.get(id) === actions) {
+      annotationEditorActions.delete(id)
+      annotationEditorRegistryVersion.value++
+    }
+  }
+}
+
+export function annotationEditorActionsFor(id: string | undefined) {
+  return id ? annotationEditorActions.get(id) : undefined
+}
+
 /** Persisted snapshots, one per completed edit, used by the toolbar Undo action. */
 interface AnnotationUndo {
   id: string
