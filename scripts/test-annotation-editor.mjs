@@ -114,6 +114,53 @@ async function run() {
     if (afterBody.revision === afterEndpoint.revision)
       fail('Dragging the connector body did not save a new geometry revision.')
 
+    // Keyboard changes are intentionally persisted through the same writer as
+    // pointer gestures. Exercise both a nudge and its Cmd/Ctrl+Z recovery,
+    // rather than only checking the in-memory preview.
+    await label.click()
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(500)
+    const afterNudge = await geometry()
+    if (afterNudge.revision === afterBody.revision || afterNudge.geometry['kotlin-main-entry-label']?.x === afterBody.geometry['kotlin-main-entry-label']?.x)
+      fail('Arrow-key label movement did not persist a new geometry revision.')
+
+    const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
+    await page.keyboard.press(`${undoModifier}+z`)
+    await page.waitForTimeout(500)
+    const afterUndo = await geometry()
+    if (JSON.stringify(afterUndo.geometry['kotlin-main-entry-label']) !== JSON.stringify(afterBody.geometry['kotlin-main-entry-label']))
+      fail(`Cmd/Ctrl+Z did not restore the geometry from before the keyboard nudge. Expected ${JSON.stringify(afterBody.geometry['kotlin-main-entry-label'])}; received ${JSON.stringify(afterUndo.geometry['kotlin-main-entry-label'])}.`)
+
+    // Simulate a second author writing after this page has loaded. The next
+    // nudge must be rejected rather than overwriting that newer revision, and
+    // the explicit reload action must recover the current saved document.
+    const externallySaved = await page.evaluate(async ({ expectedRevision, current }) => {
+      const response = await fetch('/__drawn-annotations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          expectedRevision,
+          annotations: {
+            'kotlin-main-entry-label': { ...current, x: .3333 },
+          },
+        }),
+      })
+      return { status: response.status, body: await response.json() }
+    }, { expectedRevision: afterUndo.revision, current: afterUndo.geometry['kotlin-main-entry-label'] })
+    if (externallySaved.status !== 200)
+      fail(`Simulated concurrent annotation save returned ${externallySaved.status}.`)
+
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(500)
+    const afterConflict = await geometry()
+    if (afterConflict.revision !== externallySaved.body.revision || afterConflict.geometry['kotlin-main-entry-label']?.x !== .3333)
+      fail(`A stale keyboard save overwrote geometry written by another author. Expected revision ${externallySaved.body.revision} and x .3333; received revision ${afterConflict.revision} and x ${afterConflict.geometry['kotlin-main-entry-label']?.x}.`)
+    await page.getByRole('status').filter({ hasText: /geometry changed|stale|revision|conflict/i }).waitFor({ state: 'visible' })
+
+    page.once('dialog', dialog => dialog.accept())
+    await page.getByRole('button', { name: 'Reload saved geometry' }).click()
+    await page.getByRole('status').filter({ hasText: 'Saved annotation geometry reloaded' }).waitFor({ state: 'visible' })
+
     // Reload proves that the generated CSS, not just Vue draft state, owns the
     // final geometry. The values are read through CSS after Vite's HMR update.
     await page.reload({ waitUntil: 'networkidle' })
@@ -123,7 +170,7 @@ async function run() {
       return ['--da-label-x', '--da-label-y', '--da-label-width', '--da-connector-x1', '--da-connector-y1', '--da-connector-x2', '--da-connector-y2']
         .map(name => [name, style.getPropertyValue(name).trim()])
     })
-    const persisted = afterBody.geometry['kotlin-main-entry-label']
+    const persisted = afterConflict.geometry['kotlin-main-entry-label']
     const fields = [['--da-label-x', 'x'], ['--da-label-y', 'y'], ['--da-label-width', 'width'], ['--da-connector-x1', 'x1'], ['--da-connector-y1', 'y1'], ['--da-connector-x2', 'x2'], ['--da-connector-y2', 'y2']]
     for (const [property, field] of fields) {
       const value = css.find(([name]) => name === property)?.[1]

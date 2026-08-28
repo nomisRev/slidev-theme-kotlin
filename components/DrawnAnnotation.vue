@@ -2000,7 +2000,6 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
         return
       setLabelDraft(props.id, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
     }
-    scheduleDraftSave()
   }
   else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
     const start = localConnectorFraction(geometry.connectorStart)
@@ -2010,7 +2009,6 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
     // Keep arrow-key body movement identical to dragging the line itself:
     // translation is constrained as one rigid segment at slide edges.
     setLabelDraft(props.id, nudgeConnector({ x1: start.x, y1: start.y, x2: end.x, y2: end.y }, part, dx, dy))
-    scheduleDraftSave()
   }
   else {
     return
@@ -2018,6 +2016,9 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
 
   event.preventDefault()
   event.stopPropagation()
+  // One debounce is intentional. Reusing the pointer-drag timer here creates
+  // two writes for one key press; after a 409 the second would adopt the
+  // conflict response's revision and overwrite the other author's geometry.
   clearTimeout(keyboardSaveTimer)
   keyboardSaveTimer = setTimeout(() => void saveDraft(props.id!), 250)
 }
