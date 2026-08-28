@@ -1,2 +1,2 @@
-export { drawnAnnotationEditor } from './plugins/drawn-annotation-editor'
-export type { DrawnAnnotationEditorOptions, DrawnAnnotationGeometryPatch, DrawnAnnotationLabelGeometry } from './plugins/drawn-annotation-editor'
+export { drawnAnnotationEditor } from './plugins/drawn-annotation-editor.ts'
+export type { DrawnAnnotationEditorOptions, DrawnAnnotationGeometryPatch, DrawnAnnotationLabelGeometry } from './plugins/drawn-annotation-editor.ts'
