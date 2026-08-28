@@ -28,6 +28,11 @@ export interface ManualConnectorGeometry {
 
 export type PersistedAnnotationGeometry = PersistedLabelGeometry & ManualConnectorGeometry
 
+export interface FractionPoint {
+  x: number
+  y: number
+}
+
 export const DRAWN_ANNOTATION_ID = /^[A-Za-z][A-Za-z0-9_.-]*$/
 
 /**
@@ -76,4 +81,27 @@ export function localToSlideFraction(point: number, axis: 'x' | 'y', slide: View
   const slideStart = axis === 'x' ? slide.left : slide.top
   const slideSize = axis === 'x' ? slide.width : slide.height
   return (overlayStart + point * overlaySize / canvasSize - slideStart) / slideSize
+}
+
+/**
+ * Snap each axis independently. This permits a connector endpoint to align
+ * with a vertical guide without forcing its height to an unrelated point.
+ * Callers provide only concrete slide fractions, making this independent of
+ * nested SVG canvases and presentation scale.
+ */
+export function snapFractionPoint(point: FractionPoint, candidates: readonly FractionPoint[], threshold = 0.012): FractionPoint {
+  const nearest = (value: number, axis: 'x' | 'y') => {
+    let result = value
+    let distance = threshold
+    for (const candidate of candidates) {
+      const candidateValue = candidate[axis]
+      const nextDistance = Math.abs(value - candidateValue)
+      if (nextDistance <= distance) {
+        result = candidateValue
+        distance = nextDistance
+      }
+    }
+    return result
+  }
+  return { x: nearest(point.x, 'x'), y: nearest(point.y, 'y') }
 }

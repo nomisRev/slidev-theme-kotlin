@@ -137,7 +137,7 @@ Offer optional snapping while dragging:
 - target point;
 - slide guides and other connector endpoints.
 
-Snapping changes only the saved endpoint coordinates; it does not create a new routing system. Holding a modifier key should temporarily disable snapping.
+The initial implementation supplies slide edge/centre guides plus the current annotation's source ports, target point, and label edge ports; cross-annotation endpoint snapping can follow when the shared overlay registry lands. Snapping changes only the saved endpoint coordinates; it does not create a new routing system. Holding `Alt` temporarily disables snapping.
 
 ## 6. Slide-local rendering and editor architecture
 

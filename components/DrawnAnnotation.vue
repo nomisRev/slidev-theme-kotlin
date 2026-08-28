@@ -104,7 +104,7 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal } from './drawn-annotation/geometry'
+import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
@@ -592,6 +592,9 @@ const geometry = reactive({
   /** Resolved leader endpoints, used to materialize automatic lines on first edit. */
   connectorStart: undefined as Point | undefined,
   connectorEnd: undefined as Point | undefined,
+  /** Source ports and target point are editor snap targets in local SVG coordinates. */
+  sourcePorts: [] as Point[],
+  targetPoint: undefined as Point | undefined,
   ready: false,
 })
 
@@ -1039,6 +1042,11 @@ function updateGeometry() {
   const rawBoxes = rects.map(toLocal)
   const boxes = match?.range ? mergeVisualLineBoxes(rawBoxes) : rawBoxes
   const marked = unionBox(boxes)
+  geometry.sourcePorts = [
+    { x: marked.cx, y: marked.cy },
+    { x: marked.cx, y: marked.top }, { x: marked.cx, y: marked.bottom },
+    { x: marked.left, y: marked.cy }, { x: marked.right, y: marked.cy },
+  ]
   const multiline = props.multiline ?? (sourceMarkType.value === 'underline' || sourceMarkType.value === 'strike-through')
   const shapeBoxes = multiline ? boxes : [marked]
 
@@ -1117,6 +1125,7 @@ function paintDestination(
 ) {
   geometry.connectorStart = undefined
   geometry.connectorEnd = undefined
+  geometry.targetPoint = undefined
   // Computed into locals first: the stable rough.js seed makes an unchanged
   // layout produce identical path strings, which assignPaths then drops
   // instead of re-patching the SVG.
@@ -1148,6 +1157,7 @@ function paintDestinationInto(
     const radius = Math.max(6, targetBox.width * props.targetRadius / 100)
     destination = makeBox(x - radius, y - radius, x + radius, y + radius)
     endPoint = { x, y }
+    geometry.targetPoint = endPoint
     // The target is its own stage after the connection. A zero padding keeps
     // target-radius the exact outer size authors position over screenshots.
     paths.targetMark = markPaths(destination, targetMarkType.value, 0)
@@ -1976,6 +1986,29 @@ function localConnectorFraction(point: Point) {
   }
 }
 
+/** Slide-centre/edge guides plus the live source, target and label ports. */
+function connectorSnapCandidates() {
+  const candidates = [
+    { x: 0, y: 0 }, { x: .5, y: .5 }, { x: 1, y: 1 },
+    ...geometry.sourcePorts.map(localConnectorFraction),
+    geometry.targetPoint && localConnectorFraction(geometry.targetPoint),
+  ].filter((point): point is { x: number, y: number } => !!point)
+  const slide = slideRoot()
+  const label = labelEl.value
+  if (slide && label) {
+    const slideBox = slide.getBoundingClientRect()
+    const box = label.getBoundingClientRect()
+    // Centre and edge-midpoints make a connector meet the label cleanly.
+    for (const [x, y] of [[box.left + box.width / 2, box.top + box.height / 2], [box.left, box.top + box.height / 2], [box.right, box.top + box.height / 2], [box.left + box.width / 2, box.top], [box.left + box.width / 2, box.bottom]])
+      candidates.push({ x: fraction((x - slideBox.left) / slideBox.width), y: fraction((y - slideBox.top) / slideBox.height) })
+  }
+  return candidates
+}
+
+function snapConnectorPoint(point: { x: number, y: number }, disabled: boolean) {
+  return disabled ? point : snapFractionPoint(point, connectorSnapCandidates())
+}
+
 function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   if (!connectorEditable.value || !annotationEditMode.value || !props.id || !geometry.connectorStart || !geometry.connectorEnd)
     return
@@ -2003,14 +2036,22 @@ function moveConnectorDrag(event: PointerEvent) {
   const dy = (event.clientY - connectorDrag.startY) / box.height
   const next = { ...connectorDrag.connector }
   if (connectorDrag.kind === 'start') {
-    next.x1 = fraction(next.x1 + dx); next.y1 = fraction(next.y1 + dy)
+    const snapped = snapConnectorPoint({ x: fraction(next.x1 + dx), y: fraction(next.y1 + dy) }, event.altKey)
+    next.x1 = snapped.x; next.y1 = snapped.y
   }
   else if (connectorDrag.kind === 'end') {
-    next.x2 = fraction(next.x2 + dx); next.y2 = fraction(next.y2 + dy)
+    const snapped = snapConnectorPoint({ x: fraction(next.x2 + dx), y: fraction(next.y2 + dy) }, event.altKey)
+    next.x2 = snapped.x; next.y2 = snapped.y
   }
   else {
-    next.x1 = fraction(next.x1 + dx); next.y1 = fraction(next.y1 + dy)
-    next.x2 = fraction(next.x2 + dx); next.y2 = fraction(next.y2 + dy)
+    // Translate as one rigid line. Snap the start port, then apply the same
+    // correction to the end so body dragging cannot accidentally resize it.
+    const rawStart = { x: fraction(next.x1 + dx), y: fraction(next.y1 + dy) }
+    const snapped = snapConnectorPoint(rawStart, event.altKey)
+    const correctionX = snapped.x - rawStart.x
+    const correctionY = snapped.y - rawStart.y
+    next.x1 = snapped.x; next.y1 = snapped.y
+    next.x2 = fraction(next.x2 + dx + correctionX); next.y2 = fraction(next.y2 + dy + correctionY)
   }
   setLabelDraft(props.id, next)
 }

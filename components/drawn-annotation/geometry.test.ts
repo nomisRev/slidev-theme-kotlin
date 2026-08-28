@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, slideFractionToLocal } from './geometry'
+import { DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, slideFractionToLocal, snapFractionPoint } from './geometry'
 
 describe('drawn annotation persisted geometry', () => {
   it('accepts only finite plain unit fractions', () => {
@@ -34,5 +34,12 @@ describe('drawn annotation persisted geometry', () => {
     expect(DRAWN_ANNOTATION_ID.test('nullable-return-label')).toBe(true)
     expect(DRAWN_ANNOTATION_ID.test('2bad')).toBe(false)
     expect(DRAWN_ANNOTATION_ID.test('bad selector]')).toBe(false)
+  })
+
+  it('snaps connector coordinates to nearby guides one axis at a time', () => {
+    const guides = [{ x: 0, y: 0 }, { x: .5, y: .5 }, { x: 1, y: 1 }]
+    expect(snapFractionPoint({ x: .493, y: .73 }, guides)).toEqual({ x: .5, y: .73 })
+    expect(snapFractionPoint({ x: .493, y: .73 }, guides, .005)).toEqual({ x: .493, y: .73 })
+    expect(snapFractionPoint({ x: .496, y: .504 }, guides)).toEqual({ x: .5, y: .5 })
   })
 })
