@@ -90,6 +90,17 @@ async function toggleEditor() {
   }
 }
 
+function clearSelectionOnEditorClickOutside(event: PointerEvent) {
+  if (!annotationEditMode.value)
+    return
+  const target = event.target instanceof Element ? event.target : undefined
+  // Keep a selection while the author works with any annotation control or
+  // toolbar action. A click on the canvas still follows Slidev's normal
+  // navigation policy; this listener only removes the stale edit target.
+  if (!target?.closest('.drawn-annotation-toolbar, .annotation-label.is-editable, .annotation-connector-editor'))
+    clearAnnotationSelection()
+}
+
 function keyboardUndo(event: KeyboardEvent) {
   if (!annotationEditMode.value || (!event.metaKey && !event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'z')
     return
@@ -105,10 +116,12 @@ function keyboardUndo(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('drawn-annotation-editor-toggle', toggleEditor)
+  window.addEventListener('pointerdown', clearSelectionOnEditorClickOutside, true)
   window.addEventListener('keydown', keyboardUndo, true)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('drawn-annotation-editor-toggle', toggleEditor)
+  window.removeEventListener('pointerdown', clearSelectionOnEditorClickOutside, true)
   window.removeEventListener('keydown', keyboardUndo, true)
 })
 

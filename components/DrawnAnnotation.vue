@@ -1582,6 +1582,15 @@ function fraction(value: number) {
   return Math.max(0, Math.min(1, value))
 }
 
+// Labels only suppress Slidev navigation while they are real editor controls.
+// Outside edit mode they are presentation-only (`pointer-events: none`), but
+// retaining that boundary here also keeps a transient/stale DOM state from
+// swallowing an ordinary slide click.
+function stopEditorClick(event: MouseEvent) {
+  if (annotationEditMode.value && editable.value)
+    event.stopPropagation()
+}
+
 function beginLabelDrag(event: PointerEvent, width = false) {
   if (!editable.value || !annotationEditMode.value || !props.id)
     return
@@ -2124,6 +2133,10 @@ onBeforeUnmount(() => {
           class="annotation-connector-hit"
           :x1="geometry.connectorStart.x" :y1="geometry.connectorStart.y"
           :x2="geometry.connectorEnd.x" :y2="geometry.connectorEnd.y"
+          role="button"
+          tabindex="0"
+          aria-label="Move connector"
+          @focus="selectAnnotation(props.id!, 'body')"
           @pointerdown="beginConnectorDrag($event, 'body')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
@@ -2160,7 +2173,7 @@ onBeforeUnmount(() => {
       @pointermove="moveLabelDrag"
       @pointerup="endLabelDrag"
       @pointercancel="cancelLabelDrag"
-      @click.stop
+      @click="stopEditorClick"
       :style="{
         '--annotation-color': props.color,
         '--label-delay': `${delays.label}ms`,

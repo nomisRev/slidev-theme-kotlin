@@ -1,6 +1,6 @@
 # DrawnAnnotation visual editor plan
 
-**Status:** in progress. This is the manual-first alternative to `drawn-annotation-rewrite-plan.md`.
+**Status:** in progress — Phases 0–3 are implemented; Phase 4 authoring polish is underway. This is the manual-first alternative to `drawn-annotation-rewrite-plan.md`.
 
 ## 1. Product direction
 
@@ -339,6 +339,14 @@ Use the existing annotation review manifest to manually place the currently bad 
 - Batch review all deck annotations and commit generated CSS.
 
 **Gate:** authors can correct annotations without opening source files, and production/export contains no editor runtime.
+
+## Implementation progress
+
+- **Phase 0:** representative deck annotations have stable IDs, and renderer/editor coordinate conversion is covered for nested SVG canvases and presentation scale.
+- **Phase 1:** the opt-in development Vite writer, deterministic generated stylesheet, revision protection, label drag/resize, reset controls, and CSS precedence are implemented.
+- **Phase 2:** manual two-endpoint connectors support endpoint/body movement, attached/manual switching, RoughJS/arrow preservation, and source/target/label/slide snapping.
+- **Phase 3:** runtime placement now uses bounded local defaults and persisted overrides instead of broad obstacle/future-state solving.
+- **Phase 4 (current):** keyboard nudging, undo, conflict reload, visible guides, accessible focus targets (including the connector body), and click-outside selection clearing are implemented. Remaining work is browser-level interaction coverage and a full authoring pass over curated deck annotations.
 
 ## 13. Main risks and decisions to validate early
 
