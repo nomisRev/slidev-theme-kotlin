@@ -12,7 +12,7 @@ import { useSlideContext } from '@slidev/client'
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
 /**
@@ -1488,6 +1488,7 @@ onBeforeUnmount(() => {
   mounted = false
   unregisterEditorId?.()
   unregisterEditorId = undefined
+  clearAnnotationSelection(props.id)
   settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
@@ -1550,7 +1551,7 @@ function beginLabelDrag(event: PointerEvent, width = false) {
     return
   event.preventDefault()
   event.stopPropagation()
-  selectAnnotation(props.id)
+  selectAnnotation(props.id, 'label')
   const slide = slideRoot()
   const label = labelEl.value
   if (!slide || !label)
@@ -1706,7 +1707,7 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
     return
   event.preventDefault()
   event.stopPropagation()
-  selectAnnotation(props.id)
+  selectAnnotation(props.id, kind)
   connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined }
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
@@ -1755,9 +1756,9 @@ async function endConnectorDrag(event: PointerEvent) {
 
 let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
 
-/** Arrow keys move the selected label in slide fractions at any presentation scale. */
-function nudgeSelectedLabel(event: KeyboardEvent) {
-  if (!annotationEditMode.value || selectedAnnotationId.value !== props.id || !editable.value || labelDrag || connectorDrag || !props.id)
+/** Arrow keys nudge the selected label or connector in slide fractions. */
+function nudgeSelectedAnnotation(event: KeyboardEvent) {
+  if (!annotationEditMode.value || selectedAnnotationId.value !== props.id || labelDrag || connectorDrag || !props.id)
     return
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
     return
@@ -1765,16 +1766,40 @@ function nudgeSelectedLabel(event: KeyboardEvent) {
   const target = event.target instanceof Element ? event.target : undefined
   if (target?.closest('button, input, textarea, select, [contenteditable="true"]'))
     return
-  const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
-  if (!current)
+
+  const step = event.shiftKey ? .01 : .002
+  const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
+  const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
+  const part = selectedAnnotationPart.value
+
+  if (part === 'label' && editable.value) {
+    const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
+    if (!current)
+      return
+    setLabelDraft(props.id, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
+  }
+  else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
+    const start = localConnectorFraction(geometry.connectorStart)
+    const end = localConnectorFraction(geometry.connectorEnd)
+    if (!start || !end)
+      return
+    const next = { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
+    if (part === 'start' || part === 'body') {
+      next.x1 = fraction(next.x1 + dx)
+      next.y1 = fraction(next.y1 + dy)
+    }
+    if (part === 'end' || part === 'body') {
+      next.x2 = fraction(next.x2 + dx)
+      next.y2 = fraction(next.y2 + dy)
+    }
+    setLabelDraft(props.id, next)
+  }
+  else {
     return
+  }
+
   event.preventDefault()
   event.stopPropagation()
-  const step = event.shiftKey ? .01 : .002
-  setLabelDraft(props.id, {
-    x: fraction(current.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0)),
-    y: fraction(current.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0)),
-  })
   clearTimeout(keyboardSaveTimer)
   keyboardSaveTimer = setTimeout(() => void saveDraft(props.id!), 250)
 }
@@ -1796,11 +1821,11 @@ function cancelActiveDrag(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', cancelActiveDrag, true)
-  window.addEventListener('keydown', nudgeSelectedLabel, true)
+  window.addEventListener('keydown', nudgeSelectedAnnotation, true)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', cancelActiveDrag, true)
-  window.removeEventListener('keydown', nudgeSelectedLabel, true)
+  window.removeEventListener('keydown', nudgeSelectedAnnotation, true)
   clearTimeout(keyboardSaveTimer)
 })
 </script>

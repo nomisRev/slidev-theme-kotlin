@@ -4,6 +4,7 @@ import {
   annotationEditMode,
   annotationEditorStatus,
   clearAllAnnotationDrafts,
+  clearAnnotationSelection,
   clearLabelDraft,
   duplicateAnnotationIds,
   missingAnnotationIds,
@@ -25,7 +26,7 @@ const selectedHasDuplicateId = computed(() => !!selected.value && duplicateAnnot
 async function toggleEditor() {
   if (annotationEditMode.value) {
     annotationEditMode.value = false
-    selectedAnnotationId.value = undefined
+    clearAnnotationSelection()
     return
   }
   checkingWriter.value = true

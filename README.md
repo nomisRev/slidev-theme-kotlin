@@ -53,9 +53,11 @@ revisions, and atomically rewrites that one file. In development, press
 **Alt+Shift+A**, then drag a visible identified label (or its selected width
 handle), connector body, or connector endpoint. Connector endpoints snap to
 slide edge/centre guides and the annotation's source, target, and label ports;
-hold `Alt` while dragging to place freely. Select a label and use arrow
-keys to nudge it (`Shift` makes larger steps); the toolbar can undo completed
-saves or return a connector to its automatic attached route. Configure a
+hold `Alt` while dragging to place freely. Arrow keys nudge whichever control
+was selected: labels move their label, endpoint handles move that endpoint, and
+a connector body moves the complete line (`Shift` makes larger steps). The
+toolbar can undo completed saves or return a connector to its automatic
+attached route. Configure a
 different generated file beneath the deck
 root with `drawnAnnotationEditor({ output: 'styles/my-annotations.css' })` and
 import that file from the deck stylesheet.

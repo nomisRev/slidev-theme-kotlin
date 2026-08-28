@@ -4,6 +4,8 @@ import type { PersistedAnnotationGeometry } from './geometry'
 /** Shared, development-only interaction state for DrawnAnnotation instances. */
 export const annotationEditMode = ref(false)
 export const selectedAnnotationId = ref<string>()
+/** Which control selected the annotation, for keyboard nudging semantics. */
+export const selectedAnnotationPart = ref<'label' | 'start' | 'end' | 'body'>()
 export const annotationDrafts = reactive(new Map<string, PersistedAnnotationGeometry>())
 export const annotationGeometryVersion = ref(0)
 export const annotationEditorStatus = ref<string>()
@@ -79,8 +81,17 @@ export function installAnnotationEditorShortcut() {
   })
 }
 
-export function selectAnnotation(id: string) {
+export function selectAnnotation(id: string, part: 'label' | 'start' | 'end' | 'body' = 'label') {
   selectedAnnotationId.value = id
+  selectedAnnotationPart.value = part
+}
+
+/** Clear selection without leaving a stale keyboard target on an unmounted slide. */
+export function clearAnnotationSelection(id?: string) {
+  if (id !== undefined && selectedAnnotationId.value !== id)
+    return
+  selectedAnnotationId.value = undefined
+  selectedAnnotationPart.value = undefined
 }
 
 export function setLabelDraft(id: string, geometry: PersistedAnnotationGeometry) {
