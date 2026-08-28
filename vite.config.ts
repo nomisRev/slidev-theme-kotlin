@@ -3,8 +3,7 @@ import { defineConfig } from 'vite'
 // also exercises the package export during local development and builds.
 import { drawnAnnotationEditor } from 'slidev-theme-kotlin/annotation-editor'
 
-// Local demo only: enable the development-only endpoint that persists visual
-// DrawnAnnotation edits to styles/drawn-annotations.generated.css.
+// Local demo only: enable development-only source geometry editing.
 export default defineConfig({
   plugins: [drawnAnnotationEditor()],
 })

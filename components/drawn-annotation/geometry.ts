@@ -119,36 +119,6 @@ export interface ConnectorEndpoints {
   y2: number
 }
 
-export const DRAWN_ANNOTATION_ID = /^[A-Za-z][A-Za-z0-9_.-]*$/
-
-/**
- * CSS custom properties are intentionally parsed strictly. `getComputedStyle`
- * returns an empty string for absent properties, and invalid generated CSS must
- * fall back to authored props rather than creating a NaN SVG path.
- */
-export function readUnitFraction(value: string | undefined, min = 0, max = 1): number | undefined {
-  if (value === undefined)
-    return undefined
-  const trimmed = value.trim()
-  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed))
-    return undefined
-  const result = Number(trimmed)
-  return Number.isFinite(result) && result >= min && result <= max ? result : undefined
-}
-
-export function readPersistedLabelGeometry(style: CSSStyleDeclaration): PersistedAnnotationGeometry {
-  return {
-    x: readUnitFraction(style.getPropertyValue('--da-label-x')),
-    y: readUnitFraction(style.getPropertyValue('--da-label-y')),
-    // A zero-width label is not useful, and rejecting it gives malformed CSS
-    // the same safe fallback as the other values.
-    width: readUnitFraction(style.getPropertyValue('--da-label-width'), 0.02, 1),
-    x1: readUnitFraction(style.getPropertyValue('--da-connector-x1')),
-    y1: readUnitFraction(style.getPropertyValue('--da-connector-y1')),
-    x2: readUnitFraction(style.getPropertyValue('--da-connector-x2')),
-    y2: readUnitFraction(style.getPropertyValue('--da-connector-y2')),
-  }
-}
 
 /** Convert a persisted slide fraction to the local SVG coordinate system. */
 export function slideFractionToLocal(fraction: number, axis: 'x' | 'y', slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): number {

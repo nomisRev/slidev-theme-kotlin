@@ -67,17 +67,16 @@ and wraps only when its natural width cannot fit. It does **not** scan the
 slide, future click states, or other annotations for obstacles. This prevents
 unrelated content and click changes from moving an already composed label.
 
-Use `label-x`, `label-y`, and `label-width` for a fixed authored position, or
-the development visual editor for the same geometry persisted as normalized
-CSS. A saved editor value wins over the matching Markdown prop. The legacy
-`clearance` and `avoid-selector` props are accepted for compatibility but no
-longer affect placement.
+Use a `:geometry` binding for a fixed authored position, or let the
+ development visual editor write the same normalized source geometry. Geometry
+wins over automatic placement. The legacy `clearance` and `avoid-selector`
+props are accepted for compatibility but no longer affect placement.
 
 | prop | default | meaning |
 | --- | --- | --- |
 | `placement` | `auto` | fallback side: `up`, `down`, `left`, `right`, or automatic vertical choice |
-| `label-x`, `label-y` | – | label centre as a percentage of the concrete slide; disables automatic placement for that axis |
-| `label-width` | – | maximum width in slide pixels before wrapping |
+| `geometry.label` | – | label centre (`x`, `y`) and optional maximum `width`, each normalized to concrete slide width/height |
+| `geometry.connector` | – | manual `start`/`end` points, normalized to the concrete slide |
 | `gap` | `28` | distance between the mark and automatically placed label, in slide pixels |
 | `clearance` | `16` | deprecated; has no effect |
 | `avoid-selector` | – | deprecated; has no effect |
@@ -191,41 +190,23 @@ next step. Set `:wait="false"` to draw as soon as the click arrives.
 
 ## Visual-editor geometry
 
-`id` is an optional stable, deck-wide identity for a `DrawnAnnotation`. It is
-required by the development-only visual editor for annotations with a label or
-connector, but annotations without one (including source-only marks) continue
-to render normally. Use CSS-safe IDs matching
-`[A-Za-z][A-Za-z0-9_.-]*`:
+`geometry` is the source-local public geometry prop. Its values are fractions
+of the concrete `.slidev-layout`, so it survives presentation scaling and a
+nested annotation canvas:
 
 ```html
-<DrawnAnnotation id="nullable-return-label" text="String?" label="nullable return type" :on="2">
+<DrawnAnnotation text="String?" label="nullable return type" :on="2"
+  :geometry="{ label: { x: 0.7125, y: 0.1864, width: 0.1944 } }">
 ```
 
-The renderer already accepts generated geometry on that element. A matching CSS
-rule can override individual label properties; unitless values are fractions of
-the concrete `.slidev-layout` root, so they survive presentation scaling and a
-nested annotation canvas. Generated values take precedence over `label-x`,
-`label-y`, and `label-width`; absent or malformed values safely fall back to
-those props.
-
-```css
-[data-drawn-annotation-id="nullable-return-label"] {
-  --da-label-x: 0.7125;
-  --da-label-y: 0.1864;
-  --da-label-width: 0.1944;
-}
-```
-
-The generated stylesheet is deck-owned rather than theme-owned: create
-`styles/drawn-annotations.generated.css` with the generated-file header, import
-it once from the consuming deck's global stylesheet, and ensure that stylesheet
-is loaded by the deck. Enable the writer in the consuming deck's
-`vite.config.ts` with `drawnAnnotationEditor()` from
-`slidev-theme-kotlin/annotation-editor`; the complete setup is in the root
-[README](../README.md#visual-drawnannotation-editor). With the writer plugin configured,
-press **Alt+Shift+A** (or use the global **Edit annotations** toolbar) in a
-development deck. Click and drag a visible identified label to move it; select
-it and drag its right handle to set its maximum width. In edit mode, labels,
+No annotation ID or generated stylesheet is used. Enable
+`drawnAnnotationEditor()` in the consuming deck's `vite.config.ts`; while
+serving it injects a transient source locator and the editor rewrites only this
+opening tag's `:geometry` binding. The locator is not part of authored Markdown
+or production output. With the writer configured, press **Alt+Shift+A** (or use
+the global **Edit annotations** toolbar) in a development deck. Click and drag
+a visible label to move it; select it and drag its right handle to set its
+maximum width. In edit mode, labels,
 the label width handle, and connector endpoint handles are keyboard focusable:
 focus one, then use the arrow keys to nudge it (`Shift` for larger steps). The
 width handle adjusts maximum width; connector endpoints and its body can
@@ -234,21 +215,20 @@ and the annotation's source, target, and label ports. Hold `Alt` to temporarily
 disable snapping. The first connector drag materializes the currently automatic
 route as two manual endpoints. Pointer release saves through the local writer;
 a pause in a long drag saves a draft too, and local saves are serialized so they
-cannot conflict with each other. The toolbar can reset the selected annotation or all
-saved annotation geometry, and explicitly switch a selected connector between
-its manual frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest completed save
-for the selected annotation. If another browser advances the writer revision,
-the failed save leaves the current draft visible for inspection; choose
-**Reload saved geometry** to intentionally discard drafts and continue from
-the other browser's saved revision. Missing or duplicate IDs disable saving,
-and a deck without the writer plugin reports its configuration error instead
-of entering an editor that cannot save.
+cannot conflict with each other. The toolbar can reset label, connector, or all
+source geometry and explicitly switch a selected connector between its manual
+frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest
+completed save for the selected annotation. If another browser changes the
+source revision, the failed save leaves the current draft visible for inspection;
+choose **Reload saved geometry** to intentionally discard drafts and continue
+from the other browser's saved source. A deck without the writer plugin reports
+its configuration error instead of entering an editor that cannot save.
 
 ## How it looks
 
 | prop | default | meaning |
 | --- | --- | --- |
-| `id` | – | stable deck-wide ID for generated editor geometry; must match `[A-Za-z][A-Za-z0-9_.-]*` when supplied |
+| `geometry` | – | optional source-local normalized `{ label, connector }` geometry; the development editor writes this binding into the opening tag |
 | `options` | – | [rough.js options](https://github.com/rough-stuff/rough/wiki#options), passed straight to the library that draws every stroke |
 | `iterations` | `2` | how many times each shape is drawn over itself — the sketchy redraw |
 | `color` | `--drawn-annotation-color` | stroke and label colour, any CSS colour; the variable falls back to the text colour |

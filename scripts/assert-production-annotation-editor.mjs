@@ -13,7 +13,7 @@ for (const file of jsFiles) {
   const contents = await readFile(join(assets, file), 'utf8')
   // The endpoint is the write capability; these UI strings ensure the global
   // development toolbar was not merely hidden with a production v-if.
-  if (contents.includes('/__drawn-annotations')
+  if (contents.includes('/__drawn-annotation-source')
     || contents.includes('drawn-annotation-toolbar')
     || contents.includes('Edit annotations'))
     editorChunks.push(file)

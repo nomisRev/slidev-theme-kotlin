@@ -328,7 +328,7 @@ Every bundled mascot variant is ready to use in your slides.
 
 # Annotate Kotlin code
 
-<DrawnAnnotation id="kotlin-main-entry-label" type="circle" text="fun main" label="the entry point of every Kotlin program" :on="1">
+<DrawnAnnotation type="circle" text="fun main" label="the entry point of every Kotlin program" :on="1">
 
 ```kotlin [Main.kt]
 fun main() {
@@ -343,7 +343,6 @@ fun main() {
 # Connect two elements
 
 <DrawnAnnotation
-  id="annotation-connect-elements"
   source-type="circle"
   selector="[data-source]"
   target="[data-target]"
@@ -381,9 +380,9 @@ fun main() {
 
 # Labels find room automatically
 
-<DrawnAnnotation id="annotation-pinned-label" type="underline" selector="[data-pinned]" label="pinned by hand" :label-x="78" :label-y="18" :at="1">
-<DrawnAnnotation id="annotation-quiet-label" type="underline" selector="[data-quiet]" label="named without a line" :connect="false" placement="right" :at="2">
-<DrawnAnnotation id="annotation-auto-label" type="circle" selector="[data-auto]" label="placed automatically, clear of the other content" :at="3">
+<DrawnAnnotation type="underline" selector="[data-pinned]" label="pinned by hand" :at="1">
+<DrawnAnnotation type="underline" selector="[data-quiet]" label="named without a line" :connect="false" placement="right" :at="2">
+<DrawnAnnotation type="circle" selector="[data-auto]" label="placed automatically, clear of the other content" :at="3">
 
 > You can <b data-pinned>put a label</b> where you want it.
 >
@@ -399,7 +398,7 @@ fun main() {
 
 # Annotate a Magic Move step
 
-<DrawnAnnotation id="annotation-insert-label" type="underline" text="val greeting" label="read-only; its type is inferred" insert :on="2">
+<DrawnAnnotation type="underline" text="val greeting" label="read-only; its type is inferred" insert :on="2">
 
 ````md magic-move [Main.kt]
 ```kotlin [Main.kt]
@@ -441,8 +440,8 @@ The <b data-circled>circle</b> is drawn first; the <b data-underlined>underline<
 
 # Control the sketch
 
-<DrawnAnnotation id="annotation-clean-label" type="box" selector="[data-clean]" :options="{ roughness: 0, bowing: 0 }" :iterations="1" placement="right" label="clean geometric strokes" :at="1">
-<DrawnAnnotation id="annotation-wobbly-label" type="circle" selector="[data-wobbly]" :options="{ roughness: 2.6, seed: 12 }" :stroke-width="4" :duration="1600" color="#eb55e6" placement="right" label="wobblier, slower, and pink" :at="2">
+<DrawnAnnotation type="box" selector="[data-clean]" :options="{ roughness: 0, bowing: 0 }" :iterations="1" placement="right" label="clean geometric strokes" :at="1">
+<DrawnAnnotation type="circle" selector="[data-wobbly]" :options="{ roughness: 2.6, seed: 12 }" :stroke-width="4" :duration="1600" color="#eb55e6" placement="right" label="wobblier, slower, and pink" :at="2">
 
 - Any <b data-clean>rough.js option</b> passes straight through.
 - Turn <b data-wobbly>roughness up</b> and set the colour, width, and duration yourself.
@@ -507,10 +506,10 @@ fun welcome(user: User) = user.displayName
 
 # Explicit label sides are directional
 
-<DrawnAnnotation id="annotation-placement-up" type="circle" selector="[data-up]" placement="up" label="up stays above" :on="1">
-<DrawnAnnotation id="annotation-placement-right" type="circle" selector="[data-right]" placement="right" label="right stays right" :on="2">
-<DrawnAnnotation id="annotation-placement-down" type="circle" selector="[data-down]" placement="down" label="down stays below" :on="3">
-<DrawnAnnotation id="annotation-placement-left" type="circle" selector="[data-left]" placement="left" label="left stays left" :on="4">
+<DrawnAnnotation type="circle" selector="[data-up]" placement="up" label="up stays above" :on="1">
+<DrawnAnnotation type="circle" selector="[data-right]" placement="right" label="right stays right" :on="2">
+<DrawnAnnotation type="circle" selector="[data-down]" placement="down" label="down stays below" :on="3">
+<DrawnAnnotation type="circle" selector="[data-left]" placement="left" label="left stays left" :on="4">
 
 <div style="margin: 230px 180px; display: grid; grid-template-columns: repeat(2, 180px); gap: 70px; text-align: center">
   <b data-up>up</b><b data-right>right</b><b data-left>left</b><b data-down>down</b>
@@ -525,9 +524,9 @@ fun welcome(user: User) = user.displayName
 
 # Automatic labels share the free space
 
-<DrawnAnnotation id="annotation-first-label" selector="[data-first]" type="underline" placement="auto" label="first annotation" avoid-selector="[data-reserved]" :at="1" :until="5">
-<DrawnAnnotation id="annotation-second-label" selector="[data-second]" type="circle" placement="auto" label="second annotation remains clear" :at="2" :until="5">
-<DrawnAnnotation id="annotation-third-label" selector="[data-third]" type="box" placement="auto" label="third annotation has a longer label that may wrap" :at="3" :until="5">
+<DrawnAnnotation selector="[data-first]" type="underline" placement="auto" label="first annotation" avoid-selector="[data-reserved]" :at="1" :until="5">
+<DrawnAnnotation selector="[data-second]" type="circle" placement="auto" label="second annotation remains clear" :at="2" :until="5">
+<DrawnAnnotation selector="[data-third]" type="box" placement="auto" label="third annotation has a longer label that may wrap" :at="3" :until="5">
 
 <div class="grid grid-cols-2 gap-10">
 <div>
@@ -554,7 +553,7 @@ fun welcome(user: User) = user.displayName
 
 # Later clicks are label obstacles
 
-<DrawnAnnotation id="annotation-future-state-label" type="underline" selector="[data-source]" placement="auto" label="This label remains clear when the detail appears" :at="1" :until="4">
+<DrawnAnnotation type="underline" selector="[data-source]" placement="auto" label="This label remains clear when the detail appears" :at="1" :until="4">
 
 <div class="grid grid-cols-2 gap-12">
 <div>
@@ -582,7 +581,7 @@ A later click introduces this explanation. A persistent label must not cover it.
 
 # A label belongs to its Magic Move step
 
-<DrawnAnnotation id="annotation-magic-move-label" text="val token" placement="down" label="a read-only local value" :on="1">
+<DrawnAnnotation text="val token" placement="down" label="a read-only local value" :on="1">
 
 ````md magic-move [Session.kt]
 ```kotlin
@@ -607,7 +606,7 @@ fun session(): String = connect()
 
 # Leader lines do not become lassos
 
-<DrawnAnnotation id="annotation-removal-label" type="circle" text="remove" placement="down" label="remove only the matching entry" :on="1" arrow>
+<DrawnAnnotation type="circle" text="remove" placement="down" label="remove only the matching entry" :on="1" arrow>
 
 ```kotlin
 fun prune(values: MutableList<String>, remove: String) {

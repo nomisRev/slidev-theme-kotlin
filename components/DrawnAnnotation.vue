@@ -11,9 +11,9 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { draftMatchesPersisted, nudgeConnector, nudgeLabelWidth, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
-import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { nudgeConnector, nudgeLabelWidth, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
+import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
@@ -41,10 +41,8 @@ function loadWriterClient() {
  * A label is placed out of the slide's normal flow: its position is searched at
  * runtime with a simple placement near its source — preferring downwards for
  * marks in the upper half of the slide and upwards for marks in the lower
- * half. Persisted editor geometry or `label-x` / `label-y` gives authors the
- * final say; automatic placement deliberately does not scan the slide for
- * collisions. Pass
- * `label-x` / `label-y` (percentages of the slide) to place it by hand instead.
+ * half. Source-authored `geometry.label` gives authors the final say;
+ * automatic placement deliberately does not scan the slide for collisions.
  *
  * Annotations nest, and two that share a click draw one after the other: the
  * inner one starts when the one around it has finished, so "point at it, then
@@ -63,8 +61,10 @@ function loadWriterClient() {
 type MarkType = 'circle' | 'underline' | 'box' | 'strike-through' | 'none'
 
 const props = withDefaults(defineProps<{
-  /** Stable deck-wide identity used by the development-only visual editor. */
-  id?: string
+  /** Source-authored normalized label and connector geometry. */
+  geometry?: DrawnAnnotationGeometry
+  /** Opaque, serve-only locator injected by the Vite source transform. */
+  __drawnAnnotationLocator?: string
   /** Shape drawn on the source. Kept as the short form of `sourceType`. */
   type?: MarkType
   /** Shape drawn on the source. Overrides `type` when supplied. */
@@ -90,13 +90,8 @@ const props = withDefaults(defineProps<{
   targetType?: MarkType
   /** Show the default target circle when `targetType` is omitted. */
   targetMark?: boolean
-  /** Text label. Placed automatically unless `labelX` / `labelY` are given. */
+  /** Text label. Placed automatically unless geometry supplies a position. */
   label?: string
-  /** Label centre, as a percentage of the slide. Disables automatic placement. */
-  labelX?: number
-  labelY?: number
-  /** Optional maximum label width in slide pixels, before it wraps. */
-  labelWidth?: number
   /** Preferred side for automatic placement. `auto` picks by vertical position. */
   placement?: 'auto' | 'up' | 'down' | 'left' | 'right'
   /** Smallest distance between the mark and the label, in slide pixels. */
@@ -174,7 +169,8 @@ const props = withDefaults(defineProps<{
   /** Follow the annotated element while Magic Move or a transition animates it. */
   track?: boolean
 }>(), {
-  id: undefined,
+  geometry: undefined,
+  __drawnAnnotationLocator: undefined,
   type: 'underline',
   sourceType: undefined,
   selector: '[data-annotate]',
@@ -189,9 +185,6 @@ const props = withDefaults(defineProps<{
   targetType: undefined,
   targetMark: true,
   label: undefined,
-  labelX: undefined,
-  labelY: undefined,
-  labelWidth: undefined,
   placement: 'auto',
   gap: 28,
   clearance: 16,
@@ -259,9 +252,6 @@ function warn(message: string) {
   console.warn(`[DrawnAnnotation] ${message}`)
 }
 
-if (props.id !== undefined && !DRAWN_ANNOTATION_ID.test(props.id))
-  warn(`Invalid id ${JSON.stringify(props.id)}. IDs must match ${DRAWN_ANNOTATION_ID}; this annotation cannot be persisted.`)
-
 // The types arrive from Markdown, so a typo is a string TypeScript never saw.
 const MARK_TYPES = ['underline', 'circle', 'box', 'strike-through', 'none'] as const
 function resolveMarkType(value: unknown, prop: string, fallback: MarkType): MarkType {
@@ -294,10 +284,8 @@ const resolvedPlacement = computed(() => {
 // decided once, and an empty string counts as absent everywhere.
 const hasLabel = computed(() => !!props.label)
 const hasTarget = computed(() => !!props.target)
-// A source-only mark exposes no visual-editor operation. Do not make a deck
-// that deliberately uses those marks look invalid merely because they have no
-// persistence identity; IDs are required only where the editor can move a
-// label or connector.
+// A source-only mark exposes no visual-editor operation. It remains valid:
+// only labels and connectors have geometry that an editor can manipulate.
 const editorRelevant = computed(() => hasLabel.value || (props.connect && hasTarget.value))
 
 if (props.on !== undefined && (props.at !== undefined || props.until !== undefined))
@@ -742,7 +730,6 @@ let paintFrame = 0
 let trackFrame = 0
 let trackUntil = 0
 let mounted = false
-let unregisterEditorId: (() => void) | undefined
 let unregisterEditorActions: (() => void) | undefined
 // Fingerprint of the mark's last measured boxes. While the slide animates, a
 // frame in which the mark has not moved recomputes nothing.
@@ -1255,31 +1242,16 @@ const SLIDE_MARGIN = 24
 // resizes too. Cleared on every click and whenever the props or fonts change.
 const labelSizeCache = new Map<number | 'natural', { width: number, height: number }>()
 
-/** CSS-generated geometry wins over Markdown props, one property at a time. */
-function persistedLabelGeometry() {
-  const element = container.value
-  return element && props.id && DRAWN_ANNOTATION_ID.test(props.id)
-    ? readPersistedLabelGeometry(getComputedStyle(element))
-    : {}
+const locator = computed(() => props.__drawnAnnotationLocator)
+/** Source geometry is the persisted state; editor drafts remain visible through HMR. */
+function persistedLabelGeometry(): PersistedAnnotationGeometry {
+  const value = props.geometry
+  return { x: value?.label?.x, y: value?.label?.y, width: value?.label?.width, x1: value?.connector?.start.x, y1: value?.connector?.start.y, x2: value?.connector?.end.x, y2: value?.connector?.end.y }
 }
-
-function draftLabelGeometry() {
-  return props.id ? annotationDrafts.get(props.id) : undefined
-}
-
-function effectiveLabelX() {
-  return draftLabelGeometry()?.x ?? persistedLabelGeometry().x ?? (props.labelX === undefined ? undefined : props.labelX / 100)
-}
-
-function effectiveLabelY() {
-  return draftLabelGeometry()?.y ?? persistedLabelGeometry().y ?? (props.labelY === undefined ? undefined : props.labelY / 100)
-}
-
-function effectiveLabelWidth(bounds: Box) {
-  const persisted = draftLabelGeometry()?.width ?? persistedLabelGeometry().width
-  return persisted === undefined ? props.labelWidth : bounds.width * persisted
-}
-
+function draftLabelGeometry() { return locator.value ? annotationDrafts.get(locator.value) : undefined }
+function effectiveLabelX() { return draftLabelGeometry()?.x ?? persistedLabelGeometry().x }
+function effectiveLabelY() { return draftLabelGeometry()?.y ?? persistedLabelGeometry().y }
+function effectiveLabelWidth(bounds: Box) { const width = draftLabelGeometry()?.width ?? persistedLabelGeometry().width; return width === undefined ? undefined : bounds.width * width }
 /** A connector becomes manual only once all four endpoints are present. */
 function manualConnector() {
   const draft = draftLabelGeometry()
@@ -1352,8 +1324,8 @@ function fitLabel(
   if (fitsSlide && unwrapped.overlap === 0 && respectsExplicitMaximum)
     return { box: unwrapped.box, width: undefined }
 
-  // An explicit `label-width` remains a useful author override. Without one,
-  // the slide edges are the only width limit.
+  // An explicit normalized geometry width remains a useful author override.
+  // Without one, the slide edges are the only width limit.
   const maximum = Math.min(natural.width, maximumWidth ?? natural.width, bounds.width - SLIDE_MARGIN * 2)
   const minimum = Math.min(maximum, 160)
   let best: { box: Box, width: number, overlap: number } | undefined
@@ -1444,14 +1416,11 @@ function backOff(point: { x: number, y: number }, from: { x: number, y: number }
 
 onMounted(async () => {
   mounted = true
-  if (isAnnotationEditorDevelopment && editorRelevant.value) {
-    unregisterEditorId = registerAnnotationEditorId(props.id, !!props.id && DRAWN_ANNOTATION_ID.test(props.id))
-    if (props.id && DRAWN_ANNOTATION_ID.test(props.id)) {
-      unregisterEditorActions = registerAnnotationEditorActions(props.id, {
-        isManualConnector: () => !!manualConnector(),
-        toggleConnectorAttachment,
-      })
-    }
+  if (isAnnotationEditorDevelopment && editorRelevant.value && locator.value) {
+    unregisterEditorActions = registerAnnotationEditorActions(locator.value, {
+      isManualConnector: () => !!manualConnector(),
+      toggleConnectorAttachment,
+    })
   }
   // Registered synchronously, while the clicks context still accepts it.
   if (manualClicks.value) {
@@ -1514,11 +1483,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   mounted = false
-  unregisterEditorId?.()
-  unregisterEditorId = undefined
   unregisterEditorActions?.()
   unregisterEditorActions = undefined
-  clearAnnotationSelection(props.id)
+  clearAnnotationSelection(locator.value)
   settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
@@ -1560,18 +1527,18 @@ watch(props, () => {
   scheduleUpdate()
 })
 
-// A draft is applied immediately instead of waiting for CSS HMR after save.
+// A draft is applied immediately instead of waiting for source HMR after save.
 watch(annotationGeometryVersion, () => {
   labelSizeCache.clear()
   lastMarkKey = ''
   scheduleUpdate()
 })
 
-const editable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && hasLabel.value && labelActive.value && geometry.ready)
-const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
-const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === props.id)
+const editable = computed(() => isAnnotationEditorDevelopment && !!locator.value && hasLabel.value && labelActive.value && geometry.ready)
+const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!locator.value && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
+const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === locator.value)
 interface DragSaveSession extends AnnotationUndoSession {
-  /** The generated rule before this gesture's first autosave. */
+  /** The source geometry before this gesture's first autosave. */
   persistedCaptured: boolean
   persistedBefore?: PersistedAnnotationGeometry | null
 }
@@ -1592,14 +1559,14 @@ function stopEditorClick(event: MouseEvent) {
 }
 
 function beginLabelDrag(event: PointerEvent, width = false) {
-  if (!editable.value || !annotationEditMode.value || !props.id)
+  if (!editable.value || !annotationEditMode.value || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
   // Keep the selected control in sync with the gesture. In particular, a
   // width-handle drag must leave the width handle selected so follow-up arrow
   // presses resize instead of unexpectedly moving the label.
-  selectAnnotation(props.id, width ? 'width' : 'label')
+  selectAnnotation(locator.value, width ? 'width' : 'label')
   const slide = slideRoot()
   const label = labelEl.value
   if (!slide || !label)
@@ -1614,14 +1581,14 @@ function beginLabelDrag(event: PointerEvent, width = false) {
     // pointer on its first move.
     offsetX: event.clientX - (labelBox.left + labelBox.width / 2),
     offsetY: event.clientY - (labelBox.top + labelBox.height / 2),
-    previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined,
+    previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined,
     persistedCaptured: false,
   }
   ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
 }
 
 function moveLabelDrag(event: PointerEvent) {
-  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
@@ -1630,10 +1597,10 @@ function moveLabelDrag(event: PointerEvent) {
     return
   const box = slide.getBoundingClientRect()
   if (labelDrag.width) {
-    setLabelDraft(props.id, { width: Math.max(.02, Math.min(1, (event.clientX - labelDrag.startLeft) / box.width)) })
+    setLabelDraft(locator.value, { width: Math.max(.02, Math.min(1, (event.clientX - labelDrag.startLeft) / box.width)) })
   }
   else {
-    setLabelDraft(props.id, {
+    setLabelDraft(locator.value, {
       x: fraction((event.clientX - labelDrag.offsetX - box.left) / box.width),
       y: fraction((event.clientY - labelDrag.offsetY - box.top) / box.height),
     })
@@ -1641,26 +1608,7 @@ function moveLabelDrag(event: PointerEvent) {
   scheduleDraftSave(labelDrag)
 }
 
-/**
- * Keep the in-memory drag geometry until Vite has applied the rewritten CSS.
- * A newer pointer move may happen while an older debounced save is in flight;
- * only clear when *every* current draft value has made it into the stylesheet.
- */
-function clearDraftAfterCssHmr(id: string) {
-  let frames = 0
-  const check = () => {
-    const draft = annotationDrafts.get(id)
-    if (!draft)
-      return
-    if (draftMatchesPersisted(draft, persistedLabelGeometry())) {
-      clearLabelDraft(id)
-      return
-    }
-    if (++frames < 120)
-      requestAnimationFrame(check)
-  }
-  requestAnimationFrame(check)
-}
+/** Source HMR updates `geometry`; drafts intentionally remain until the save response is reconciled. */
 
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 let lastSavedDraftSignature: string | undefined
@@ -1673,8 +1621,8 @@ function draftSignature(geometry: PersistedAnnotationGeometry) {
 function scheduleDraftSave(session?: DragSaveSession) {
   clearTimeout(draftSaveTimer)
   draftSaveTimer = setTimeout(() => {
-    if (props.id)
-      void saveDraft(props.id, session)
+    if (locator.value)
+      void saveDraft(locator.value, session)
   }, 350)
 }
 
@@ -1684,10 +1632,10 @@ async function saveDraft(id: string, session?: DragSaveSession) {
     return
   const savedDraft = { ...draft }
   const signature = draftSignature(savedDraft)
-  // A signature is only a duplicate when the current stylesheet still has the
+  // A signature is only a duplicate when the current source still has the
   // same complete geometry. A reset can deliberately remove a rule and later
   // materialize the exact same automatic connector again.
-  if ((signature === lastSavedDraftSignature && draftMatchesPersisted(savedDraft, persistedLabelGeometry())) || savingDraftSignatures.has(signature))
+  if (signature === lastSavedDraftSignature || savingDraftSignatures.has(signature))
     return
   savingDraftSignatures.add(signature)
   annotationEditorStatus.value = 'Saving annotation…'
@@ -1716,20 +1664,11 @@ async function saveDraft(id: string, session?: DragSaveSession) {
       recordAnnotationUndoOnce(session, id, session.persistedBefore ?? previous)
     else
       recordAnnotationUndo(id, previous)
-    // The writer emits CSS at fixed precision and returns the corresponding
-    // canonical document. Replace just this drag's fields with those values
-    // before waiting for HMR; comparing the raw pointer fraction (for example
-    // .123456) with CSS's .1235 would otherwise leave a draft permanently
-    // above the persisted rule.
+    // The writer returns its fixed-four-decimal source snapshot. Keep that
+    // draft visible until Slidev recompiles the rewritten Markdown.
     const persisted = saved.geometry[id]
-    const current = annotationDrafts.get(id)
-    // Do not overwrite movement that happened after this request started.
-    // Reconciliation only replaces unchanged fields with CSS's rounded form.
-    const reconciled = persisted && reconcileSavedDraft(current, savedDraft, persisted)
-    if (reconciled)
-      setLabelDraft(id, reconciled)
+    if (persisted) setLabelDraft(id, persisted)
     lastSavedDraftSignature = signature
-    clearDraftAfterCssHmr(id)
     annotationEditorStatus.value = 'Annotation saved'
   }
   catch (error) {
@@ -1746,16 +1685,16 @@ async function saveDraft(id: string, session?: DragSaveSession) {
  * the global toolbar without making the toolbar depend on annotation DOM.
  */
 async function toggleConnectorAttachment() {
-  if (!props.id || !connectorEditable.value)
+  if (!locator.value || !connectorEditable.value)
     return
   if (manualConnector()) {
     annotationEditorStatus.value = 'Restoring automatic connector…'
     try {
       const { cachedAnnotationGeometry, resetAnnotationGeometry } = await loadWriterClient()
-      const previous = cachedAnnotationGeometry(props.id)
-      await resetAnnotationGeometry(props.id, 'connector')
-      recordAnnotationUndo(props.id, previous)
-      clearLabelDraft(props.id)
+      const previous = cachedAnnotationGeometry(locator.value)
+      await resetAnnotationGeometry(locator.value, 'connector')
+      recordAnnotationUndo(locator.value, previous)
+      clearLabelDraft(locator.value)
       annotationEditorStatus.value = 'Connector now follows its source and label'
     }
     catch (error) {
@@ -1768,19 +1707,19 @@ async function toggleConnectorAttachment() {
   const end = geometry.connectorEnd && localConnectorFraction(geometry.connectorEnd)
   if (!start || !end)
     return
-  setLabelDraft(props.id, { x1: start.x, y1: start.y, x2: end.x, y2: end.y })
-  await saveDraft(props.id)
+  setLabelDraft(locator.value, { x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+  await saveDraft(locator.value)
 }
 
 async function endLabelDrag(event: PointerEvent) {
-  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
   const session = labelDrag
   labelDrag = undefined
   clearTimeout(draftSaveTimer)
-  await saveDraft(props.id, session)
+  await saveDraft(locator.value, session)
 }
 
 // A pointer cancellation means the browser interrupted the gesture (for
@@ -1803,7 +1742,7 @@ function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry 
   if (!isAnnotationEditorDevelopment)
     return
   // Writer-client writes are serialized. This restore runs after any autosave
-  // already in flight, preventing CSS HMR from resurrecting a cancelled drag.
+  // already in flight, preventing source HMR from resurrecting a cancelled drag.
   void loadWriterClient().then(({ restoreAnnotationGeometry }) =>
     restoreAnnotationGeometry(id, session.persistedBefore ?? null),
   ).then(() => {
@@ -1815,14 +1754,14 @@ function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry 
 }
 
 function cancelLabelDrag(event: PointerEvent) {
-  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
   const drag = labelDrag
   labelDrag = undefined
   clearTimeout(draftSaveTimer)
-  restoreCancelledDrag(props.id, drag.previous, drag)
+  restoreCancelledDrag(locator.value, drag.previous, drag)
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
@@ -1870,7 +1809,7 @@ function snapConnectorPoint(point: { x: number, y: number }, disabled: boolean) 
  * from displaying guides at a different origin than the endpoint receives.
  */
 const connectorGuidePoints = computed(() => {
-  if (!connectorEditable.value || !annotationEditMode.value || selectedAnnotationId.value !== props.id)
+  if (!connectorEditable.value || !annotationEditMode.value || selectedAnnotationId.value !== locator.value)
     return []
   const slide = slideRoot()
   const svg = overlay.value
@@ -1885,7 +1824,7 @@ const connectorGuidePoints = computed(() => {
 })
 
 function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
-  if (!connectorEditable.value || !annotationEditMode.value || !props.id || !geometry.connectorStart || !geometry.connectorEnd)
+  if (!connectorEditable.value || !annotationEditMode.value || !locator.value || !geometry.connectorStart || !geometry.connectorEnd)
     return
   const start = localConnectorFraction(geometry.connectorStart)
   const end = localConnectorFraction(geometry.connectorEnd)
@@ -1893,13 +1832,13 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
     return
   event.preventDefault()
   event.stopPropagation()
-  selectAnnotation(props.id, kind)
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined, persistedCaptured: false }
+  selectAnnotation(locator.value, kind)
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
 
 function moveConnectorDrag(event: PointerEvent) {
-  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !props.id)
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
     return
   const slide = slideRoot()
   if (!slide)
@@ -1927,37 +1866,37 @@ function moveConnectorDrag(event: PointerEvent) {
     const snapped = snapConnectorPoint({ x: translated.x1, y: translated.y1 }, event.altKey)
     Object.assign(next, translateConnector(translated, snapped.x - translated.x1, snapped.y - translated.y1))
   }
-  setLabelDraft(props.id, next)
+  setLabelDraft(locator.value, next)
   scheduleDraftSave(connectorDrag)
 }
 
 async function endConnectorDrag(event: PointerEvent) {
-  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !props.id)
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
   const session = connectorDrag
   connectorDrag = undefined
   clearTimeout(draftSaveTimer)
-  await saveDraft(props.id, session)
+  await saveDraft(locator.value, session)
 }
 
 function cancelConnectorDrag(event: PointerEvent) {
-  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !props.id)
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
   const drag = connectorDrag
   connectorDrag = undefined
   clearTimeout(draftSaveTimer)
-  restoreCancelledDrag(props.id, drag.previous, drag)
+  restoreCancelledDrag(locator.value, drag.previous, drag)
 }
 
 let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
 
 /** Arrow keys nudge the selected label or connector in slide fractions. */
 function nudgeSelectedAnnotation(event: KeyboardEvent) {
-  if (!annotationEditMode.value || selectedAnnotationId.value !== props.id || labelDrag || connectorDrag || !props.id)
+  if (!annotationEditMode.value || selectedAnnotationId.value !== locator.value || labelDrag || connectorDrag || !locator.value)
     return
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
     return
@@ -1992,13 +1931,13 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       // occupies now, so the first key press changes the visible label rather
       // than jumping to an unrelated default cap.
       const currentWidth = geometry.labelWidth ?? label.getBoundingClientRect().width * geometry.width / slide.getBoundingClientRect().width
-      setLabelDraft(props.id, { width: nudgeLabelWidth(currentWidth / geometry.width, dx) })
+      setLabelDraft(locator.value, { width: nudgeLabelWidth(currentWidth / geometry.width, dx) })
     }
     else {
       const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
       if (!current)
         return
-      setLabelDraft(props.id, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
+      setLabelDraft(locator.value, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
     }
   }
   else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
@@ -2008,7 +1947,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       return
     // Keep arrow-key body movement identical to dragging the line itself:
     // translation is constrained as one rigid segment at slide edges.
-    setLabelDraft(props.id, nudgeConnector({ x1: start.x, y1: start.y, x2: end.x, y2: end.y }, part, dx, dy))
+    setLabelDraft(locator.value, nudgeConnector({ x1: start.x, y1: start.y, x2: end.x, y2: end.y }, part, dx, dy))
   }
   else {
     return
@@ -2020,11 +1959,11 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
   // two writes for one key press; after a 409 the second would adopt the
   // conflict response's revision and overwrite the other author's geometry.
   clearTimeout(keyboardSaveTimer)
-  keyboardSaveTimer = setTimeout(() => void saveDraft(props.id!), 250)
+  keyboardSaveTimer = setTimeout(() => void saveDraft(locator.value!), 250)
 }
 
 function cancelActiveDrag(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || (!labelDrag && !connectorDrag) || !props.id)
+  if (event.key !== 'Escape' || (!labelDrag && !connectorDrag) || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
@@ -2032,7 +1971,7 @@ function cancelActiveDrag(event: KeyboardEvent) {
   labelDrag = undefined
   connectorDrag = undefined
   clearTimeout(draftSaveTimer)
-  restoreCancelledDrag(props.id, drag?.previous, drag!)
+  restoreCancelledDrag(locator.value, drag?.previous, drag!)
 }
 
 onMounted(() => {
@@ -2052,8 +1991,7 @@ onBeforeUnmount(() => {
     ref="container"
     class="drawn-annotation"
     :class="{ 'is-fading-out': fadingOut }"
-    :data-drawn-annotation-id="props.id"
-  >
+      >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
     <span ref="clickMarker" v-click="manualClicks ? false : atClick" class="click-marker annotation-ignore" />
@@ -2065,7 +2003,7 @@ onBeforeUnmount(() => {
       preserveAspectRatio="none"
       :aria-hidden="!(connectorEditable && annotationEditMode)"
       :role="connectorEditable && annotationEditMode ? 'group' : undefined"
-      :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${props.id}` : undefined"
+      :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${locator.value}` : undefined"
       :style="{
         '--annotation-color': props.color,
         '--annotation-width': `${props.strokeWidth}px`,
@@ -2137,7 +2075,7 @@ onBeforeUnmount(() => {
           role="button"
           tabindex="0"
           aria-label="Move connector"
-          @focus="selectAnnotation(props.id!, 'body')"
+          @focus="selectAnnotation(locator.value!, 'body')"
           @pointerdown="beginConnectorDrag($event, 'body')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
@@ -2151,7 +2089,7 @@ onBeforeUnmount(() => {
           :aria-label="index ? 'Move connector end' : 'Move connector start'"
           role="button"
           tabindex="0"
-          @focus="selectAnnotation(props.id!, index ? 'end' : 'start')"
+          @focus="selectAnnotation(locator.value!, index ? 'end' : 'start')"
           @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
@@ -2184,9 +2122,9 @@ onBeforeUnmount(() => {
         'maxWidth': geometry.labelWidth === undefined ? undefined : `${geometry.labelWidth}px`,
       }"
       :tabindex="editable && annotationEditMode ? 0 : undefined"
-      :aria-label="editable && annotationEditMode ? `Move annotation label ${props.id}` : undefined"
+      :aria-label="editable && annotationEditMode ? `Move annotation label ${locator.value}` : undefined"
       :aria-hidden="!(editable && annotationEditMode)"
-      @focus="selectAnnotation(props.id!, 'label')"
+      @focus="selectAnnotation(locator.value!, 'label')"
     >
       {{ props.label }}
       <button
@@ -2199,7 +2137,7 @@ onBeforeUnmount(() => {
         @pointermove="moveLabelDrag"
         @pointerup="endLabelDrag"
         @pointercancel="cancelLabelDrag"
-        @focus.stop="selectAnnotation(props.id!, 'width')"
+        @focus.stop="selectAnnotation(locator.value!, 'width')"
       />
     </div>
     <slot />

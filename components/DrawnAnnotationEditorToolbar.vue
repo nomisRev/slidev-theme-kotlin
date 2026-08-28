@@ -11,8 +11,6 @@ import {
   clearAllAnnotationDrafts,
   clearAnnotationSelection,
   clearLabelDraft,
-  duplicateAnnotationIds,
-  missingAnnotationIds,
   recordAnnotationUndo,
   selectedAnnotationId,
   takeAnnotationUndo,
@@ -41,11 +39,13 @@ const editorAvailable = computed(() => isDevelopment && hasPrimarySlide.value &&
 const checkingWriter = ref(false)
 const canWrite = ref(false)
 const selected = computed(() => selectedAnnotationId.value)
-const hasIdProblems = computed(() => duplicateAnnotationIds.value.size > 0 || missingAnnotationIds.value > 0)
-// An unrelated legacy annotation without an ID must not prevent editing a
-// correctly identified annotation. Duplicates remain unsafe only for the ID
-// currently selected; the component itself also refuses to make it editable.
-const selectedHasDuplicateId = computed(() => !!selected.value && duplicateAnnotationIds.value.has(selected.value))
+const selectedDescription = computed(() => {
+  if (!selected.value) return 'Select a visible annotation'
+  try {
+    const source = JSON.parse(atob(selected.value.replace(/-/g, '+').replace(/_/g, '/')))
+    return `${source.file}:${source.start + 1}`
+  } catch { return 'Selected annotation' }
+})
 const selectedConnectorManual = computed(() => {
   // Depend on both registration and local draft changes. A saved CSS update
   // clears the draft, which also refreshes the attached/manual toolbar state.
@@ -53,7 +53,7 @@ const selectedConnectorManual = computed(() => {
   annotationGeometryVersion.value
   return annotationEditorActionsFor(selected.value)?.isManualConnector() ?? false
 })
-const canToggleConnector = computed(() => !!annotationEditorActionsFor(selected.value) && !selectedHasDuplicateId.value)
+const canToggleConnector = computed(() => !!annotationEditorActionsFor(selected.value))
 
 async function toggleSelectedConnectorAttachment() {
   const actions = annotationEditorActionsFor(selected.value)
@@ -180,43 +180,20 @@ async function undoSelected() {
     annotationEditorStatus.value = 'Nothing to undo for this annotation'
     return
   }
-  annotationEditorStatus.value = `Undoing ${undo.id}…`
+  annotationEditorStatus.value = 'Undoing annotation change…'
   try {
     if (!isDevelopment)
       return
     const { restoreAnnotationGeometry } = await loadWriterClient()
-    await restoreAnnotationGeometry(undo.id, undo.geometry)
-    clearLabelDraft(undo.id)
-    annotationEditorStatus.value = `${undo.id} restored`
+    await restoreAnnotationGeometry(undo.locator, undo.geometry)
+    clearLabelDraft(undo.locator)
+    annotationEditorStatus.value = 'Annotation restored'
   }
   catch (error) {
     annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to undo annotation geometry'
   }
 }
 
-async function resetAll() {
-  if (!canWrite.value || !confirm('Reset all saved DrawnAnnotation geometry?'))
-    return
-  annotationEditorStatus.value = 'Resetting all annotation geometry…'
-  try {
-    if (!isDevelopment)
-      return
-    const { loadAnnotationGeometry, resetAllAnnotationGeometry } = await loadWriterClient()
-    // Preserve each existing rule independently. This makes Reset all
-    // recoverable by selecting an annotation and using Undo afterwards.
-    const current = await loadAnnotationGeometry()
-    await resetAllAnnotationGeometry()
-    for (const [id, geometry] of Object.entries(current.geometry))
-      recordAnnotationUndo(id, geometry)
-    // Drafts render ahead of CSS HMR. Leaving one behind would make a reset-all
-    // look like it failed until the slide was reloaded.
-    clearAllAnnotationDrafts()
-    annotationEditorStatus.value = 'All annotations reset to authored defaults'
-  }
-  catch (error) {
-    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to reset annotation geometry'
-  }
-}
 </script>
 
 <template>
@@ -228,23 +205,17 @@ async function resetAll() {
       {{ annotationEditMode ? 'Done editing annotations' : 'Edit annotations' }}
     </button>
     <template v-if="annotationEditMode">
-      <span class="drawn-annotation-toolbar__selection">{{ selected ? `Selected: ${selected}` : 'Select a visible annotation' }}</span>
-      <button type="button" :disabled="!selected || selectedHasDuplicateId" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
+      <span class="drawn-annotation-toolbar__selection">{{ selectedDescription }}</span>
+      <button type="button" :disabled="!selected" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" @click="reloadSavedGeometry">Reload saved geometry</button>
-      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('label')">Reset label</button>
-      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('connector')">Reset connector</button>
+      <button type="button" :disabled="!selected" @click="resetSelected('label')">Reset label</button>
+      <button type="button" :disabled="!selected" @click="resetSelected('connector')">Reset connector</button>
       <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorAttachment">
         {{ selectedConnectorManual ? 'Use automatic connector' : 'Make connector manual' }}
       </button>
-      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('all')">Reset selected</button>
-      <button type="button" :disabled="duplicateAnnotationIds.size > 0" @click="resetAll">Reset all</button>
+      <button type="button" :disabled="!selected" @click="resetSelected('all')">Reset selected</button>
     </template>
     <span v-if="annotationEditorStatus" class="drawn-annotation-toolbar__status" role="status">{{ annotationEditorStatus }}</span>
-    <span v-if="annotationEditMode && hasIdProblems" class="drawn-annotation-toolbar__error" role="alert">
-      {{ duplicateAnnotationIds.size ? `Duplicate IDs: ${[...duplicateAnnotationIds].join(', ')}.` : '' }}
-      {{ missingAnnotationIds ? `${missingAnnotationIds} annotation${missingAnnotationIds === 1 ? '' : 's'} without a valid ID.` : '' }}
-Annotations with missing or duplicate IDs cannot be saved; fix them before editing those annotations.
-    </span>
   </aside>
 </template>
 
