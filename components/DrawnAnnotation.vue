@@ -12,6 +12,7 @@ import { useSlideContext } from '@slidev/client'
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint } from './drawn-annotation/geometry'
+import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
@@ -1698,6 +1699,26 @@ function snapConnectorPoint(point: { x: number, y: number }, disabled: boolean) 
   return disabled ? point : snapFractionPoint(point, connectorSnapCandidates())
 }
 
+/**
+ * Render the same concrete-slide snap ports used by dragging. Keeping this
+ * conversion beside the drag conversion prevents a nested annotation canvas
+ * from displaying guides at a different origin than the endpoint receives.
+ */
+const connectorGuidePoints = computed(() => {
+  if (!connectorEditable.value || !annotationEditMode.value || selectedAnnotationId.value !== props.id)
+    return []
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg || !geometry.width || !geometry.height)
+    return []
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  return connectorSnapCandidates().map(point => ({
+    x: slideFractionToLocal(point.x, 'x', slideBox, overlayBox, geometry),
+    y: slideFractionToLocal(point.y, 'y', slideBox, overlayBox, geometry),
+  }))
+})
+
 function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   if (!connectorEditable.value || !annotationEditMode.value || !props.id || !geometry.connectorStart || !geometry.connectorEnd)
     return
@@ -1846,7 +1867,9 @@ onBeforeUnmount(() => {
       class="annotation-overlay annotation-ignore"
       :viewBox="`0 0 ${geometry.width} ${geometry.height}`"
       preserveAspectRatio="none"
-      aria-hidden="true"
+      :aria-hidden="!(connectorEditable && annotationEditMode)"
+      :role="connectorEditable && annotationEditMode ? 'group' : undefined"
+      :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${props.id}` : undefined"
       :style="{
         '--annotation-color': props.color,
         '--annotation-width': `${props.strokeWidth}px`,
@@ -1905,6 +1928,11 @@ onBeforeUnmount(() => {
         v-if="connectorEditable && annotationEditMode && geometry.connectorStart && geometry.connectorEnd"
         class="annotation-connector-editor"
       >
+        <!-- Visible ports make snapping discoverable; they are decorative,
+             unlike the keyboard-accessible endpoint controls below. -->
+        <g class="annotation-connector-guides" aria-hidden="true">
+          <circle v-for="(point, index) in connectorGuidePoints" :key="`guide-${index}`" :cx="point.x" :cy="point.y" r="4" />
+        </g>
         <line
           class="annotation-connector-hit"
           :x1="geometry.connectorStart.x" :y1="geometry.connectorStart.y"
@@ -1922,6 +1950,7 @@ onBeforeUnmount(() => {
           :aria-label="index ? 'Move connector end' : 'Move connector start'"
           role="button"
           tabindex="0"
+          @focus="selectAnnotation(props.id!, index ? 'end' : 'start')"
           @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
@@ -2102,6 +2131,13 @@ onBeforeUnmount(() => {
   stroke: transparent;
   stroke-width: 24px;
   cursor: move;
+}
+.annotation-connector-guides circle {
+  fill: color-mix(in srgb, currentColor 22%, transparent);
+  stroke: currentColor;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 .annotation-connector-handle {
   fill: Canvas;
