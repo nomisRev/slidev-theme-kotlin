@@ -83,9 +83,31 @@ export async function resetAllAnnotationGeometry() {
   return enqueueWrite(() => writePatch(annotations))
 }
 
-/** Restore a full prior snapshot for Undo (or delete the generated rule). */
-export async function restoreAnnotationGeometry(id: string, geometry: PersistedAnnotationGeometry | null) {
-  return saveLabelGeometry(id, geometry)
+const GEOMETRY_FIELDS: (keyof PersistedAnnotationGeometry)[] = ['x', 'y', 'width', 'x1', 'y1', 'x2', 'y2']
+
+/**
+ * Restore an exact prior rule for Undo (or delete it). Normal saves are
+ * deliberately property-wise, but using that operation for Undo leaves fields
+ * introduced after the snapshot behind — notably a connector made manual
+ * after the snapshot was taken. Null every currently saved field absent from
+ * the snapshot in the same serialized write as the fields being restored.
+ */
+export function restoreAnnotationGeometry(id: string, geometry: PersistedAnnotationGeometry | null) {
+  return enqueueWrite(() => {
+    if (geometry === null)
+      return writePatch({ [id]: null })
+
+    const current = cachedGeometry[id] ?? {}
+    const replacement: Record<string, number | null> = {}
+    for (const field of GEOMETRY_FIELDS) {
+      const value = geometry[field]
+      if (value !== undefined)
+        replacement[field] = value
+      else if (current[field] !== undefined)
+        replacement[field] = null
+    }
+    return writePatch({ [id]: replacement })
+  })
 }
 
 export function forgetWriterRevision() {

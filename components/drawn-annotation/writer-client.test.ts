@@ -33,6 +33,31 @@ describe('DrawnAnnotation writer client', () => {
     ])
   })
 
+  it('restores an exact snapshot, clearing connector fields introduced by a later edit', async () => {
+    let revision = 'initial'
+    const requests: { expectedRevision: string, annotations: Record<string, Record<string, number | null> | null> }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (!init?.method)
+        return Response.json({ geometry: { note: { x: .1, y: .2, x1: .3, y1: .4, x2: .5, y2: .6 } }, revision })
+      const request = JSON.parse(init.body as string)
+      requests.push(request)
+      expect(request.expectedRevision).toBe(revision)
+      revision = 'restored'
+      return Response.json({ geometry: { note: { x: .1, y: .2 } }, revision })
+    }))
+
+    const writer = await import('./writer-client')
+    await writer.loadAnnotationGeometry()
+    // Making an automatic connector manual adds four fields. Undo must remove
+    // those fields, not merely reapply the old label coordinates over them.
+    await writer.restoreAnnotationGeometry('note', { x: .1, y: .2 })
+
+    expect(requests).toEqual([{
+      expectedRevision: 'initial',
+      annotations: { note: { x: .1, y: .2, x1: null, y1: null, x2: null, y2: null } },
+    }])
+  })
+
   it('queues a cancelled drag restore after its in-flight autosave', async () => {
     let revision = 'initial'
     const requests: { expectedRevision: string, annotations: Record<string, unknown> }[] = []
