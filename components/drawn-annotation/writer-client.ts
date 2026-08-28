@@ -3,7 +3,7 @@ import type { PersistedAnnotationGeometry } from './geometry'
 type GeometryReset = 'label' | 'connector'
 interface WriterResponse { geometry?: { label?: { x: number, y: number, width?: number }, connector?: { start: { x: number, y: number }, end: { x: number, y: number } } }, revision?: string, revisions?: Record<string, string>, error?: string, recovery?: string }
 /** Source revisions by Markdown file. A locator names a tag, never a revision. */
-let revisions = new Map<string, string>()
+const revisions = new Map<string, string>()
 /** What this tab last wrote for a locator, until a conflict proves the source moved on. */
 let cachedGeometry = new Map<string, PersistedAnnotationGeometry>()
 let pendingWrite = Promise.resolve()
@@ -60,5 +60,3 @@ export function resetAnnotationGeometry(locator: string, part: GeometryReset, cu
   return enqueue(() => write(locator, next))
 }
 export function restoreAnnotationGeometry(locator: string, geometry: PersistedAnnotationGeometry | null) { return enqueue(() => write(locator, geometry)) }
-export async function resetAllAnnotationGeometry() { throw new Error('Reset all is unavailable: geometry is source-local to each annotation') }
-export function forgetWriterRevision() { revisions = new Map(); cachedGeometry = new Map() }

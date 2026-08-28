@@ -320,7 +320,7 @@ npm run export
 # Export every slide and click state as PNG screenshots
 npm run screenshot
 
-# Run real-browser pointer/save/HMR coverage for the annotation editor
+# Drive the annotation editor in a real browser against a throwaway copy of slides.md
 npm run test:annotation-editor
 
 # Export one slide; --click is zero-based (0 is the initial state)
@@ -424,11 +424,16 @@ and is ignored by Git. `npm run screenshot` is the non-comparison escape hatch
 when raw PNGs are all that is needed.
 
 The visual exporter and `npm run test:annotation-editor` require the Chromium
-binary supplied by `playwright-chromium`. The editor browser test starts an
-isolated development server, drags a label, width handle, connector endpoint,
-and connector body, verifies the persisted CSS after reload, and restores the
-generated stylesheet byte-for-byte. If dependency installation is configured
-not to run package install scripts, download Chromium once with:
+binary supplied by `playwright-chromium`. The editor browser test copies
+`slides.md` to a temporary deck, starts an isolated development server on it,
+and drives the editor with real pointer and keyboard gestures: dragging the
+label, width handle and a connector endpoint must write `:geometry` to that
+one tag; the selection must survive each HMR cycle; Undo must restore the
+previous source geometry; an external edit must produce the 409 recovery
+prompt that "Reload saved geometry" clears; and an arrow key must nudge the
+focused label. The checked-in `slides.md` is never modified. If dependency
+installation is configured not to run package install scripts, download
+Chromium once with:
 
 ```bash
 npx playwright install chromium

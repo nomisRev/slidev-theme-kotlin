@@ -11,9 +11,9 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { nudgeConnector, nudgeLabelWidth, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
+import { localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
@@ -1119,14 +1119,8 @@ function paintDestinationInto(
       return
     const slideBox = slide.getBoundingClientRect()
     const overlayBox = overlay.value.getBoundingClientRect()
-    start = {
-      x: slideFractionToLocal(savedConnector.x1, 'x', slideBox, overlayBox, geometry),
-      y: slideFractionToLocal(savedConnector.y1, 'y', slideBox, overlayBox, geometry),
-    }
-    end = {
-      x: slideFractionToLocal(savedConnector.x2, 'x', slideBox, overlayBox, geometry),
-      y: slideFractionToLocal(savedConnector.y2, 'y', slideBox, overlayBox, geometry),
-    }
+    start = slideFractionPointToLocal({ x: savedConnector.x1, y: savedConnector.y1 }, slideBox, overlayBox, geometry)
+    end = slideFractionPointToLocal({ x: savedConnector.x2, y: savedConnector.y2 }, slideBox, overlayBox, geometry)
     c2x = start.x
     c2y = start.y
     paths.leader = toPaths(generator.line(start.x, start.y, end.x, end.y, roughOptions()))
@@ -1260,9 +1254,25 @@ if (isAnnotationEditorDevelopment) {
       clearAnnotationSelection(previous)
   })
 }
+/**
+ * The `geometry` binding, checked once per change. A hand-edited binding in
+ * the wrong unit (`{ x: 70, y: 18 }` in percent) would otherwise place the
+ * label off the slide without a word; it is ignored with a warning instead.
+ */
+const sourceGeometry = computed<DrawnAnnotationGeometry | undefined>(() => {
+  if (props.geometry === undefined)
+    return undefined
+  try {
+    return validateDrawnAnnotationGeometry(props.geometry)
+  }
+  catch (error) {
+    warn(`Ignoring \`geometry\`: ${error instanceof Error ? error.message : String(error)}. Every value is a fraction of the slide from 0 to 1, for example \`:geometry="{ label: { x: 0.7, y: 0.18 } }"\`.`)
+    return undefined
+  }
+})
 /** Source geometry is the persisted state; editor drafts remain visible through HMR. */
 function persistedLabelGeometry(): PersistedAnnotationGeometry {
-  const value = props.geometry
+  const value = sourceGeometry.value
   return { x: value?.label?.x, y: value?.label?.y, width: value?.label?.width, x1: value?.connector?.start.x, y1: value?.connector?.start.y, x2: value?.connector?.end.x, y2: value?.connector?.end.y }
 }
 function draftLabelGeometry() { return locator.value ? annotationDrafts.get(locator.value) : undefined }
@@ -1495,8 +1505,6 @@ onMounted(async () => {
     scheduleUpdate()
   })
   window.addEventListener('resize', scheduleUpdate)
-  if (isAnnotationEditorDevelopment)
-    installAnnotationEditorShortcut()
 })
 
 onBeforeUnmount(() => {
@@ -1630,10 +1638,10 @@ function moveLabelDrag(event: PointerEvent) {
 /** Source HMR updates `geometry`; drafts intentionally remain until the save response is reconciled. */
 
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
-let lastSavedDraftSignature: string | undefined
 const savingDraftSignatures = new Set<string>()
+/** Independent of key order, so a draft compares equal to the same geometry read back from the source. */
 function draftSignature(geometry: PersistedAnnotationGeometry) {
-  return JSON.stringify(geometry)
+  return JSON.stringify([geometry.x, geometry.y, geometry.width, geometry.x1, geometry.y1, geometry.x2, geometry.y2].map(value => value ?? null))
 }
 
 /** Save during a pause in a long drag as well as on pointer release. */
@@ -1649,25 +1657,29 @@ async function saveDraft(id: string, session?: DragSaveSession) {
   const draft = annotationDrafts.get(id)
   if (!draft)
     return
-  const savedDraft = { ...draft }
+  // This import stays behind a compile-time development guard. Production
+  // decks neither render controls nor include browser write-client code.
+  if (!isAnnotationEditorDevelopment)
+    return
+  const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
+  // Undo must return to what the source holds now: the geometry this tab
+  // last saved (HMR may not have delivered it as a prop yet), otherwise the
+  // authored binding. Store it before replacing it with the new geometry.
+  const previous = cachedAnnotationGeometry(id) ?? persistedLabelGeometry()
+  // The writer replaces the whole binding with what it is sent. A first drag
+  // drafts only the label, so complete it from the source baseline rather than
+  // letting a label move erase the connector or width the source holds.
+  const savedDraft = { ...previous, ...draft }
   const signature = draftSignature(savedDraft)
-  // A signature is only a duplicate when the current source still has the
-  // same complete geometry. A reset can deliberately remove a rule and later
-  // materialize the exact same automatic connector again.
-  if (signature === lastSavedDraftSignature || savingDraftSignatures.has(signature))
+  // There is nothing to write when the source already holds this geometry:
+  // after a completed save, or when a drag ends where it started. Comparing
+  // with the source rather than with the last request keeps a position that
+  // Undo or Reset removed from the source saveable again.
+  if (signature === draftSignature(previous) || savingDraftSignatures.has(signature))
     return
   savingDraftSignatures.add(signature)
   annotationEditorStatus.value = 'Saving annotation…'
   try {
-    // This import stays behind a compile-time development guard. Production
-    // decks neither render controls nor include browser write-client code.
-    if (!isAnnotationEditorDevelopment)
-      return
-    const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
-    // Undo must return to what the source holds now: the geometry this tab
-    // last saved (HMR may not have delivered it as a prop yet), otherwise the
-    // authored binding. Store it before replacing it with the new geometry.
-    const previous = cachedAnnotationGeometry(id) ?? persistedLabelGeometry()
     // A long drag may autosave before the pointer is released. Remember the
     // pre-drag rule before that first request, so Escape can truly cancel the
     // whole gesture instead of merely hiding a value that HMR has saved.
@@ -1687,7 +1699,6 @@ async function saveDraft(id: string, session?: DragSaveSession) {
     // draft visible until Slidev recompiles the rewritten Markdown.
     const persisted = saved.geometry[id]
     if (persisted) setLabelDraft(id, persisted)
-    lastSavedDraftSignature = signature
     annotationEditorStatus.value = 'Annotation saved'
   }
   catch (error) {
@@ -1791,12 +1802,8 @@ function localConnectorFraction(point: Point) {
   const svg = overlay.value
   if (!slide || !svg)
     return undefined
-  const slideBox = slide.getBoundingClientRect()
-  const overlayBox = svg.getBoundingClientRect()
-  return {
-    x: fraction((overlayBox.left + point.x * overlayBox.width / geometry.width - slideBox.left) / slideBox.width),
-    y: fraction((overlayBox.top + point.y * overlayBox.height / geometry.height - slideBox.top) / slideBox.height),
-  }
+  const local = localPointToSlideFraction(point, slide.getBoundingClientRect(), svg.getBoundingClientRect(), geometry)
+  return { x: fraction(local.x), y: fraction(local.y) }
 }
 
 /** Slide-centre/edge guides plus the live source, target and label ports. */
@@ -1836,10 +1843,7 @@ const connectorGuidePoints = computed(() => {
     return []
   const slideBox = slide.getBoundingClientRect()
   const overlayBox = svg.getBoundingClientRect()
-  return connectorSnapCandidates().map(point => ({
-    x: slideFractionToLocal(point.x, 'x', slideBox, overlayBox, geometry),
-    y: slideFractionToLocal(point.y, 'y', slideBox, overlayBox, geometry),
-  }))
+  return connectorSnapCandidates().map(point => slideFractionPointToLocal(point, slideBox, overlayBox, geometry))
 })
 
 function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {

@@ -156,42 +156,6 @@ export function localPointToSlideFraction(point: FractionPoint, slide: ViewportB
 }
 
 /**
- * Convert a source-authored label width to local SVG pixels. Unlike an x
- * coordinate, a width has no origin: it is simply the slide width scaled into
- * the overlay's local coordinate system.
- */
-export function slideFractionWidthToLocal(width: number, slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): number {
-  return width * slide.width * canvas.width / overlay.width
-}
-
-/** Convert a local SVG label width back to a concrete-slide fraction. */
-export function localWidthToSlideFraction(width: number, slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): number {
-  return width * overlay.width / canvas.width / slide.width
-}
-
-/**
- * Reconcile a save response without replacing pointer movement that happened
- * while the request was in flight. The writer rounds values to its canonical
- * CSS precision, but only fields that still equal the sent snapshot may be
- * replaced with that rounded value.
- */
-export function reconcileSavedDraft(current: PersistedAnnotationGeometry | undefined, sent: PersistedAnnotationGeometry, persisted: PersistedAnnotationGeometry): PersistedAnnotationGeometry | undefined {
-  if (!current)
-    return current
-  const reconciled = { ...current }
-  for (const key of Object.keys(sent) as (keyof PersistedAnnotationGeometry)[]) {
-    if (current[key] === sent[key] && persisted[key] !== undefined)
-      reconciled[key] = persisted[key]
-  }
-  return reconciled
-}
-
-/** True when all local preview values are now represented by persisted CSS. */
-export function draftMatchesPersisted(draft: PersistedAnnotationGeometry | undefined, persisted: PersistedAnnotationGeometry) {
-  return !!draft && Object.entries(draft).every(([key, value]) => persisted[key as keyof PersistedAnnotationGeometry] === value)
-}
-
-/**
  * Snap each axis independently. This permits a connector endpoint to align
  * with a vertical guide without forcing its height to an unrelated point.
  * Callers provide only concrete slide fractions, making this independent of

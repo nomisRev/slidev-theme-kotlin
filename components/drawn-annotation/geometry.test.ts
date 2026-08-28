@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  localPointToSlideFraction,
-  localWidthToSlideFraction,
-  slideFractionPointToLocal,
-  slideFractionWidthToLocal,
-  validateDrawnAnnotationGeometry,
-} from './geometry'
+import { localPointToSlideFraction, slideFractionPointToLocal, validateDrawnAnnotationGeometry } from './geometry'
 
 describe('DrawnAnnotation source geometry', () => {
   const slide = { left: 100, top: 50, width: 1600, height: 900 }
@@ -16,12 +10,6 @@ describe('DrawnAnnotation source geometry', () => {
   it('round-trips normalized points through a nested SVG canvas', () => {
     const point = { x: .625, y: .25 }
     expect(localPointToSlideFraction(slideFractionPointToLocal(point, slide, overlay, canvas), slide, overlay, canvas)).toEqual(point)
-  })
-
-  it('converts label width relative to slide width rather than overlay width', () => {
-    const local = slideFractionWidthToLocal(.25, slide, overlay, canvas)
-    expect(local).toBe(200)
-    expect(localWidthToSlideFraction(local, slide, overlay, canvas)).toBe(.25)
   })
 
   it('accepts only the public source-local document shape', () => {

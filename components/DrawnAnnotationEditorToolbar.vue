@@ -11,6 +11,7 @@ import {
   clearAllAnnotationDrafts,
   clearAnnotationSelection,
   clearLabelDraft,
+  installAnnotationEditorShortcut,
   recordAnnotationUndo,
   selectedAnnotationId,
   takeAnnotationUndo,
@@ -119,6 +120,10 @@ function keyboardUndo(event: KeyboardEvent) {
 }
 
 onMounted(() => {
+  // The toolbar is the singleton that owns the toggle, so it installs
+  // Alt+Shift+A: the shortcut must work on a deck whose current slide has no
+  // annotation at all, not only once one has mounted.
+  installAnnotationEditorShortcut()
   window.addEventListener('drawn-annotation-editor-toggle', toggleEditor)
   window.addEventListener('pointerdown', clearSelectionOnEditorClickOutside, true)
   window.addEventListener('keydown', keyboardUndo, true)
