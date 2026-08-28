@@ -156,3 +156,24 @@ export function translateConnector(connector: ConnectorEndpoints, dx: number, dy
     y2: connector.y2 + boundedY,
   }
 }
+
+/**
+ * Apply a keyboard nudge without giving body movement different geometry
+ * semantics than a pointer drag. In particular, independently clamping both
+ * endpoints would shorten a body-selected connector at a slide edge.
+ */
+export function nudgeConnector(connector: ConnectorEndpoints, part: 'start' | 'end' | 'body', dx: number, dy: number): ConnectorEndpoints {
+  if (part === 'body')
+    return translateConnector(connector, dx, dy)
+
+  const next = { ...connector }
+  if (part === 'start') {
+    next.x1 = Math.max(0, Math.min(1, next.x1 + dx))
+    next.y1 = Math.max(0, Math.min(1, next.y1 + dy))
+  }
+  else {
+    next.x2 = Math.max(0, Math.min(1, next.x2 + dx))
+    next.y2 = Math.max(0, Math.min(1, next.y2 + dy))
+  }
+  return next
+}

@@ -11,7 +11,7 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { draftMatchesPersisted, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
+import { draftMatchesPersisted, nudgeConnector, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
 import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
@@ -1906,16 +1906,9 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
     const end = localConnectorFraction(geometry.connectorEnd)
     if (!start || !end)
       return
-    const next = { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
-    if (part === 'start' || part === 'body') {
-      next.x1 = fraction(next.x1 + dx)
-      next.y1 = fraction(next.y1 + dy)
-    }
-    if (part === 'end' || part === 'body') {
-      next.x2 = fraction(next.x2 + dx)
-      next.y2 = fraction(next.y2 + dy)
-    }
-    setLabelDraft(props.id, next)
+    // Keep arrow-key body movement identical to dragging the line itself:
+    // translation is constrained as one rigid segment at slide edges.
+    setLabelDraft(props.id, nudgeConnector({ x1: start.x, y1: start.y, x2: end.x, y2: end.y }, part, dx, dy))
     scheduleDraftSave()
   }
   else {

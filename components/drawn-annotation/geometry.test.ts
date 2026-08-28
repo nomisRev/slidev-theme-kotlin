@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint, translateConnector } from './geometry'
+import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, nudgeConnector, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint, translateConnector } from './geometry'
 
 describe('drawn annotation persisted geometry', () => {
   it('accepts only finite plain unit fractions', () => {
@@ -53,7 +53,7 @@ describe('drawn annotation persisted geometry', () => {
     expect(snapFractionPoint({ x: .496, y: .504 }, guides)).toEqual({ x: .5, y: .5 })
   })
 
-  it('keeps connector body drags rigid when an endpoint reaches a slide edge', () => {
+  it('keeps connector body movement rigid at slide edges for pointer and keyboard input', () => {
     const connector = { x1: .8, y1: .2, x2: 1, y2: .5 }
     // The requested translation is larger than the available rightward room.
     // Both endpoints stop together instead of collapsing at x = 1.
@@ -72,5 +72,10 @@ describe('drawn annotation persisted geometry', () => {
     expect(againstTopLeftEdge.y2).toBeCloseTo(.3)
     expect(againstTopLeftEdge.x2 - againstTopLeftEdge.x1).toBeCloseTo(connector.x2 - connector.x1)
     expect(againstTopLeftEdge.y2 - againstTopLeftEdge.y1).toBeCloseTo(connector.y2 - connector.y1)
+
+    // Keyboard nudging a selected body uses that same rigid translation;
+    // endpoints remain independently editable when one endpoint is selected.
+    expect(nudgeConnector(connector, 'body', .3, .1)).toEqual(againstRightEdge)
+    expect(nudgeConnector(connector, 'start', .3, .1)).toMatchObject({ x1: 1, y1: expect.closeTo(.3), x2: 1, y2: .5 })
   })
 })
