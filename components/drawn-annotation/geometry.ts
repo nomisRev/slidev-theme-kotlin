@@ -33,6 +33,14 @@ export interface FractionPoint {
   y: number
 }
 
+/** The two fraction endpoints of a manually positioned connector. */
+export interface ConnectorEndpoints {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
 export const DRAWN_ANNOTATION_ID = /^[A-Za-z][A-Za-z0-9_.-]*$/
 
 /**
@@ -126,4 +134,25 @@ export function snapFractionPoint(point: FractionPoint, candidates: readonly Fra
     return result
   }
   return { x: nearest(point.x, 'x'), y: nearest(point.y, 'y') }
+}
+
+/**
+ * Translate a connector without ever changing its length or angle. Movement is
+ * constrained as a whole at slide edges: independently clamping endpoint two
+ * after endpoint one has hit an edge would silently turn a body drag into a
+ * resize.
+ */
+export function translateConnector(connector: ConnectorEndpoints, dx: number, dy: number): ConnectorEndpoints {
+  const boundedDelta = (first: number, second: number, delta: number) => Math.max(
+    Math.max(-first, -second),
+    Math.min(Math.min(1 - first, 1 - second), delta),
+  )
+  const boundedX = boundedDelta(connector.x1, connector.x2, dx)
+  const boundedY = boundedDelta(connector.y1, connector.y2, dy)
+  return {
+    x1: connector.x1 + boundedX,
+    y1: connector.y1 + boundedY,
+    x2: connector.x2 + boundedX,
+    y2: connector.y2 + boundedY,
+  }
 }

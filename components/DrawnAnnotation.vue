@@ -11,7 +11,7 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { draftMatchesPersisted, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint } from './drawn-annotation/geometry'
+import { draftMatchesPersisted, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
 import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
@@ -1842,14 +1842,13 @@ function moveConnectorDrag(event: PointerEvent) {
     next.x2 = snapped.x; next.y2 = snapped.y
   }
   else {
-    // Translate as one rigid line. Snap the start port, then apply the same
-    // correction to the end so body dragging cannot accidentally resize it.
-    const rawStart = { x: fraction(next.x1 + dx), y: fraction(next.y1 + dy) }
-    const snapped = snapConnectorPoint(rawStart, event.altKey)
-    const correctionX = snapped.x - rawStart.x
-    const correctionY = snapped.y - rawStart.y
-    next.x1 = snapped.x; next.y1 = snapped.y
-    next.x2 = fraction(next.x2 + dx + correctionX); next.y2 = fraction(next.y2 + dy + correctionY)
+    // Translate as one rigid line. Constrain the *delta* rather than its two
+    // endpoints, otherwise a line against a slide edge would shrink as the
+    // pointer kept moving. Snap the start port, then constrain that correction
+    // as one more rigid translation for the same reason.
+    const translated = translateConnector(next, dx, dy)
+    const snapped = snapConnectorPoint({ x: translated.x1, y: translated.y1 }, event.altKey)
+    Object.assign(next, translateConnector(translated, snapped.x - translated.x1, snapped.y - translated.y1))
   }
   setLabelDraft(props.id, next)
   scheduleDraftSave(connectorDrag)

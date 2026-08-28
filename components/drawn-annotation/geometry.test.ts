@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint } from './geometry'
+import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint, translateConnector } from './geometry'
 
 describe('drawn annotation persisted geometry', () => {
   it('accepts only finite plain unit fractions', () => {
@@ -51,5 +51,26 @@ describe('drawn annotation persisted geometry', () => {
     expect(snapFractionPoint({ x: .493, y: .73 }, guides)).toEqual({ x: .5, y: .73 })
     expect(snapFractionPoint({ x: .493, y: .73 }, guides, .005)).toEqual({ x: .493, y: .73 })
     expect(snapFractionPoint({ x: .496, y: .504 }, guides)).toEqual({ x: .5, y: .5 })
+  })
+
+  it('keeps connector body drags rigid when an endpoint reaches a slide edge', () => {
+    const connector = { x1: .8, y1: .2, x2: 1, y2: .5 }
+    // The requested translation is larger than the available rightward room.
+    // Both endpoints stop together instead of collapsing at x = 1.
+    const againstRightEdge = translateConnector(connector, .3, .1)
+    expect(againstRightEdge.x1).toBe(.8)
+    expect(againstRightEdge.x2).toBe(1)
+    expect(againstRightEdge.y1).toBeCloseTo(.3)
+    expect(againstRightEdge.y2).toBeCloseTo(.6)
+    expect(againstRightEdge.x2 - againstRightEdge.x1).toBeCloseTo(connector.x2 - connector.x1)
+    expect(againstRightEdge.y2 - againstRightEdge.y1).toBeCloseTo(connector.y2 - connector.y1)
+    // The same constraint applies in the opposite direction and per axis.
+    const againstTopLeftEdge = translateConnector(connector, -.9, -.4)
+    expect(againstTopLeftEdge.x1).toBe(0)
+    expect(againstTopLeftEdge.y1).toBe(0)
+    expect(againstTopLeftEdge.x2).toBeCloseTo(.2)
+    expect(againstTopLeftEdge.y2).toBeCloseTo(.3)
+    expect(againstTopLeftEdge.x2 - againstTopLeftEdge.x1).toBeCloseTo(connector.x2 - connector.x1)
+    expect(againstTopLeftEdge.y2 - againstTopLeftEdge.y1).toBeCloseTo(connector.y2 - connector.y1)
   })
 })
