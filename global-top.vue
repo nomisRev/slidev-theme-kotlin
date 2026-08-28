@@ -136,6 +136,28 @@ async function resetSelected(part: 'label' | 'connector' | 'all') {
   }
 }
 
+async function reloadSavedGeometry() {
+  if (!canWrite.value)
+    return
+  // A 409 leaves the local draft in place deliberately, so an author can
+  // inspect it. This explicit recovery action is the safe way to abandon that
+  // draft and adopt the revision another browser saved.
+  if (annotationDrafts.size && !confirm('Discard unsaved annotation changes and reload saved geometry?'))
+    return
+  annotationEditorStatus.value = 'Reloading saved annotation geometry…'
+  try {
+    if (!isDevelopment)
+      return
+    const { loadAnnotationGeometry } = await loadWriterClient()
+    await loadAnnotationGeometry()
+    clearAllAnnotationDrafts()
+    annotationEditorStatus.value = 'Saved annotation geometry reloaded'
+  }
+  catch (error) {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to reload annotation geometry'
+  }
+}
+
 async function undoSelected() {
   if (!selected.value || !canWrite.value)
     return
@@ -194,6 +216,7 @@ async function resetAll() {
     <template v-if="annotationEditMode">
       <span class="drawn-annotation-toolbar__selection">{{ selected ? `Selected: ${selected}` : 'Select a visible annotation' }}</span>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
+      <button type="button" @click="reloadSavedGeometry">Reload saved geometry</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('label')">Reset label</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('connector')">Reset connector</button>
       <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorAttachment">

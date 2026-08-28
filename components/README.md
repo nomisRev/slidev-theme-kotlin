@@ -236,9 +236,12 @@ a pause in a long drag saves a draft too, and local saves are serialized so they
 cannot conflict with each other. The toolbar can reset the selected annotation or all
 saved annotation geometry, and explicitly switch a selected connector between
 its manual frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest completed save
-for the selected annotation. Missing or duplicate IDs disable saving, and a
-deck without the writer plugin reports its configuration error instead of
-entering an editor that cannot save.
+for the selected annotation. If another browser advances the writer revision,
+the failed save leaves the current draft visible for inspection; choose
+**Reload saved geometry** to intentionally discard drafts and continue from
+the other browser's saved revision. Missing or duplicate IDs disable saving,
+and a deck without the writer plugin reports its configuration error instead
+of entering an editor that cannot save.
 
 ## How it looks
 

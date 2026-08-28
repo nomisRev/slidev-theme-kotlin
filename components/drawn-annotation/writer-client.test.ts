@@ -33,6 +33,26 @@ describe('DrawnAnnotation writer client', () => {
     ])
   })
 
+  it('refreshes the cached saved snapshot when a conflict is explicitly reloaded', async () => {
+    let loads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      loads++
+      return Response.json({
+        geometry: { note: loads === 1 ? { x: .1, y: .2 } : { x: .8, y: .9, width: .3 } },
+        revision: `revision-${loads}`,
+      })
+    }))
+
+    const writer = await import('./writer-client')
+    await writer.loadAnnotationGeometry()
+    expect(writer.cachedAnnotationGeometry('note')).toEqual({ x: .1, y: .2 })
+
+    // The toolbar's conflict-recovery action uses this same GET before it
+    // clears draft previews, so future saves and Undo see the remote snapshot.
+    await writer.loadAnnotationGeometry()
+    expect(writer.cachedAnnotationGeometry('note')).toEqual({ x: .8, y: .9, width: .3 })
+  })
+
   it('resets only connector endpoints, preserving saved label geometry', async () => {
     let revision = 'initial'
     const requests: { expectedRevision: string, annotations: Record<string, Record<string, number | null> | null> }[] = []
