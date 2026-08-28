@@ -1582,7 +1582,10 @@ function beginLabelDrag(event: PointerEvent, width = false) {
     return
   event.preventDefault()
   event.stopPropagation()
-  selectAnnotation(props.id, 'label')
+  // Keep the selected control in sync with the gesture. In particular, a
+  // width-handle drag must leave the width handle selected so follow-up arrow
+  // presses resize instead of unexpectedly moving the label.
+  selectAnnotation(props.id, width ? 'width' : 'label')
   const slide = slideRoot()
   const label = labelEl.value
   if (!slide || !label)
@@ -1956,6 +1959,13 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
 
   if ((part === 'label' || part === 'width') && editable.value) {
     if (part === 'width') {
+      // Width is a horizontal dimension. Do not make Up/Down silently resize
+      // a label just because they have no horizontal delta.
+      if (!dx) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
       const slide = slideRoot()
       const label = labelEl.value
       if (!slide || !label)
@@ -1964,7 +1974,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       // occupies now, so the first key press changes the visible label rather
       // than jumping to an unrelated default cap.
       const currentWidth = geometry.labelWidth ?? label.getBoundingClientRect().width * geometry.width / slide.getBoundingClientRect().width
-      setLabelDraft(props.id, { width: nudgeLabelWidth(currentWidth / geometry.width, dx || dy) })
+      setLabelDraft(props.id, { width: nudgeLabelWidth(currentWidth / geometry.width, dx) })
     }
     else {
       const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
