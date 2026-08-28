@@ -1,97 +1,4 @@
 <script lang="ts">
-// Module scope, shared by every annotation instance. Several annotations on
-// one slide all measure the same content on the same animation frame while a
-// Magic Move step or a transition is travelling; scanning the slide once per
-// frame and letting each instance convert the shared viewport rects into its
-// own coordinates removes the most expensive duplicated work.
-
-// Elements considered while measuring obstacles, capped: the collectors run on
-// animation frames while the slide moves, and a slide with more elements than
-// this has no room for an automatic label anyway.
-const OBSTACLE_ELEMENT_CAP = 600
-const MEDIA_TAGS = ['IMG', 'VIDEO', 'CANVAS', 'SVG']
-
-/**
- * Elements whose whole box matters to label placement, not just their rendered
- * text: a label must not land in the padding of a card or in code-window
- * chrome. `.card` and `.kodee-character` are the Kotlin theme's callouts and
- * mascot.
- *
- * Code surfaces deliberately are not in this list. Their rendered code lines
- * are still text obstacles, but their unused body is a useful, readable place
- * for a short explanation. The title/tab strip remains a whole-box obstacle:
- * a label in that chrome looks like a broken window title rather than a note.
- */
-const BLOCK_OBSTACLES = '.slidev-code-block-title, .slidev-code-group-tabs, .card, table, blockquote, .kodee-character'
-
-function isMedia(element: HTMLElement) {
-  return MEDIA_TAGS.includes(element.tagName.toUpperCase())
-}
-
-/**
- * The slide elements obstacle collection looks at. Excludes annotation
- * strokes and labels, content still hidden behind a later click, and the
- * internals of inline SVGs — parts of an illustration do not count on their
- * own; the whole graphic does.
- */
-function obstacleCandidates(slide: HTMLElement): HTMLElement[] {
-  return Array.from(slide.querySelectorAll<HTMLElement>('*'))
-    .slice(0, OBSTACLE_ELEMENT_CAP)
-    .filter(element => !element.closest('.annotation-ignore, .slidev-vclick-hidden')
-      && !element.parentElement?.closest('svg'))
-}
-
-/** One slide scan, in viewport coordinates, valid for the current frame. */
-interface ObstacleScan {
-  /** Whole boxes of images, videos, canvases and inline SVG roots. */
-  media: DOMRect[]
-  /** Whole boxes of BLOCK_OBSTACLES elements, padding included. */
-  blocks: DOMRect[]
-  /** Tight boxes of the rendered text lines. */
-  texts: DOMRect[]
-}
-
-const scanCache = new Map<HTMLElement, ObstacleScan>()
-
-function scanObstacles(slide: HTMLElement): ObstacleScan {
-  const cached = scanCache.get(slide)
-  if (cached)
-    return cached
-
-  const scan: ObstacleScan = { media: [], blocks: [], texts: [] }
-  for (const element of obstacleCandidates(slide)) {
-    if (isMedia(element)) {
-      const rect = element.getBoundingClientRect()
-      if (rect.width >= 6 && rect.height >= 6)
-        scan.media.push(rect)
-      continue
-    }
-    if (element.matches(BLOCK_OBSTACLES)) {
-      const rect = element.getBoundingClientRect()
-      if (rect.width >= 6 && rect.height >= 6)
-        scan.blocks.push(rect)
-    }
-    // Read direct text nodes from every element rather than only using leaf
-    // element boxes. A list item commonly contains both plain text and a <b>
-    // target; its plain text otherwise disappears from the obstacle map.
-    for (const node of Array.from(element.childNodes)) {
-      if (node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim())
-        continue
-      const range = document.createRange()
-      range.selectNodeContents(node)
-      for (const rect of Array.from(range.getClientRects())) {
-        if (rect.width >= 4 && rect.height >= 4)
-          scan.texts.push(rect)
-      }
-    }
-  }
-
-  scanCache.set(slide, scan)
-  // The scan stays valid until the next frame paints: annotations measuring in
-  // the same frame reuse it, and nothing they draw is part of it.
-  requestAnimationFrame(() => scanCache.delete(slide))
-  return scan
-}
 </script>
 
 <script setup lang="ts">
@@ -117,9 +24,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
  * to a second element on the slide or to a text label.
  *
  * A label is placed out of the slide's normal flow: its position is searched at
- * runtime so it never overlaps other content — nor the labels other annotations
- * wrote on earlier clicks — preferring downwards for marks in the upper half of
- * the slide and upwards for marks in the lower half. Pass
+ * runtime with a simple placement near its source — preferring downwards for
+ * marks in the upper half of the slide and upwards for marks in the lower
+ * half. Persisted editor geometry or `label-x` / `label-y` gives authors the
+ * final say; automatic placement deliberately does not scan the slide for
+ * collisions. Pass
  * `label-x` / `label-y` (percentages of the slide) to place it by hand instead.
  *
  * Annotations nest, and two that share a click draw one after the other: the
@@ -177,9 +86,9 @@ const props = withDefaults(defineProps<{
   placement?: 'auto' | 'up' | 'down' | 'left' | 'right'
   /** Smallest distance between the mark and the label, in slide pixels. */
   gap?: number
-  /** Space the label keeps from everything else on the slide. */
+  /** @deprecated Automatic placement is deliberately local; use saved editor geometry. */
   clearance?: number
-  /** Extra elements the label must not cover. */
+  /** @deprecated Automatic placement is deliberately local; use saved editor geometry. */
   avoidSelector?: string
   /** Draw the leader line between the mark and the label or target. */
   connect?: boolean
@@ -1215,7 +1124,7 @@ function paintDestinationInto(
     paths.leader = toPaths(generator.line(start.x, start.y, end.x, end.y, roughOptions()))
   }
   else {
-    const route = routeLeader(root, toLocal, markBox, destination, endPoint)
+    const route = routeLeader(markBox, destination, endPoint)
     if (!route)
       return
     start = route.start
@@ -1291,157 +1200,24 @@ function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?:
 type Curve = ReturnType<typeof leaderCurve>
 
 /**
- * How much of the curve runs through the given boxes, and how much ink it
- * spends overall, both in slide pixels and both sampled from the same points.
- * The arc length is what prices a detour: a route that dodges text is only
- * worth taking when it saves more crossing than the extra line it draws.
+ * Uses the shortest direct leader as the stable automatic fallback. Complex
+ * routing is intentionally an editor operation: inspecting arbitrary future
+ * slide content made an automatic line change as clicks progressed.
  */
-function measureCurve(curve: Curve, obstacles: Box[]) {
-  const samples = 24
-  let inside = 0
-  let length = 0
-  let px = 0
-  let py = 0
-  for (let i = 0; i <= samples; i++) {
-    const t = i / samples
-    const u = 1 - t
-    const x = u ** 3 * curve.start.x + 3 * u ** 2 * t * curve.c1x + 3 * u * t ** 2 * curve.c2x + t ** 3 * curve.end.x
-    const y = u ** 3 * curve.start.y + 3 * u ** 2 * t * curve.c1y + 3 * u * t ** 2 * curve.c2y + t ** 3 * curve.end.y
-    if (obstacles.some(box => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom))
-      inside++
-    if (i)
-      length += Math.hypot(x - px, y - py)
-    px = x
-    py = y
-  }
-  return { crossing: inside / (samples + 1) * curve.distance, length }
-}
-
-/**
- * Chooses where the leader leaves the mark and which way it bows. The obvious
- * straight exit towards the destination regularly runs through the rest of the
- * sentence the mark sits in, which reads as a strike-through of text the
- * annotation has nothing to do with. So candidate exits along the mark's
- * border are tried, bowing to either side, against the rendered text of the
- * slide — with the extra ink of a detour priced in, so a route that dodges
- * text is only chosen when it saves more crossing than the line it adds. The
- * straight exit is also only given up when another exit saves a substantial
- * amount of crossing: brushing past a neighbouring line is part of the
- * hand-drawn look, and a leader that trades it for a wide swing reads as
- * starting from the wrong place.
- */
-function routeLeader(root: HTMLElement, toLocal: (rect: DOMRect) => Box, markBox: Box, destination: Box, endPoint?: Point): Curve | undefined {
-  const contains = (box: Box, x: number, y: number) => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
-  // Only text near the line's own neighbourhood matters, and never the words
-  // being marked or the destination itself.
-  const region = padBox(unionBox([markBox, destination]), 120)
-  const obstacles = collectTextObstacles(root, toLocal).filter(box =>
-    overlapArea(box, region) > 0
-    && !contains(markBox, box.cx, box.cy)
-    && !contains(destination, box.cx, box.cy))
-
-  const defaultStart = edgePoint(markBox, destination.cx, destination.cy)
-  const exits: Point[] = [
-    { x: markBox.cx, y: markBox.top },
-    { x: markBox.cx, y: markBox.bottom },
-    { x: markBox.left, y: markBox.cy },
-    { x: markBox.right, y: markBox.cy },
-    { x: markBox.left, y: markBox.top },
-    { x: markBox.right, y: markBox.top },
-    { x: markBox.left, y: markBox.bottom },
-    { x: markBox.right, y: markBox.bottom },
-  ].sort((a, b) =>
-    Math.hypot(a.x - defaultStart.x, a.y - defaultStart.y)
-    - Math.hypot(b.x - defaultStart.x, b.y - defaultStart.y))
-
-  // Where a route from `start` ends, and the direction it arrives in. A target
-  // is met at the given point; a label is met at its nearest edge — a drawn
-  // leader stops at the edge of the words it points at, it does not travel on
-  // towards their centre.
-  const endFor = (start: Point) => {
-    if (endPoint) {
-      const end = backOff(endPoint, start, targetMarkType.value !== 'none' ? destination.width / 2 : 6)
-      return { end, into: unitVector(endPoint.x - end.x, endPoint.y - end.y) }
-    }
-    const nearest = {
-      x: clamp(start.x, destination.left, destination.right),
-      y: clamp(start.y, destination.top, destination.bottom),
-    }
-    const into = unitVector(nearest.x - start.x, nearest.y - start.y)
-    const end = into ? { x: nearest.x - into.x * 6, y: nearest.y - into.y * 6 } : nearest
-    return { end, into }
-  }
-
-  let straight: { curve: Curve, crossing: number, cost: number } | undefined
-  let best: { curve: Curve, crossing: number, cost: number } | undefined
-  // What the shortest reasonable route spends; anything beyond it is detour.
-  const defaultEnd = endFor(defaultStart).end
-  const directLength = Math.hypot(defaultEnd.x - defaultStart.x, defaultEnd.y - defaultStart.y)
-  for (const [index, start] of [defaultStart, ...exits].entries()) {
-    const { end, into: arrival } = endFor(start)
-    const chord = unitVector(end.x - start.x, end.y - start.y)
-    if (!chord)
-      continue
-    // Leave the mark outward through the chosen exit, leaning toward the
-    // destination so the curve can never double back around the mark, and
-    // arrive pointing into the destination.
-    const outward = unitVector(start.x - markBox.cx, start.y - markBox.cy) ?? chord
-    const out = unitVector(outward.x + chord.x, outward.y + chord.y) ?? chord
-    const into = arrival ?? chord
-    for (const side of [1, -1] as const) {
-      const curve = leaderCurve(start, end, side, out, into)
-      if (curve.distance < 4)
-        continue
-      // Crossing text costs its length, a detour costs part of the extra ink
-      // it spends; the small terms only break ties.
-      const { crossing, length } = measureCurve(curve, obstacles)
-      const detour = Math.max(0, length - directLength)
-      const cost = crossing + detour * 0.4 + index * 2 + (side < 0 ? 1 : 0)
-      if (index === 0 && (!straight || cost < straight.cost))
-        straight = { curve, crossing, cost }
-      if (!best || cost < best.cost)
-        best = { curve, crossing, cost }
-    }
-  }
-  if (!straight)
-    return best?.curve
-  if (best && best.crossing < straight.crossing * 0.5 && straight.crossing - best.crossing > 24)
-    return best.curve
-  return straight.curve
-}
-
-/**
- * The slide's text and media, as the tight boxes of the rendered lines rather
- * than the elements around them. This is what a leader line must not strike
- * through: crossing a card's padding looks deliberate, crossing its words
- * reads as marking text the annotation has nothing to do with.
- */
-function collectTextObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
-  const slide = slideRoot() ?? root
-  const scan = scanObstacles(slide)
-  const boxes: Box[] = [...scan.media, ...scan.texts].map(toLocal)
-  // The marks and labels of the other annotations on the slide. A leader that
-  // dives through a circled word or a written label reads as marking it. Their
-  // paths are in the DOM from the first measurement — merely hidden until
-  // their click — so routing around them is stable rather than a jump on the
-  // click that reveals them.
-  for (const svg of Array.from(slide.querySelectorAll<SVGSVGElement>('svg.annotation-overlay'))) {
-    if (svg === overlay.value)
-      continue
-    for (const path of Array.from(svg.querySelectorAll<SVGPathElement>('.annotation-mark, .annotation-target'))) {
-      const rect = path.getBoundingClientRect()
-      if (rect.width >= 4 || rect.height >= 4)
-        boxes.push(toLocal(rect))
-    }
-  }
-  for (const label of Array.from(slide.querySelectorAll<HTMLElement>('.annotation-label.is-placed'))) {
-    if (label === labelEl.value)
-      continue
-    const rect = label.getBoundingClientRect()
-    if (rect.width >= 6 && rect.height >= 6)
-      boxes.push(toLocal(rect))
-  }
-  return boxes
+function routeLeader(markBox: Box, destination: Box, endPoint?: Point): Curve | undefined {
+  const start = edgePoint(markBox, destination.cx, destination.cy)
+  const end = endPoint
+    ? backOff(endPoint, start, targetMarkType.value !== 'none' ? destination.width / 2 : 6)
+    : {
+        x: clamp(start.x, destination.left, destination.right),
+        y: clamp(start.y, destination.top, destination.bottom),
+      }
+  const chord = unitVector(end.x - start.x, end.y - start.y)
+  if (!chord)
+    return undefined
+  const outward = unitVector(start.x - markBox.cx, start.y - markBox.cy) ?? chord
+  const into = endPoint ? unitVector(endPoint.x - end.x, endPoint.y - end.y) ?? chord : chord
+  return leaderCurve(start, end, 1, unitVector(outward.x + chord.x, outward.y + chord.y) ?? chord, into)
 }
 
 // Stands in for a label that cannot be measured yet, so placement still has a
@@ -1450,14 +1226,6 @@ const FALLBACK_LABEL_HEIGHT = 40
 
 // The label never sits closer to a slide edge than this, in slide pixels.
 const SLIDE_MARGIN = 24
-
-// Sideways nudges tried for each gap while placing the label, nearest first.
-const LATERAL_OFFSETS = (() => {
-  const offsets = [0]
-  for (let step = 40; step <= 400; step += 40)
-    offsets.push(step, -step)
-  return offsets
-})()
 
 // Measured label sizes per width cap. Writing a candidate max-width and
 // reading the resulting box back forces a synchronous layout, and the answer
@@ -1534,10 +1302,10 @@ function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
 }
 
 /**
- * Finds the widest label that can stay inside the slide and clear its
- * obstacles. The unbounded measurement is always tried first, so ordinary
- * labels remain a single, readable line instead of inheriting an arbitrary
- * short line length.
+ * Finds a bounded default label position. The unbounded measurement is always
+ * tried first, so ordinary labels remain a single, readable line instead of
+ * inheriting an arbitrary short line length. Collision-free composition is an
+ * authored editor override, not a moving runtime promise.
  */
 function fitLabel(
   root: HTMLElement,
@@ -1552,13 +1320,11 @@ function fitLabel(
   const explicitX = effectiveLabelX()
   const explicitY = effectiveLabelY()
   const maximumWidth = effectiveLabelWidth(bounds)
-  const obstacles = explicitX !== undefined || explicitY !== undefined
-    ? []
-    : collectObstacles(root, toLocal)
-        .map(box => padBox(box, props.clearance))
-        .concat(padBox(anchor, 8))
+  // Manual geometry is the composition mechanism. The automatic fallback is
+  // intentionally local and deterministic: scanning every text/media box made
+  // a label move when unrelated content or a future click changed.
   const natural = measureLabel(toLocal)
-  const unwrapped = placeLabel(anchor, natural, bounds, obstacles)
+  const unwrapped = placeLabel(anchor, natural, bounds)
   const fitsSlide = natural.width <= bounds.width - SLIDE_MARGIN * 2 && natural.height <= bounds.height - SLIDE_MARGIN * 2
   const respectsExplicitMaximum = maximumWidth === undefined || natural.width <= maximumWidth
 
@@ -1576,7 +1342,7 @@ function fitLabel(
   // Magic Move animations.
   for (let cap = maximum; cap >= minimum; cap -= 48) {
     const size = measureLabel(toLocal, cap)
-    const placed = placeLabel(anchor, size, bounds, obstacles)
+    const placed = placeLabel(anchor, size, bounds)
     if (placed.overlap === 0)
       return { box: placed.box, width: cap }
     if (!best || placed.overlap < best.overlap)
@@ -1586,7 +1352,7 @@ function fitLabel(
   // Include the lower bound when the step above did not land on it.
   if (!best || best.width !== minimum) {
     const size = measureLabel(toLocal, minimum)
-    const placed = placeLabel(anchor, size, bounds, obstacles)
+    const placed = placeLabel(anchor, size, bounds)
     if (placed.overlap === 0)
       return { box: placed.box, width: minimum }
     if (!best || placed.overlap < best.overlap)
@@ -1600,111 +1366,33 @@ function placeLabel(
   anchor: Box,
   size: { width: number, height: number },
   bounds: Box,
-  obstacles: Box[],
 ): { box: Box, overlap: number } {
   const halfW = size.width / 2
   const halfH = size.height / 2
   const centred = (cx: number, cy: number) => makeBox(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
-
   const explicitX = effectiveLabelX()
   const explicitY = effectiveLabelY()
   if (explicitX !== undefined || explicitY !== undefined) {
-    return {
-      box: centred(
-        explicitX !== undefined ? bounds.left + bounds.width * explicitX : anchor.cx,
-        explicitY !== undefined ? bounds.top + bounds.height * explicitY : anchor.cy,
-      ),
-      overlap: 0,
-    }
+    return { box: centred(
+      explicitX !== undefined ? bounds.left + bounds.width * explicitX : anchor.cx,
+      explicitY !== undefined ? bounds.top + bounds.height * explicitY : anchor.cy,
+    ), overlap: 0 }
   }
 
-  const placement = resolvedPlacement.value
-  const preferred = placement === 'auto'
+  const direction = resolvedPlacement.value === 'auto'
     ? (anchor.cy < bounds.cy ? 'down' : 'up')
-    : placement
-  const directions = placement === 'auto'
-    ? [preferred, preferred === 'down' ? 'up' : 'down', 'right', 'left'] as const
-    : [preferred] as const
-
-  let best: { box: Box, overlap: number, score: number } | undefined
-
-  for (const [order, direction] of directions.entries()) {
-    for (let gap = props.gap; gap <= props.gap + 260; gap += 20) {
-      for (const lateral of LATERAL_OFFSETS) {
-        const vertical = direction === 'up' || direction === 'down'
-        const cx = vertical
-          ? anchor.cx + lateral
-          : direction === 'right' ? anchor.right + gap + halfW : anchor.left - gap - halfW
-        const cy = vertical
-          ? (direction === 'down' ? anchor.bottom + gap + halfH : anchor.top - gap - halfH)
-          : anchor.cy + lateral
-
-        const box = centred(
-          clamp(cx, bounds.left + SLIDE_MARGIN + halfW, bounds.right - SLIDE_MARGIN - halfW),
-          clamp(cy, bounds.top + SLIDE_MARGIN + halfH, bounds.bottom - SLIDE_MARGIN - halfH),
-        )
-        const overlap = obstacles.reduce((total, obstacle) => total + overlapArea(box, obstacle), 0)
-        const score = overlap * 6 + gap + Math.abs(lateral) * 0.6 + order * 400
-        // A clear spot always beats an overlapping one, and among clear spots
-        // the best-scoring one wins: taking the first found would let a small
-        // gap with a long drift along the mark beat a slightly larger gap that
-        // stays level with it, which reads as belonging to something else.
-        const better = !best
-          || (overlap === 0 && best.overlap > 0)
-          || ((overlap === 0) === (best.overlap === 0) && score < best.score)
-        if (better)
-          best = { box, overlap, score }
-      }
-    }
+    : resolvedPlacement.value
+  const cx = direction === 'left' ? anchor.left - props.gap - halfW
+    : direction === 'right' ? anchor.right + props.gap + halfW : anchor.cx
+  const cy = direction === 'up' ? anchor.top - props.gap - halfH
+    : direction === 'down' ? anchor.bottom + props.gap + halfH : anchor.cy
+  return {
+    box: centred(
+      clamp(cx, bounds.left + SLIDE_MARGIN + halfW, bounds.right - SLIDE_MARGIN - halfW),
+      clamp(cy, bounds.top + SLIDE_MARGIN + halfH, bounds.bottom - SLIDE_MARGIN - halfH),
+    ),
+    overlap: 0,
   }
-
-  // The loops above always run at least once, so `best` is always set; the
-  // fallback only satisfies the types.
-  return best ?? { box: centred(anchor.cx, anchor.cy), overlap: Number.POSITIVE_INFINITY }
-}
-
-/**
- * Everything the label has to stay clear of: every rendered text fragment and
- * image on the slide, plus whole boxes for content whose padding also matters
- * and anything the slide opted in through `avoid-selector`. Cards and similar
- * blocks remain solid obstacles, but a code block's body is intentionally not:
- * its blank area is a good label surface. Its title/tab strip is a block
- * obstacle, so annotations can never be placed in window chrome.
- */
-function collectObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
-  const slide = slideRoot() ?? root
-  const scan = scanObstacles(slide)
-  const boxes: Box[] = [...scan.blocks, ...scan.media, ...scan.texts].map(toLocal)
-  if (props.avoidSelector) {
-    for (const element of Array.from(slide.querySelectorAll<HTMLElement>(props.avoidSelector)))
-      boxes.push(toLocal(element.getBoundingClientRect()))
-  }
-  // The labels other annotations have already written. Only the ones from an
-  // earlier click count — a later label avoids an earlier one, never the other
-  // way round — so two labels can never chase each other across the slide.
-  const ourLabel = labelEl.value
-  for (const other of Array.from(slide.querySelectorAll<HTMLElement>('.annotation-label.is-placed'))) {
-    if (other === ourLabel)
-      continue
-    const click = Number(other.dataset.click ?? Number.NaN)
-    if (!Number.isFinite(click))
-      continue
-    const ours = resolvedLabelClick.value
-    const earlier = click < ours
-      || (click === ours && !!ourLabel && !!(other.compareDocumentPosition(ourLabel) & Node.DOCUMENT_POSITION_FOLLOWING))
-    if (!earlier)
-      continue
-    const rect = other.getBoundingClientRect()
-    if (rect.width >= 6 && rect.height >= 6)
-      boxes.push(toLocal(rect))
-  }
-  return boxes
-}
-
-function overlapArea(a: Box, b: Box) {
-  const w = Math.min(a.right, b.right) - Math.max(a.left, b.left)
-  const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-  return w > 0 && h > 0 ? w * h : 0
 }
 
 function clamp(value: number, min: number, max: number) {
