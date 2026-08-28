@@ -217,8 +217,9 @@ those props.
 }
 ```
 
-The theme imports `styles/drawn-annotations.generated.css`, an empty,
-tool-owned placeholder until the first save. With the writer plugin configured,
+Import `styles/drawn-annotations.generated.css` once from the consuming deck's
+stylesheet (it is an empty, tool-owned placeholder until the first save). With
+the writer plugin configured,
 press **Alt+Shift+A** (or use the global **Edit annotations** toolbar) in a
 development deck. Click and drag a visible identified label to move it; select
 it and drag its right handle to set its maximum width. In edit mode, labels and
@@ -228,9 +229,10 @@ body can likewise be dragged; endpoints snap to slide edge/centre guides
 and the annotation's source, target, and label ports. Hold `Alt` to temporarily
 disable snapping. The first connector drag materializes the currently automatic
 route as two manual endpoints. Pointer release saves through the local writer. The toolbar can reset the selected annotation or all
-saved annotation geometry. Missing or duplicate IDs disable saving, and a deck
-without the writer plugin reports its configuration error instead of entering
-an editor that cannot save.
+saved annotation geometry. **Cmd/Ctrl+Z** restores the latest completed save
+for the selected annotation. Missing or duplicate IDs disable saving, and a
+deck without the writer plugin reports its configuration error instead of
+entering an editor that cannot save.
 
 ## How it looks
 

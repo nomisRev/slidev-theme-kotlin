@@ -14,9 +14,12 @@ import {
   takeAnnotationUndo,
 } from './components/drawn-annotation/editor-store'
 
-const isDevelopment = import.meta.env.DEV
-// Slidev's CLI export runs through a development server, so `DEV` alone is
-// not an export guard. Keep authoring controls exclusively on the primary
+// Slidev's build pipeline can set `import.meta.env.DEV` while it renders the
+// deck. The Vite mode is the reliable boundary: authoring controls exist only
+// for the explicit `slidev` serve/development mode, never a built deck.
+const isDevelopment = import.meta.env.MODE === 'development'
+// Slidev's CLI export can run through a development-mode server, so mode alone
+// is not an export guard. Keep authoring controls exclusively on the primary
 // normal-slide route: no print/export, presenter, overview, notes, or preview
 // layer can expose a control that changes the deck while it is being shown.
 const { hasPrimarySlide, isPresenter, isPrintMode } = useNav()
@@ -41,7 +44,7 @@ async function toggleEditor() {
   checkingWriter.value = true
   annotationEditorStatus.value = 'Checking annotation writer…'
   try {
-    if (!import.meta.env.DEV)
+    if (!isDevelopment)
       return
     const { loadAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
     await loadAnnotationGeometry()
@@ -58,15 +61,34 @@ async function toggleEditor() {
   }
 }
 
-onMounted(() => window.addEventListener('drawn-annotation-editor-toggle', toggleEditor))
-onBeforeUnmount(() => window.removeEventListener('drawn-annotation-editor-toggle', toggleEditor))
+function keyboardUndo(event: KeyboardEvent) {
+  if (!annotationEditMode.value || (!event.metaKey && !event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'z')
+    return
+  // Native undo remains available to actual form controls and editable slide
+  // content. The editor owns Cmd/Ctrl+Z only when an annotation is selected.
+  const target = event.target instanceof Element ? event.target : undefined
+  if (!selected.value || target?.closest('input, textarea, select, [contenteditable="true"]'))
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  void undoSelected()
+}
+
+onMounted(() => {
+  window.addEventListener('drawn-annotation-editor-toggle', toggleEditor)
+  window.addEventListener('keydown', keyboardUndo, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('drawn-annotation-editor-toggle', toggleEditor)
+  window.removeEventListener('keydown', keyboardUndo, true)
+})
 
 async function resetSelected(part: 'label' | 'connector' | 'all') {
   if (!selected.value || !canWrite.value)
     return
   annotationEditorStatus.value = `Resetting ${part} for ${selected.value}…`
   try {
-    if (!import.meta.env.DEV)
+    if (!isDevelopment)
       return
     const { cachedAnnotationGeometry, resetAnnotationGeometry, saveLabelGeometry } = await import('./components/drawn-annotation/writer-client')
     // Resetting is a completed edit too: keep the rule we are about to remove
@@ -96,7 +118,7 @@ async function undoSelected() {
   }
   annotationEditorStatus.value = `Undoing ${undo.id}…`
   try {
-    if (!import.meta.env.DEV)
+    if (!isDevelopment)
       return
     const { restoreAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
     await restoreAnnotationGeometry(undo.id, undo.geometry)
@@ -113,7 +135,7 @@ async function resetAll() {
     return
   annotationEditorStatus.value = 'Resetting all annotation geometry…'
   try {
-    if (!import.meta.env.DEV)
+    if (!isDevelopment)
       return
     const { loadAnnotationGeometry, resetAllAnnotationGeometry } = await import('./components/drawn-annotation/writer-client')
     // Preserve each existing rule independently. This makes Reset all
@@ -143,7 +165,7 @@ async function resetAll() {
     </button>
     <template v-if="annotationEditMode">
       <span class="drawn-annotation-toolbar__selection">{{ selected ? `Selected: ${selected}` : 'Select a visible annotation' }}</span>
-      <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="undoSelected">Undo</button>
+      <button type="button" :disabled="!selected || selectedHasDuplicateId" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('label')">Reset label</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('connector')">Use automatic connector</button>
       <button type="button" :disabled="!selected || selectedHasDuplicateId" @click="resetSelected('all')">Reset selected</button>

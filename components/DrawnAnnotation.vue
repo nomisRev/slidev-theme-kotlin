@@ -16,6 +16,11 @@ import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
+// Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
+// development-only editing to Vite's explicit serve mode so published decks
+// never carry interactive controls or a browser write client.
+const isAnnotationEditorDevelopment = import.meta.env.MODE === 'development'
+
 /**
  * Hand-drawn annotation for anything on a slide.
  *
@@ -1424,7 +1429,7 @@ function backOff(point: { x: number, y: number }, from: { x: number, y: number }
 
 onMounted(async () => {
   mounted = true
-  if (import.meta.env.DEV)
+  if (isAnnotationEditorDevelopment)
     unregisterEditorId = registerAnnotationEditorId(props.id, !!props.id && DRAWN_ANNOTATION_ID.test(props.id))
   // Registered synchronously, while the clicks context still accepts it.
   if (manualClicks.value) {
@@ -1481,7 +1486,7 @@ onMounted(async () => {
     scheduleUpdate()
   })
   window.addEventListener('resize', scheduleUpdate)
-  if (import.meta.env.DEV)
+  if (isAnnotationEditorDevelopment)
     installAnnotationEditorShortcut()
 })
 
@@ -1538,8 +1543,8 @@ watch(annotationGeometryVersion, () => {
   scheduleUpdate()
 })
 
-const editable = computed(() => import.meta.env.DEV && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && hasLabel.value && labelActive.value && geometry.ready)
-const connectorEditable = computed(() => import.meta.env.DEV && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
+const editable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && hasLabel.value && labelActive.value && geometry.ready)
+const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
 const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === props.id)
 let labelDrag: { pointerId: number, width: boolean, startLeft: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } | undefined
 
@@ -1634,7 +1639,7 @@ async function saveDraft(id: string) {
   try {
     // This import stays behind a compile-time development guard. Production
     // decks neither render controls nor include browser write-client code.
-    if (!import.meta.env.DEV)
+    if (!isAnnotationEditorDevelopment)
       return
     const { cachedAnnotationGeometry, saveLabelGeometry } = await import('./drawn-annotation/writer-client')
     // The writer is loaded before edit mode opens, so this is the actual
@@ -1668,6 +1673,23 @@ async function endLabelDrag(event: PointerEvent) {
   event.stopPropagation()
   labelDrag = undefined
   await saveDraft(props.id)
+}
+
+// A pointer cancellation means the browser interrupted the gesture (for
+// example, a window focus change), not that the author released it. Never turn
+// that partial movement into a persisted edit.
+function cancelLabelDrag(event: PointerEvent) {
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const previous = labelDrag.previous
+  labelDrag = undefined
+  if (previous)
+    setLabelDraft(props.id, previous)
+  else
+    clearLabelDraft(props.id)
+  annotationEditorStatus.value = 'Annotation drag cancelled'
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
@@ -1783,6 +1805,20 @@ async function endConnectorDrag(event: PointerEvent) {
   event.stopPropagation()
   connectorDrag = undefined
   await saveDraft(props.id)
+}
+
+function cancelConnectorDrag(event: PointerEvent) {
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const previous = connectorDrag.previous
+  connectorDrag = undefined
+  if (previous)
+    setLabelDraft(props.id, previous)
+  else
+    clearLabelDraft(props.id)
+  annotationEditorStatus.value = 'Annotation drag cancelled'
 }
 
 let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -1950,7 +1986,7 @@ onBeforeUnmount(() => {
           @pointerdown="beginConnectorDrag($event, 'body')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
-          @pointercancel="endConnectorDrag"
+          @pointercancel="cancelConnectorDrag"
         />
         <circle
           v-for="(point, index) in [geometry.connectorStart, geometry.connectorEnd]"
@@ -1964,7 +2000,7 @@ onBeforeUnmount(() => {
           @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
-          @pointercancel="endConnectorDrag"
+          @pointercancel="cancelConnectorDrag"
         />
       </g>
     </svg>
@@ -1982,7 +2018,7 @@ onBeforeUnmount(() => {
       @pointerdown="beginLabelDrag($event)"
       @pointermove="moveLabelDrag"
       @pointerup="endLabelDrag"
-      @pointercancel="endLabelDrag"
+      @pointercancel="cancelLabelDrag"
       :style="{
         '--annotation-color': props.color,
         '--label-delay': `${delays.label}ms`,
@@ -2006,7 +2042,7 @@ onBeforeUnmount(() => {
         @pointerdown.stop="beginLabelDrag($event, true)"
         @pointermove="moveLabelDrag"
         @pointerup="endLabelDrag"
-        @pointercancel="endLabelDrag"
+        @pointercancel="cancelLabelDrag"
       />
     </div>
     <slot />

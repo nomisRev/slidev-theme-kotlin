@@ -46,21 +46,28 @@ export default defineConfig({
 })
 ```
 
-The generated stylesheet is imported by the theme. The plugin exposes a local
-`GET`/`POST /__drawn-annotations` endpoint used by the visual editor,
-validates IDs and unit-fraction label/connector geometry, rejects stale
-revisions, and atomically rewrites that one file. In development, press
-**Alt+Shift+A**, then drag a visible identified label (or its selected width
-handle), connector body, or connector endpoint. Connector endpoints snap to
-slide edge/centre guides and the annotation's source, target, and label ports;
-hold `Alt` while dragging to place freely. Arrow keys nudge whichever control
-was selected: labels move their label, endpoint handles move that endpoint, and
-a connector body moves the complete line (`Shift` makes larger steps). The
-toolbar can undo completed saves or return a connector to its automatic
-attached route. Configure a
-different generated file beneath the deck
-root with `drawnAnnotationEditor({ output: 'styles/my-annotations.css' })` and
-import that file from the deck stylesheet.
+Import the generated stylesheet from the consuming deck once (the local theme
+demo already imports its default file):
+
+```css
+/* style.css */
+@import './styles/drawn-annotations.generated.css';
+```
+
+The plugin exposes a local `GET`/`POST /__drawn-annotations` endpoint used by
+the visual editor, validates IDs and unit-fraction label/connector geometry,
+rejects stale revisions, and atomically rewrites that one file. In development,
+press **Alt+Shift+A**, then drag a visible identified label (or its selected
+width handle), connector body, or connector endpoint. Connector endpoints snap
+to slide edge/centre guides and the annotation's source, target, and label
+ports; hold `Alt` while dragging to place freely. Arrow keys nudge whichever
+control was selected: labels move their label, endpoint handles move that
+endpoint, and a connector body moves the complete line (`Shift` makes larger
+steps). The toolbar can undo completed saves (or press **Cmd/Ctrl+Z** while an
+annotation is selected) or return a connector to its automatic attached route.
+Configure a different generated file beneath the deck root with
+`drawnAnnotationEditor({ output: 'styles/my-annotations.css' })`, and import
+that same file from the deck stylesheet.
 
 ### Basic Setup
 
