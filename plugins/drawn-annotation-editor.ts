@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 
@@ -12,6 +13,12 @@ export interface DrawnAnnotationEditorOptions {}
 const MAX_BODY_BYTES = 64 * 1024
 const component = '<DrawnAnnotation'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16)
+/**
+ * Slidev never feeds a Markdown file through Vite as one module. Every slide is
+ * its own virtual module, `<file>__slidev_<n>.md`, whose code is that slide's
+ * content. The writer must always address the file the author edits.
+ */
+const slidevSlideModule = /__slidev_\d+\.md$/
 const fraction = (value: unknown, min = 0) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= 1
 
 /** Whether candidate is root itself or a descendant, without prefix ambiguity. */
@@ -78,24 +85,51 @@ export function findDrawnAnnotationTags(source: string): Tag[] {
   return tags
 }
 
-function locator(file: string, tag: Tag, revision: string) { return Buffer.from(JSON.stringify({ file, start: tag.start, end: tag.end, fingerprint: hash(tag.text), revision })).toString('base64url') }
-function decodeLocator(value: unknown) {
+/**
+ * A locator names one opening tag of the real Markdown file by content, never
+ * by offset: the code Vite hands to `transform` is usually a slide chunk whose
+ * offsets mean nothing in the file. `ordinal` separates identical tags,
+ * `line` is only shown to the author.
+ */
+interface Locator { file: string, fingerprint: string, ordinal: number, line: number, revision: string }
+function encodeLocator(value: Locator) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
+function decodeLocator(value: unknown): Locator {
   if (typeof value !== 'string') throw new Error('a source locator is required')
   try {
     const data = JSON.parse(Buffer.from(value, 'base64url').toString())
-    if (!data || typeof data.file !== 'string' || !Number.isInteger(data.start) || !Number.isInteger(data.end) || typeof data.fingerprint !== 'string') throw new Error()
-    if (typeof data.revision !== 'string') throw new Error()
-    return data as { file: string, start: number, end: number, fingerprint: string, revision: string }
+    if (!data || typeof data.file !== 'string' || typeof data.fingerprint !== 'string' || typeof data.revision !== 'string') throw new Error()
+    if (!Number.isInteger(data.ordinal) || data.ordinal < 0 || !Number.isInteger(data.line)) throw new Error()
+    return { file: data.file, fingerprint: data.fingerprint, ordinal: data.ordinal, line: data.line, revision: data.revision }
   } catch { throw new Error('invalid source locator') }
 }
+function lineAt(source: string, offset: number) { let line = 1; for (let index = source.indexOf('\n'); index >= 0 && index < offset; index = source.indexOf('\n', index + 1)) line++; return line }
+/** Where `tag`, found in `source` (a chunk of `fileSource`), sits in the file. */
+function locateInFile(source: string, tag: Tag, fileSource: string, fileTags: Tag[]) {
+  const chunk = fileSource.indexOf(source)
+  const identical = fileTags.filter(candidate => candidate.text === tag.text)
+  // The chunk is normally a verbatim slice of the file, so the tag's file
+  // position is exact. Otherwise only an unambiguous tag can be addressed.
+  const match = chunk >= 0 ? identical.find(candidate => candidate.start === chunk + tag.start) : identical.length === 1 ? identical[0] : undefined
+  return match && { fingerprint: hash(tag.text), ordinal: identical.indexOf(match), line: lineAt(fileSource, match.start) }
+}
 
-/** Add the opaque serve-only locator without modifying authored source. */
-export function injectDrawnAnnotationLocators(source: string, file: string) {
-  const tags = findDrawnAnnotationTags(source)
+/**
+ * Add the opaque serve-only locator without modifying authored source.
+ *
+ * The attribute is deliberately static: a bound `:__drawn-annotation-locator`
+ * would make Vue evaluate the base64 token as a JavaScript expression, so the
+ * component would receive `undefined` instead of the locator.
+ */
+export function injectDrawnAnnotationLocators(source: string, file: string, fileSource = source) {
+  const fileTags = findDrawnAnnotationTags(fileSource)
+  const revision = hash(fileSource)
   let result = source
-  for (const tag of [...tags].reverse()) {
-    const value = locator(file, tag, hash(source))
-    result = `${result.slice(0, tag.end - 1)} :__drawn-annotation-locator="${value}"${result.slice(tag.end - 1)}`
+  for (const tag of findDrawnAnnotationTags(source).reverse()) {
+    const location = locateInFile(source, tag, fileSource, fileTags)
+    // A tag the writer could not find again stays a plain, non-editable annotation.
+    if (!location) continue
+    const value = encodeLocator({ file, ...location, revision })
+    result = `${result.slice(0, tag.end - 1)} __drawn-annotation-locator="${value}"${result.slice(tag.end - 1)}`
   }
   return result
 }
@@ -158,13 +192,17 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
       // Vite can append query parameters to module IDs. They describe the
       // module request, not a pathname and must never become part of a writer
       // locator.
-      const pathname = id.split('?', 1)[0]
+      const pathname = id.split('?', 1)[0].replace(slidevSlideModule, '')
       if (!pathname.endsWith('.md') || !findDrawnAnnotationTags(code).length) return null
       // Vite normally supplies absolute IDs, but resolving a relative ID from
       // the configured root keeps the locator correct for programmatic use.
       const absolute = isAbsolute(pathname) ? resolve(pathname) : resolve(root, pathname)
       if (!isWithinRoot(root, absolute) || absolute === root) return null
-      return { code: injectDrawnAnnotationLocators(code, relative(root, absolute)), map: null }
+      // The revision and every tag position come from the file on disk, the
+      // only source the writer will ever read back.
+      let fileSource: string
+      try { fileSource = readFileSync(absolute, 'utf8') } catch { return null }
+      return { code: injectDrawnAnnotationLocators(code, relative(root, absolute), fileSource), map: null }
     },
     configureServer(server: { middlewares: { use: (handler: Function) => void } }) {
       server.middlewares.use(async (request: any, response: any, next: Function) => {
@@ -182,10 +220,10 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
             if (!isWithinRoot(root, path) || path === root) throw new Error('source file must stay under the Vite root')
             const source = await readFile(path, 'utf8'); const revision = hash(source)
             if (payload.expectedRevision !== revision) return { status: 409, body: { error: 'source changed; reload before saving', revision, recovery: 'Reload saved geometry before retrying.' } }
-            const tag = source.slice(token.start, token.end)
-            if (hash(tag) !== token.fingerprint || !tag.startsWith(component)) return { status: 409, body: { error: 'annotation source changed; refusing stale locator', revision, recovery: 'Reload the slide and select the annotation again.' } }
+            const tag = findDrawnAnnotationTags(source).filter(candidate => hash(candidate.text) === token.fingerprint)[token.ordinal]
+            if (!tag) return { status: 409, body: { error: 'annotation source changed; refusing stale locator', revision, recovery: 'Reload the slide and select the annotation again.' } }
             const geometry = validateGeometryPatch(payload.geometry)
-            const nextSource = `${source.slice(0, token.start)}${patchDrawnAnnotationTag(tag, geometry)}${source.slice(token.end)}`
+            const nextSource = `${source.slice(0, tag.start)}${patchDrawnAnnotationTag(tag.text, geometry)}${source.slice(tag.end)}`
             const temporary = `${path}.${randomUUID()}.tmp`
             try { await writeFile(temporary, nextSource, 'utf8'); await rename(temporary, path) } finally { await unlink(temporary).catch(() => {}) }
             return { status: 200, body: { geometry, revision: hash(nextSource) } }

@@ -68,13 +68,15 @@ export default defineConfig({
 
 While Vite serves Markdown, the plugin adds an opaque internal locator to each
 transformed `DrawnAnnotation` tag. The locator contains the Markdown path
-relative to the Vite root, the exact opening-tag range, and a fingerprint and
+relative to the Vite root (mapped back from Slidev's per-slide virtual module
+id), a fingerprint of the opening tag with its ordinal among identical tags,
+its line for display, and the file
 revision. It is never written to Markdown and is not present in a production
 build. The toolbar displays a readable file-and-line preview instead.
 
 The writer endpoint exists only in Vite serve mode. It accepts the locator, the
 expected source revision, and a validated normalized geometry document. Before
-writing it verifies root containment, revision, range, and fingerprint; a
+writing it verifies root containment, revision, and fingerprint; a
 stale or mismatched locator returns `409` with recovery guidance instead of
 changing another tag. The target Markdown file is rewritten atomically through
 a temporary file and rename, with all unrelated source retained byte-for-byte.

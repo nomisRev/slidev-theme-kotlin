@@ -2003,7 +2003,7 @@ onBeforeUnmount(() => {
       preserveAspectRatio="none"
       :aria-hidden="!(connectorEditable && annotationEditMode)"
       :role="connectorEditable && annotationEditMode ? 'group' : undefined"
-      :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${locator.value}` : undefined"
+      :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${locator}` : undefined"
       :style="{
         '--annotation-color': props.color,
         '--annotation-width': `${props.strokeWidth}px`,
@@ -2075,7 +2075,7 @@ onBeforeUnmount(() => {
           role="button"
           tabindex="0"
           aria-label="Move connector"
-          @focus="selectAnnotation(locator.value!, 'body')"
+          @focus="selectAnnotation(locator!, 'body')"
           @pointerdown="beginConnectorDrag($event, 'body')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
@@ -2089,7 +2089,7 @@ onBeforeUnmount(() => {
           :aria-label="index ? 'Move connector end' : 'Move connector start'"
           role="button"
           tabindex="0"
-          @focus="selectAnnotation(locator.value!, index ? 'end' : 'start')"
+          @focus="selectAnnotation(locator!, index ? 'end' : 'start')"
           @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
@@ -2122,9 +2122,9 @@ onBeforeUnmount(() => {
         'maxWidth': geometry.labelWidth === undefined ? undefined : `${geometry.labelWidth}px`,
       }"
       :tabindex="editable && annotationEditMode ? 0 : undefined"
-      :aria-label="editable && annotationEditMode ? `Move annotation label ${locator.value}` : undefined"
+      :aria-label="editable && annotationEditMode ? `Move annotation label ${locator}` : undefined"
       :aria-hidden="!(editable && annotationEditMode)"
-      @focus="selectAnnotation(locator.value!, 'label')"
+      @focus="selectAnnotation(locator!, 'label')"
     >
       {{ props.label }}
       <button
@@ -2137,7 +2137,7 @@ onBeforeUnmount(() => {
         @pointermove="moveLabelDrag"
         @pointerup="endLabelDrag"
         @pointercancel="cancelLabelDrag"
-        @focus.stop="selectAnnotation(locator.value!, 'width')"
+        @focus.stop="selectAnnotation(locator!, 'width')"
       />
     </div>
     <slot />

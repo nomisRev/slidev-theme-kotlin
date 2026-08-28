@@ -43,7 +43,7 @@ const selectedDescription = computed(() => {
   if (!selected.value) return 'Select a visible annotation'
   try {
     const source = JSON.parse(atob(selected.value.replace(/-/g, '+').replace(/_/g, '/')))
-    return `${source.file}:${source.start + 1}`
+    return typeof source.line === 'number' ? `${source.file}:${source.line}` : source.file
   } catch { return 'Selected annotation' }
 })
 const selectedConnectorManual = computed(() => {
