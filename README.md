@@ -8,6 +8,7 @@ This theme provides a professional presentation template tailored for Kotlin dev
 
 - **Kodee Mascot Integration**: Animated Kodee character with multiple variants (greeting, wink, wave, jumping, sitting, drinking, heart, in-love, welcome, winter, tiny)
 - **Magic Move Animations**: Smooth transitions for Kodee between slides with configurable size and position
+- **Magic Move between slides**: Link slides with a `magic-move` separator and their code windows morph across the slide boundary, including several parallel snippets per slide
 - **Kotlin Syntax Highlighting**: Custom Shiki configuration optimized for Kotlin code
 - **Multiple Layouts**: Pre-built layouts including default, cover, and intro
 - **Kotlin Branding**: Official Kotlin logos for both light and dark modes
@@ -113,6 +114,55 @@ The calculation accounts for the standard layout and code padding. A custom
 layout with different horizontal spacing can override
 `--code-window-inline-space`. To bypass column-based sizing entirely, set an
 explicit `--code-window-font-size`, for example `1.25rem`.
+
+### Magic Move between slides
+
+Slidev's classic Magic Move animates code inside one slide, on clicks. This
+theme additionally supports morphing code **across slides**: put `magic-move`
+in the separator between two slides and their code windows animate from one to
+the next when you navigate.
+
+````md
+# My Slide
+
+```kotlin
+class Person
+```
+
+---
+magic-move
+---
+
+# My Slide
+
+```kotlin
+class Person(val name: String)
+```
+````
+
+Details:
+
+- The separator links the slide it precedes to the one before it, so the last
+  slide of a chain needs no marker. Any number of slides can be chained by
+  repeating the `magic-move` separator.
+- Code windows pair up **by position**: the first fence of a slide morphs into
+  the first fence of the next, the second into the second, and so on. Several
+  parallel snippets (say Kotlin next to SQL) each animate independently.
+- Everything outside the code fences is a normal slide — headings, prose, and
+  layout can change freely and follow the deck's regular slide transition.
+- With `transition: view-transition`, the code windows of both slides are
+  paired through the View Transitions API, so the window glides to its new
+  position while the tokens morph, instead of cross-fading with the page.
+- Navigating backward plays the animation in reverse. Deep links, the
+  overview, and PDF/PNG exports render each slide's own step statically.
+- Fence metadata still works: the code-window identity icons, `[Title]`
+  labels, and `{lines:true}` line numbers apply per chain. Per-click line
+  highlighting works too — `` ```kotlin {1|2-3} `` registers clicks on that
+  slide and steps through the ranges before navigation moves on, exactly like
+  one step of a classic Magic Move block. Snippet imports (`<<< @/...`) do
+  not participate in chains.
+- `magicMove: true` in the slide's YAML frontmatter is equivalent to the bare
+  `magic-move` separator and can be combined with other frontmatter keys.
 
 ### Using Kodee Mascot
 

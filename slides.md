@@ -195,6 +195,78 @@ fun <T> List<T>.secondOrNull(): T? =
 ````
 
 ---
+kodee: wink
+---
+
+# Magic Move between slides
+
+Link slides with a `magic-move` separator and the code morphs across them.
+
+```kotlin
+class Person
+```
+
+---
+magic-move
+---
+
+# Magic Move between slides
+
+Each linked slide is a full slide: headings and prose can change too.
+
+```kotlin
+class Person(val name: String)
+```
+
+---
+magic-move
+---
+
+# Magic Move between slides
+
+The last slide of the chain needs no marker — and `{all|2}` click highlighting still works.
+
+```kotlin {all|2}
+class Person(val name: String) {
+    fun introduce() = println("I am $name")
+}
+```
+
+---
+kodee: false
+---
+
+# Parallel snippets move together
+
+Code windows pair up by position across the linked slides.
+
+```kotlin
+class Person
+```
+
+```sql
+CREATE TABLE PERSON
+```
+
+---
+magic-move
+---
+
+# Parallel snippets move together
+
+Code windows pair up by position across the linked slides.
+
+```kotlin
+class Person(val name: String)
+```
+
+```sql
+CREATE TABLE PERSON(
+    name VARCHAR(255) NOT NULL
+)
+```
+
+---
 kodee:
   variant: jumping
   size: large

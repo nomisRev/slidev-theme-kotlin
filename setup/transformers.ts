@@ -1,5 +1,10 @@
-import { defineTransformersSetup } from '@slidev/types'
+import type { CodeblockTransformContext } from '@slidev/types'
+import { defineCodeblockTransformer, defineTransformersSetup } from '@slidev/types'
+import { toKeyedTokens } from '@shikijs/magic-move/core'
+import lz from 'lz-string'
 import { codeWindowIcon } from './code-window-icon'
+import { extractTopLevelFences, resolveChain } from './magic-move-between'
+import type { ParsedFence } from './magic-move-between'
 
 // Magic Move serialises Shiki tokens instead of its regular HAST output, so the
 // Shiki transformer cannot put the code-window icon class on it. Add the class
@@ -29,7 +34,94 @@ function withIconClass(options: string | undefined, icon: string) {
   return `{ ...(${options}), class: [(${options}).class, ${className}] }`
 }
 
+/**
+ * Cross-slide Magic Move: replace every top-level code fence of a slide that
+ * belongs to a `magic-move` chain (see `magic-move-between.ts`) with a
+ * `<MagicMoveBetween>` component. The component receives every step of the
+ * chain precompiled, pinned at this slide's step, and animates the tokens
+ * when the presentation navigates between the chained slides.
+ */
+const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransformContext) => {
+  const { info, code, fence, slide, options } = ctx
+  if (fence !== 3 || !slide)
+    return
+  const slides = options.data.slides
+  const chain = resolveChain(slides, slide.index)
+  if (!chain)
+    return
+
+  const fencesPerSlide = [] as ParsedFence[][]
+  for (let i = chain.start; i <= chain.end; i++)
+    fencesPerSlide.push(extractTopLevelFences(slides[i].content))
+
+  // Locate the fence being rendered among this slide's fences. Its position
+  // decides which fences of the neighbouring slides it morphs to and from.
+  const own = fencesPerSlide[slide.index - chain.start]
+  const codeKey = code.replace(/\r?\n$/, '')
+  let groupIndex = own.findIndex(f => f.code === codeKey && f.info === info)
+  if (groupIndex < 0)
+    groupIndex = own.findIndex(f => f.code === codeKey)
+  if (groupIndex < 0)
+    return
+
+  const steps = [] as ParsedFence[]
+  let ownStep = -1
+  fencesPerSlide.forEach((fences, slideOffset) => {
+    const f = fences[groupIndex]
+    if (!f)
+      return
+    if (slideOffset === slide.index - chain.start)
+      ownStep = steps.length
+    steps.push(f)
+  })
+  if (steps.length < 2 || ownStep < 0)
+    return
+
+  const { utils: { shiki, shikiOptions }, data: { config } } = options
+  const compiled = await Promise.all(steps.map(async (f) => {
+    const stepOptions = { ...shikiOptions, lang: f.lang }
+    const { tokens, bg, fg, rootStyle, themeName } = await shiki.codeToTokens(f.code, stepOptions as any)
+    const lineNumbers = f.lines ?? config.lineNumbers
+    const theme = 'themes' in stepOptions ? stepOptions.themes : (stepOptions as any).theme
+    return {
+      ...toKeyedTokens(f.code, tokens, JSON.stringify([f.lang, theme]), lineNumbers),
+      bg,
+      fg,
+      rootStyle,
+      themeName,
+      lang: f.lang,
+    }
+  }))
+
+  // One component represents every step, so only claim a code-window identity
+  // when it holds for all of them (same rule as classic magic-move blocks).
+  const icons = steps.map(f => codeWindowIcon(f.lang, f.meta))
+  const icon = icons.every(i => i && i === icons[0]) ? icons[0] : undefined
+
+  const ownFence = own[groupIndex]
+  const attrs = [
+    `steps-lz="${lz.compressToBase64(JSON.stringify(compiled))}"`,
+    `:step="${ownStep}"`,
+    // Shared across the chain so the View Transitions API pairs the old and
+    // new code windows instead of cross-fading them with the page.
+    `nav-key="magic-move-between-${chain.start}-${groupIndex}"`,
+    `:title='${JSON.stringify(ownFence.title ?? '')}'`,
+  ]
+  // `{1|2-3}` highlight ranges step through on clicks within this slide, just
+  // like they do for one step of a classic magic-move block.
+  if (ownFence.ranges.length)
+    attrs.push(`:step-ranges='${JSON.stringify(ownFence.ranges)}'`)
+  // Fence options (`{at:2, duration:500}`) become props, like the options of
+  // a classic magic-move block.
+  if (ownFence.optionsRaw)
+    attrs.unshift(`v-bind="${ownFence.optionsRaw}"`)
+  if (icon)
+    attrs.push(`class="code-window-icon--${icon}"`)
+  return `<MagicMoveBetween ${attrs.join(' ')} />`
+})
+
 export default defineTransformersSetup(() => ({
+  codeblocks: [magicMoveBetween],
   pre: [({ s }) => {
     const source = s.toString()
     for (const block of source.matchAll(magicMove)) {
