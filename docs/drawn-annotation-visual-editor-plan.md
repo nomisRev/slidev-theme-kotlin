@@ -1,6 +1,6 @@
 # DrawnAnnotation visual editor plan
 
-**Status:** proposal. This is the manual-first alternative to `drawn-annotation-rewrite-plan.md`.
+**Status:** in progress. This is the manual-first alternative to `drawn-annotation-rewrite-plan.md`.
 
 ## 1. Product direction
 
@@ -193,7 +193,7 @@ Behavior:
 4. Label drag updates an in-memory draft on every pointer move.
 5. A width handle changes the normalized maximum width; height remains content-driven.
 6. Connector endpoint/body drags update the draft similarly.
-7. Saving occurs on pointer release and is also debounced, not on every pointer move.
+7. Saving occurs on pointer release and is also debounced after a pause in a long drag, not on every pointer move. Browser-side writes are serialized so an automatic save and a release save use successive revisions rather than conflicting with one another.
 8. `Escape` cancels the active drag; undo restores the prior persisted snapshot.
 9. Entering/leaving edit mode does not change click count or replay drawing animations.
 

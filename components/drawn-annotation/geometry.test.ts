@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, slideFractionToLocal, snapFractionPoint } from './geometry'
+import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint } from './geometry'
 
 describe('drawn annotation persisted geometry', () => {
   it('accepts only finite plain unit fractions', () => {
@@ -34,6 +34,16 @@ describe('drawn annotation persisted geometry', () => {
     expect(DRAWN_ANNOTATION_ID.test('nullable-return-label')).toBe(true)
     expect(DRAWN_ANNOTATION_ID.test('2bad')).toBe(false)
     expect(DRAWN_ANNOTATION_ID.test('bad selector]')).toBe(false)
+  })
+
+  it('keeps newer in-flight drag fields while canonicalizing saved fields', () => {
+    const sent = { x: .123456, y: .25 }
+    const current = { x: .3, y: .25, width: .4 }
+    const persisted = { x: .1235, y: .25 }
+
+    expect(reconcileSavedDraft(current, sent, persisted)).toEqual({ x: .3, y: .25, width: .4 })
+    expect(draftMatchesPersisted(current, persisted)).toBe(false)
+    expect(draftMatchesPersisted({ x: .1235, y: .25 }, persisted)).toBe(true)
   })
 
   it('snaps connector coordinates to nearby guides one axis at a time', () => {

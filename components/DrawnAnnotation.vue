@@ -11,7 +11,7 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint } from './drawn-annotation/geometry'
+import { draftMatchesPersisted, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint } from './drawn-annotation/geometry'
 import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
@@ -1595,32 +1595,21 @@ function moveLabelDrag(event: PointerEvent) {
       y: fraction((event.clientY - labelDrag.offsetY - box.top) / box.height),
     })
   }
-}
-
-function sameGeometry(a: PersistedAnnotationGeometry | undefined, b: PersistedAnnotationGeometry | undefined) {
-  return !!a && !!b && ['x', 'y', 'width', 'x1', 'y1', 'x2', 'y2'].every(key =>
-    a[key as keyof PersistedAnnotationGeometry] === b[key as keyof PersistedAnnotationGeometry])
-}
-
-/** Whether CSS has caught up with every property this local draft changed. */
-function geometryContains(whole: PersistedAnnotationGeometry, patch: PersistedAnnotationGeometry) {
-  return Object.entries(patch).every(([key, value]) =>
-    whole[key as keyof PersistedAnnotationGeometry] === value)
+  scheduleDraftSave()
 }
 
 /**
  * Keep the in-memory drag geometry until Vite has applied the rewritten CSS.
- * Clearing it immediately would briefly re-render the old rule between the
- * successful POST and CSS HMR. A failed/absent HMR simply leaves the draft in
- * place, which is preferable to losing the author's just-saved position.
+ * A newer pointer move may happen while an older debounced save is in flight;
+ * only clear when *every* current draft value has made it into the stylesheet.
  */
-function clearDraftAfterCssHmr(id: string, saved: PersistedAnnotationGeometry) {
+function clearDraftAfterCssHmr(id: string) {
   let frames = 0
   const check = () => {
     const draft = annotationDrafts.get(id)
-    if (!sameGeometry(draft, saved))
+    if (!draft)
       return
-    if (geometryContains(persistedLabelGeometry(), saved)) {
+    if (draftMatchesPersisted(draft, persistedLabelGeometry())) {
       clearLabelDraft(id)
       return
     }
@@ -1630,11 +1619,31 @@ function clearDraftAfterCssHmr(id: string, saved: PersistedAnnotationGeometry) {
   requestAnimationFrame(check)
 }
 
+let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+let lastSavedDraftSignature: string | undefined
+const savingDraftSignatures = new Set<string>()
+function draftSignature(geometry: PersistedAnnotationGeometry) {
+  return JSON.stringify(geometry)
+}
+
+/** Save during a pause in a long drag as well as on pointer release. */
+function scheduleDraftSave() {
+  clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(() => {
+    if (props.id)
+      void saveDraft(props.id)
+  }, 350)
+}
+
 async function saveDraft(id: string) {
   const draft = annotationDrafts.get(id)
   if (!draft)
     return
   const savedDraft = { ...draft }
+  const signature = draftSignature(savedDraft)
+  if (signature === lastSavedDraftSignature || savingDraftSignatures.has(signature))
+    return
+  savingDraftSignatures.add(signature)
   annotationEditorStatus.value = 'Saving annotation…'
   try {
     // This import stays behind a compile-time development guard. Production
@@ -1654,15 +1663,21 @@ async function saveDraft(id: string) {
     // .123456) with CSS's .1235 would otherwise leave a draft permanently
     // above the persisted rule.
     const persisted = saved.geometry[id]
-    const savedPatch = persisted
-      ? Object.fromEntries(Object.keys(savedDraft).map(key => [key, persisted[key as keyof PersistedAnnotationGeometry]])) as PersistedAnnotationGeometry
-      : savedDraft
-    setLabelDraft(id, savedPatch)
-    clearDraftAfterCssHmr(id, savedPatch)
+    const current = annotationDrafts.get(id)
+    // Do not overwrite movement that happened after this request started.
+    // Reconciliation only replaces unchanged fields with CSS's rounded form.
+    const reconciled = persisted && reconcileSavedDraft(current, savedDraft, persisted)
+    if (reconciled)
+      setLabelDraft(id, reconciled)
+    lastSavedDraftSignature = signature
+    clearDraftAfterCssHmr(id)
     annotationEditorStatus.value = 'Annotation saved'
   }
   catch (error) {
     annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to save annotation geometry'
+  }
+  finally {
+    savingDraftSignatures.delete(signature)
   }
 }
 
@@ -1672,6 +1687,7 @@ async function endLabelDrag(event: PointerEvent) {
   event.preventDefault()
   event.stopPropagation()
   labelDrag = undefined
+  clearTimeout(draftSaveTimer)
   await saveDraft(props.id)
 }
 
@@ -1685,6 +1701,7 @@ function cancelLabelDrag(event: PointerEvent) {
   event.stopPropagation()
   const previous = labelDrag.previous
   labelDrag = undefined
+  clearTimeout(draftSaveTimer)
   if (previous)
     setLabelDraft(props.id, previous)
   else
@@ -1796,6 +1813,7 @@ function moveConnectorDrag(event: PointerEvent) {
     next.x2 = fraction(next.x2 + dx + correctionX); next.y2 = fraction(next.y2 + dy + correctionY)
   }
   setLabelDraft(props.id, next)
+  scheduleDraftSave()
 }
 
 async function endConnectorDrag(event: PointerEvent) {
@@ -1804,6 +1822,7 @@ async function endConnectorDrag(event: PointerEvent) {
   event.preventDefault()
   event.stopPropagation()
   connectorDrag = undefined
+  clearTimeout(draftSaveTimer)
   await saveDraft(props.id)
 }
 
@@ -1814,6 +1833,7 @@ function cancelConnectorDrag(event: PointerEvent) {
   event.stopPropagation()
   const previous = connectorDrag.previous
   connectorDrag = undefined
+  clearTimeout(draftSaveTimer)
   if (previous)
     setLabelDraft(props.id, previous)
   else
@@ -1844,6 +1864,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
     if (!current)
       return
     setLabelDraft(props.id, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
+    scheduleDraftSave()
   }
   else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
     const start = localConnectorFraction(geometry.connectorStart)
@@ -1860,6 +1881,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       next.y2 = fraction(next.y2 + dy)
     }
     setLabelDraft(props.id, next)
+    scheduleDraftSave()
   }
   else {
     return
@@ -1883,6 +1905,7 @@ function cancelActiveDrag(event: KeyboardEvent) {
     clearLabelDraft(props.id)
   labelDrag = undefined
   connectorDrag = undefined
+  clearTimeout(draftSaveTimer)
   annotationEditorStatus.value = 'Annotation drag cancelled'
 }
 
@@ -1894,6 +1917,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', cancelActiveDrag, true)
   window.removeEventListener('keydown', nudgeSelectedAnnotation, true)
   clearTimeout(keyboardSaveTimer)
+  clearTimeout(draftSaveTimer)
 })
 </script>
 

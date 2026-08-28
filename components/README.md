@@ -194,7 +194,7 @@ next step. Set `:wait="false"` to draw as soon as the click arrives.
 ## Visual-editor geometry
 
 `id` is an optional stable, deck-wide identity for a `DrawnAnnotation`. It is
-required by the upcoming development-only visual editor, but annotations without
+required by the development-only visual editor, but annotations without
 one continue to render normally. Use CSS-safe IDs matching
 `[A-Za-z][A-Za-z0-9_.-]*`:
 
@@ -228,7 +228,9 @@ arrow keys to nudge it (`Shift` for larger steps). Connector endpoints and its
 body can likewise be dragged; endpoints snap to slide edge/centre guides
 and the annotation's source, target, and label ports. Hold `Alt` to temporarily
 disable snapping. The first connector drag materializes the currently automatic
-route as two manual endpoints. Pointer release saves through the local writer. The toolbar can reset the selected annotation or all
+route as two manual endpoints. Pointer release saves through the local writer;
+a pause in a long drag saves a draft too, and local saves are serialized so they
+cannot conflict with each other. The toolbar can reset the selected annotation or all
 saved annotation geometry. **Cmd/Ctrl+Z** restores the latest completed save
 for the selected annotation. Missing or duplicate IDs disable saving, and a
 deck without the writer plugin reports its configuration error instead of

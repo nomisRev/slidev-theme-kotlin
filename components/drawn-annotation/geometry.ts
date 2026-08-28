@@ -84,6 +84,28 @@ export function localToSlideFraction(point: number, axis: 'x' | 'y', slide: View
 }
 
 /**
+ * Reconcile a save response without replacing pointer movement that happened
+ * while the request was in flight. The writer rounds values to its canonical
+ * CSS precision, but only fields that still equal the sent snapshot may be
+ * replaced with that rounded value.
+ */
+export function reconcileSavedDraft(current: PersistedAnnotationGeometry | undefined, sent: PersistedAnnotationGeometry, persisted: PersistedAnnotationGeometry): PersistedAnnotationGeometry | undefined {
+  if (!current)
+    return current
+  const reconciled = { ...current }
+  for (const key of Object.keys(sent) as (keyof PersistedAnnotationGeometry)[]) {
+    if (current[key] === sent[key] && persisted[key] !== undefined)
+      reconciled[key] = persisted[key]
+  }
+  return reconciled
+}
+
+/** True when all local preview values are now represented by persisted CSS. */
+export function draftMatchesPersisted(draft: PersistedAnnotationGeometry | undefined, persisted: PersistedAnnotationGeometry) {
+  return !!draft && Object.entries(draft).every(([key, value]) => persisted[key as keyof PersistedAnnotationGeometry] === value)
+}
+
+/**
  * Snap each axis independently. This permits a connector endpoint to align
  * with a vertical guide without forcing its height to an unrelated point.
  * Callers provide only concrete slide fractions, making this independent of

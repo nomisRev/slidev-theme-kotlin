@@ -11,6 +11,10 @@ interface WriterResponse {
 
 let revision: string | undefined
 let cachedGeometry: Record<string, WriterGeometry> = {}
+// A release save can overlap a debounced save from the same drag. Queue writes
+// in the browser as well as on the server so each request uses the revision
+// returned by the prior one instead of needlessly conflicting with itself.
+let pendingWrite = Promise.resolve()
 
 async function response(response: Response): Promise<WriterResponse> {
   const body = await response.json() as WriterResponse
@@ -39,31 +43,36 @@ export function cachedAnnotationGeometry(id: string): WriterGeometry | null {
   return geometry ? { ...geometry } : null
 }
 
-export async function saveLabelGeometry(id: string, geometry: PersistedAnnotationGeometry | null) {
+function enqueueWrite<T>(operation: () => Promise<T>) {
+  const result = pendingWrite.then(operation, operation)
+  // Keep later edits usable after a rejected external/stale revision.
+  pendingWrite = result.then(() => undefined, () => undefined)
+  return result
+}
+
+async function writePatch(annotations: Record<string, PersistedAnnotationGeometry | Record<string, null> | null>) {
   if (!revision)
     await loadAnnotationGeometry()
   const saved = await response(await fetch('/__drawn-annotations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ expectedRevision: revision, annotations: { [id]: geometry } }),
+    // Read revision only when this queued operation starts. A previous queued
+    // write may have advanced it while this drag was still in progress.
+    body: JSON.stringify({ expectedRevision: revision, annotations }),
   }))
   revision = saved.revision
   return saved
 }
 
+export function saveLabelGeometry(id: string, geometry: PersistedAnnotationGeometry | null) {
+  return enqueueWrite(() => writePatch({ [id]: geometry }))
+}
+
 /** Remove either the label or connector override while retaining the other. */
-export async function resetAnnotationGeometry(id: string, part: GeometryReset) {
-  if (!revision)
-    await loadAnnotationGeometry()
+export function resetAnnotationGeometry(id: string, part: GeometryReset) {
   const fields = part === 'label' ? ['x', 'y', 'width'] : ['x1', 'y1', 'x2', 'y2']
   const geometry = Object.fromEntries(fields.map(field => [field, null]))
-  const saved = await response(await fetch('/__drawn-annotations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ expectedRevision: revision, annotations: { [id]: geometry } }),
-  }))
-  revision = saved.revision
-  return saved
+  return enqueueWrite(() => writePatch({ [id]: geometry }))
 }
 
 export async function resetAllAnnotationGeometry() {
@@ -71,13 +80,7 @@ export async function resetAllAnnotationGeometry() {
   const annotations = Object.fromEntries(Object.keys(current.geometry).map(id => [id, null]))
   if (!Object.keys(annotations).length)
     return current
-  const saved = await response(await fetch('/__drawn-annotations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ expectedRevision: revision, annotations }),
-  }))
-  revision = saved.revision
-  return saved
+  return enqueueWrite(() => writePatch(annotations))
 }
 
 /** Restore a full prior snapshot for Undo (or delete the generated rule). */
