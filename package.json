@@ -36,7 +36,8 @@
     "screenshot": "slidev export slides.md --format png --with-clicks",
     "visual:review": "node scripts/visual-review.mjs",
     "visual:check": "node scripts/visual-review.mjs --check",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:annotation-editor": "node scripts/test-annotation-editor.mjs"
   },
   "dependencies": {
     "@slidev/types": "52.19.1",

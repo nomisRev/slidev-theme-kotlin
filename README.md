@@ -341,6 +341,9 @@ npm run export
 # Export every slide and click state as PNG screenshots
 npm run screenshot
 
+# Run real-browser pointer/save/HMR coverage for the annotation editor
+npm run test:annotation-editor
+
 # Export one slide; --click is zero-based (0 is the initial state)
 npm run export:slide -- --slide 12 --click 3
 
@@ -441,9 +444,12 @@ The `.visual/` directory contains disposable base/current captures and diffs
 and is ignored by Git. `npm run screenshot` is the non-comparison escape hatch
 when raw PNGs are all that is needed.
 
-The visual exporter requires the Chromium binary supplied by
-`playwright-chromium`. If dependency installation is configured not to run
-package install scripts, download it once with:
+The visual exporter and `npm run test:annotation-editor` require the Chromium
+binary supplied by `playwright-chromium`. The editor browser test starts an
+isolated development server, drags a label, width handle, connector endpoint,
+and connector body, verifies the persisted CSS after reload, and restores the
+generated stylesheet byte-for-byte. If dependency installation is configured
+not to run package install scripts, download Chromium once with:
 
 ```bash
 npx playwright install chromium
