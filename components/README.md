@@ -191,10 +191,49 @@ Magic Move fading new tokens in where they already belong. It only delays the
 entrance: an annotation that is already on screen stays on screen through the
 next step. Set `:wait="false"` to draw as soon as the click arrives.
 
+## Visual-editor geometry
+
+`id` is an optional stable, deck-wide identity for a `DrawnAnnotation`. It is
+required by the upcoming development-only visual editor, but annotations without
+one continue to render normally. Use CSS-safe IDs matching
+`[A-Za-z][A-Za-z0-9_.-]*`:
+
+```html
+<DrawnAnnotation id="nullable-return-label" text="String?" label="nullable return type" :on="2">
+```
+
+The renderer already accepts generated geometry on that element. A matching CSS
+rule can override individual label properties; unitless values are fractions of
+the concrete `.slidev-layout` root, so they survive presentation scaling and a
+nested annotation canvas. Generated values take precedence over `label-x`,
+`label-y`, and `label-width`; absent or malformed values safely fall back to
+those props.
+
+```css
+[data-drawn-annotation-id="nullable-return-label"] {
+  --da-label-x: 0.7125;
+  --da-label-y: 0.1864;
+  --da-label-width: 0.1944;
+}
+```
+
+The theme imports `styles/drawn-annotations.generated.css`, an empty,
+tool-owned placeholder until the first save. With the writer plugin configured,
+press **Alt+Shift+A** (or use the global **Edit annotations** toolbar) in a
+development deck. Click and drag a visible identified label to move it; select
+it and drag its right handle to set its maximum width. Connector endpoints and
+its body can likewise be dragged; the first connector drag materializes the
+currently automatic route as two manual endpoints. Pointer release saves
+through the local writer. The toolbar can reset the selected annotation or all
+saved annotation geometry. Missing or duplicate IDs disable saving, and a deck
+without the writer plugin reports its configuration error instead of entering
+an editor that cannot save.
+
 ## How it looks
 
 | prop | default | meaning |
 | --- | --- | --- |
+| `id` | – | stable deck-wide ID for generated editor geometry; must match `[A-Za-z][A-Za-z0-9_.-]*` when supplied |
 | `options` | – | [rough.js options](https://github.com/rough-stuff/rough/wiki#options), passed straight to the library that draws every stroke |
 | `iterations` | `2` | how many times each shape is drawn over itself — the sketchy redraw |
 | `color` | `--drawn-annotation-color` | stroke and label colour, any CSS colour; the variable falls back to the text colour |

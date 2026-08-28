@@ -30,6 +30,32 @@ npm install slidev-theme-kotlin
 
 ## Usage
 
+### Visual annotation editor (development)
+
+The optional editor writer is a Vite development plugin. It writes only
+normalized annotation geometry to `styles/drawn-annotations.generated.css`; it
+is not included in builds or exports. Enable it from the consuming deck's
+`vite.config.ts`:
+
+```ts
+import { defineConfig } from 'vite'
+import { drawnAnnotationEditor } from 'slidev-theme-kotlin/annotation-editor'
+
+export default defineConfig({
+  plugins: [drawnAnnotationEditor()],
+})
+```
+
+The generated stylesheet is imported by the theme. The plugin exposes a local
+`GET`/`POST /__drawn-annotations` endpoint used by the visual editor,
+validates IDs and unit-fraction label/connector geometry, rejects stale
+revisions, and atomically rewrites that one file. In development, press
+**Alt+Shift+A**, then drag a visible identified label (or its selected width
+handle), connector body, or connector endpoint. Configure a
+different generated file beneath the deck
+root with `drawnAnnotationEditor({ output: 'styles/my-annotations.css' })` and
+import that file from the deck stylesheet.
+
 ### Basic Setup
 
 Add the theme to your slides' frontmatter:

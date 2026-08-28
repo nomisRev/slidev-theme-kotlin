@@ -104,6 +104,8 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
+import { readPersistedLabelGeometry, DRAWN_ANNOTATION_ID, slideFractionToLocal } from './drawn-annotation/geometry'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
 /**
@@ -137,6 +139,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
 type MarkType = 'circle' | 'underline' | 'box' | 'strike-through' | 'none'
 
 const props = withDefaults(defineProps<{
+  /** Stable deck-wide identity used by the development-only visual editor. */
+  id?: string
   /** Shape drawn on the source. Kept as the short form of `sourceType`. */
   type?: MarkType
   /** Shape drawn on the source. Overrides `type` when supplied. */
@@ -246,6 +250,7 @@ const props = withDefaults(defineProps<{
   /** Follow the annotated element while Magic Move or a transition animates it. */
   track?: boolean
 }>(), {
+  id: undefined,
   type: 'underline',
   sourceType: undefined,
   selector: '[data-annotate]',
@@ -329,6 +334,9 @@ function warn(message: string) {
   warned.add(message)
   console.warn(`[DrawnAnnotation] ${message}`)
 }
+
+if (props.id !== undefined && !DRAWN_ANNOTATION_ID.test(props.id))
+  warn(`Invalid id ${JSON.stringify(props.id)}. IDs must match ${DRAWN_ANNOTATION_ID}; this annotation cannot be persisted.`)
 
 // The types arrive from Markdown, so a typo is a string TypeScript never saw.
 const MARK_TYPES = ['underline', 'circle', 'box', 'strike-through', 'none'] as const
@@ -581,6 +589,9 @@ const geometry = reactive({
   // assigned only when fitting it on the slide requires wrapping.
   labelWidth: undefined as number | undefined,
   labelPlaced: false,
+  /** Resolved leader endpoints, used to materialize automatic lines on first edit. */
+  connectorStart: undefined as Point | undefined,
+  connectorEnd: undefined as Point | undefined,
   ready: false,
 })
 
@@ -799,6 +810,7 @@ let paintFrame = 0
 let trackFrame = 0
 let trackUntil = 0
 let mounted = false
+let unregisterEditorId: (() => void) | undefined
 // Fingerprint of the mark's last measured boxes. While the slide animates, a
 // frame in which the mark has not moved recomputes nothing.
 let lastMarkKey = ''
@@ -1103,6 +1115,8 @@ function paintDestination(
   toLocal: (rect: DOMRect) => Box,
   marked: Box,
 ) {
+  geometry.connectorStart = undefined
+  geometry.connectorEnd = undefined
   // Computed into locals first: the stable rough.js seed makes an unchanged
   // layout produce identical path strings, which assignPaths then drops
   // instead of re-patching the SVG.
@@ -1165,14 +1179,46 @@ function paintDestinationInto(
   if (!destination || !props.connect)
     return
 
-  const route = routeLeader(root, toLocal, markBox, destination, endPoint)
-  if (!route)
-    return
-  const { start, end, c1x, c1y, c2x, c2y } = route
-  paths.leader = toPaths(generator.path(
-    `M ${start.x} ${start.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${end.x} ${end.y}`,
-    roughOptions(),
-  ))
+  const savedConnector = manualConnector()
+  let start: Point
+  let end: Point
+  let c2x: number
+  let c2y: number
+  if (savedConnector && overlay.value) {
+    // Saved fractions always use the concrete slide root, even if this SVG is
+    // nested in a positioned component.
+    const slide = slideRoot()
+    if (!slide)
+      return
+    const slideBox = slide.getBoundingClientRect()
+    const overlayBox = overlay.value.getBoundingClientRect()
+    start = {
+      x: slideFractionToLocal(savedConnector.x1, 'x', slideBox, overlayBox, geometry),
+      y: slideFractionToLocal(savedConnector.y1, 'y', slideBox, overlayBox, geometry),
+    }
+    end = {
+      x: slideFractionToLocal(savedConnector.x2, 'x', slideBox, overlayBox, geometry),
+      y: slideFractionToLocal(savedConnector.y2, 'y', slideBox, overlayBox, geometry),
+    }
+    c2x = start.x
+    c2y = start.y
+    paths.leader = toPaths(generator.line(start.x, start.y, end.x, end.y, roughOptions()))
+  }
+  else {
+    const route = routeLeader(root, toLocal, markBox, destination, endPoint)
+    if (!route)
+      return
+    start = route.start
+    end = route.end
+    c2x = route.c2x
+    c2y = route.c2y
+    paths.leader = toPaths(generator.path(
+      `M ${start.x} ${start.y} C ${route.c1x} ${route.c1y}, ${route.c2x} ${route.c2y}, ${end.x} ${end.y}`,
+      roughOptions(),
+    ))
+  }
+  geometry.connectorStart = start
+  geometry.connectorEnd = end
 
   if (props.arrow) {
     // Aim the head along the tangent of the curve, not along the chord.
@@ -1410,6 +1456,44 @@ const LATERAL_OFFSETS = (() => {
 // resizes too. Cleared on every click and whenever the props or fonts change.
 const labelSizeCache = new Map<number | 'natural', { width: number, height: number }>()
 
+/** CSS-generated geometry wins over Markdown props, one property at a time. */
+function persistedLabelGeometry() {
+  const element = container.value
+  return element && props.id && DRAWN_ANNOTATION_ID.test(props.id)
+    ? readPersistedLabelGeometry(getComputedStyle(element))
+    : {}
+}
+
+function draftLabelGeometry() {
+  return props.id ? annotationDrafts.get(props.id) : undefined
+}
+
+function effectiveLabelX() {
+  return draftLabelGeometry()?.x ?? persistedLabelGeometry().x ?? (props.labelX === undefined ? undefined : props.labelX / 100)
+}
+
+function effectiveLabelY() {
+  return draftLabelGeometry()?.y ?? persistedLabelGeometry().y ?? (props.labelY === undefined ? undefined : props.labelY / 100)
+}
+
+function effectiveLabelWidth(bounds: Box) {
+  const persisted = draftLabelGeometry()?.width ?? persistedLabelGeometry().width
+  return persisted === undefined ? props.labelWidth : bounds.width * persisted
+}
+
+/** A connector becomes manual only once all four endpoints are present. */
+function manualConnector() {
+  const draft = draftLabelGeometry()
+  const saved = persistedLabelGeometry()
+  const x1 = draft?.x1 ?? saved.x1
+  const y1 = draft?.y1 ?? saved.y1
+  const x2 = draft?.x2 ?? saved.x2
+  const y2 = draft?.y2 ?? saved.y2
+  return x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined
+    ? undefined
+    : { x1, y1, x2, y2 }
+}
+
 function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
   const cached = labelSizeCache.get(maxWidth ?? 'natural')
   if (cached)
@@ -1455,7 +1539,10 @@ function fitLabel(
   // depend on how the label wraps. Inflated so the label breathes — a label
   // that ends up flush against the bottom of a code block reads as part of it.
   // An explicitly positioned label ignores obstacles entirely.
-  const obstacles = props.labelX !== undefined || props.labelY !== undefined
+  const explicitX = effectiveLabelX()
+  const explicitY = effectiveLabelY()
+  const maximumWidth = effectiveLabelWidth(bounds)
+  const obstacles = explicitX !== undefined || explicitY !== undefined
     ? []
     : collectObstacles(root, toLocal)
         .map(box => padBox(box, props.clearance))
@@ -1463,14 +1550,14 @@ function fitLabel(
   const natural = measureLabel(toLocal)
   const unwrapped = placeLabel(anchor, natural, bounds, obstacles)
   const fitsSlide = natural.width <= bounds.width - SLIDE_MARGIN * 2 && natural.height <= bounds.height - SLIDE_MARGIN * 2
-  const respectsExplicitMaximum = props.labelWidth === undefined || natural.width <= props.labelWidth
+  const respectsExplicitMaximum = maximumWidth === undefined || natural.width <= maximumWidth
 
   if (fitsSlide && unwrapped.overlap === 0 && respectsExplicitMaximum)
     return { box: unwrapped.box, width: undefined }
 
   // An explicit `label-width` remains a useful author override. Without one,
   // the slide edges are the only width limit.
-  const maximum = Math.min(natural.width, props.labelWidth ?? natural.width, bounds.width - SLIDE_MARGIN * 2)
+  const maximum = Math.min(natural.width, maximumWidth ?? natural.width, bounds.width - SLIDE_MARGIN * 2)
   const minimum = Math.min(maximum, 160)
   let best: { box: Box, width: number, overlap: number } | undefined
 
@@ -1509,11 +1596,13 @@ function placeLabel(
   const halfH = size.height / 2
   const centred = (cx: number, cy: number) => makeBox(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
 
-  if (props.labelX !== undefined || props.labelY !== undefined) {
+  const explicitX = effectiveLabelX()
+  const explicitY = effectiveLabelY()
+  if (explicitX !== undefined || explicitY !== undefined) {
     return {
       box: centred(
-        props.labelX !== undefined ? bounds.left + bounds.width * props.labelX / 100 : anchor.cx,
-        props.labelY !== undefined ? bounds.top + bounds.height * props.labelY / 100 : anchor.cy,
+        explicitX !== undefined ? bounds.left + bounds.width * explicitX : anchor.cx,
+        explicitY !== undefined ? bounds.top + bounds.height * explicitY : anchor.cy,
       ),
       overlap: 0,
     }
@@ -1636,6 +1725,8 @@ function backOff(point: { x: number, y: number }, from: { x: number, y: number }
 
 onMounted(async () => {
   mounted = true
+  if (import.meta.env.DEV)
+    unregisterEditorId = registerAnnotationEditorId(props.id, !!props.id && DRAWN_ANNOTATION_ID.test(props.id))
   // Registered synchronously, while the clicks context still accepts it.
   if (manualClicks.value) {
     resolvedClick.value = manualClick(atClick.value, props.on !== undefined ? 'on' : 'at')
@@ -1691,10 +1782,14 @@ onMounted(async () => {
     scheduleUpdate()
   })
   window.addEventListener('resize', scheduleUpdate)
+  if (import.meta.env.DEV)
+    installAnnotationEditorShortcut()
 })
 
 onBeforeUnmount(() => {
   mounted = false
+  unregisterEditorId?.()
+  unregisterEditorId = undefined
   settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
@@ -1735,10 +1830,215 @@ watch(props, () => {
   lastMarkKey = ''
   scheduleUpdate()
 })
+
+// A draft is applied immediately instead of waiting for CSS HMR after save.
+watch(annotationGeometryVersion, () => {
+  labelSizeCache.clear()
+  lastMarkKey = ''
+  scheduleUpdate()
+})
+
+const editable = computed(() => import.meta.env.DEV && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && hasLabel.value && labelActive.value && geometry.ready)
+const connectorEditable = computed(() => import.meta.env.DEV && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
+const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === props.id)
+let labelDrag: { pointerId: number, width: boolean, startLeft: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } | undefined
+
+function fraction(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function beginLabelDrag(event: PointerEvent, width = false) {
+  if (!editable.value || !annotationEditMode.value || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  selectAnnotation(props.id)
+  const slide = slideRoot()
+  const label = labelEl.value
+  if (!slide || !label)
+    return
+  const slideBox = slide.getBoundingClientRect()
+  const labelBox = label.getBoundingClientRect()
+  labelDrag = {
+    pointerId: event.pointerId,
+    width,
+    startLeft: labelBox.left,
+    // Preserve the grab point rather than snapping the label centre to the
+    // pointer on its first move.
+    offsetX: event.clientX - (labelBox.left + labelBox.width / 2),
+    offsetY: event.clientY - (labelBox.top + labelBox.height / 2),
+    previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined,
+  }
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+}
+
+function moveLabelDrag(event: PointerEvent) {
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const slide = slideRoot()
+  if (!slide)
+    return
+  const box = slide.getBoundingClientRect()
+  if (labelDrag.width) {
+    setLabelDraft(props.id, { width: Math.max(.02, Math.min(1, (event.clientX - labelDrag.startLeft) / box.width)) })
+  }
+  else {
+    setLabelDraft(props.id, {
+      x: fraction((event.clientX - labelDrag.offsetX - box.left) / box.width),
+      y: fraction((event.clientY - labelDrag.offsetY - box.top) / box.height),
+    })
+  }
+}
+
+function sameGeometry(a: PersistedAnnotationGeometry | undefined, b: PersistedAnnotationGeometry | undefined) {
+  return !!a && !!b && ['x', 'y', 'width', 'x1', 'y1', 'x2', 'y2'].every(key =>
+    a[key as keyof PersistedAnnotationGeometry] === b[key as keyof PersistedAnnotationGeometry])
+}
+
+/**
+ * Keep the in-memory drag geometry until Vite has applied the rewritten CSS.
+ * Clearing it immediately would briefly re-render the old rule between the
+ * successful POST and CSS HMR. A failed/absent HMR simply leaves the draft in
+ * place, which is preferable to losing the author's just-saved position.
+ */
+function clearDraftAfterCssHmr(id: string, saved: PersistedAnnotationGeometry) {
+  let frames = 0
+  const check = () => {
+    const draft = annotationDrafts.get(id)
+    if (!sameGeometry(draft, saved))
+      return
+    if (sameGeometry(persistedLabelGeometry(), saved)) {
+      clearLabelDraft(id)
+      return
+    }
+    if (++frames < 120)
+      requestAnimationFrame(check)
+  }
+  requestAnimationFrame(check)
+}
+
+async function saveDraft(id: string) {
+  const draft = annotationDrafts.get(id)
+  if (!draft)
+    return
+  const savedDraft = { ...draft }
+  annotationEditorStatus.value = 'Saving annotation…'
+  try {
+    // This import stays behind a compile-time development guard. Production
+    // decks neither render controls nor include browser write-client code.
+    if (!import.meta.env.DEV)
+      return
+    const { saveLabelGeometry } = await import('./drawn-annotation/writer-client')
+    await saveLabelGeometry(id, savedDraft)
+    clearDraftAfterCssHmr(id, savedDraft)
+    annotationEditorStatus.value = 'Annotation saved'
+  }
+  catch (error) {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to save annotation geometry'
+  }
+}
+
+async function endLabelDrag(event: PointerEvent) {
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  labelDrag = undefined
+  await saveDraft(props.id)
+}
+
+type ConnectorDragKind = 'start' | 'end' | 'body'
+let connectorDrag: { pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, connector: { x1: number, y1: number, x2: number, y2: number }, previous?: PersistedAnnotationGeometry } | undefined
+
+function localConnectorFraction(point: Point) {
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg)
+    return undefined
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  return {
+    x: fraction((overlayBox.left + point.x * overlayBox.width / geometry.width - slideBox.left) / slideBox.width),
+    y: fraction((overlayBox.top + point.y * overlayBox.height / geometry.height - slideBox.top) / slideBox.height),
+  }
+}
+
+function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
+  if (!connectorEditable.value || !annotationEditMode.value || !props.id || !geometry.connectorStart || !geometry.connectorEnd)
+    return
+  const start = localConnectorFraction(geometry.connectorStart)
+  const end = localConnectorFraction(geometry.connectorEnd)
+  if (!start || !end)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  selectAnnotation(props.id)
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined }
+  ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
+}
+
+function moveConnectorDrag(event: PointerEvent) {
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !props.id)
+    return
+  const slide = slideRoot()
+  if (!slide)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const box = slide.getBoundingClientRect()
+  const dx = (event.clientX - connectorDrag.startX) / box.width
+  const dy = (event.clientY - connectorDrag.startY) / box.height
+  const next = { ...connectorDrag.connector }
+  if (connectorDrag.kind === 'start') {
+    next.x1 = fraction(next.x1 + dx); next.y1 = fraction(next.y1 + dy)
+  }
+  else if (connectorDrag.kind === 'end') {
+    next.x2 = fraction(next.x2 + dx); next.y2 = fraction(next.y2 + dy)
+  }
+  else {
+    next.x1 = fraction(next.x1 + dx); next.y1 = fraction(next.y1 + dy)
+    next.x2 = fraction(next.x2 + dx); next.y2 = fraction(next.y2 + dy)
+  }
+  setLabelDraft(props.id, next)
+}
+
+async function endConnectorDrag(event: PointerEvent) {
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  connectorDrag = undefined
+  await saveDraft(props.id)
+}
+
+function cancelActiveDrag(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || (!labelDrag && !connectorDrag) || !props.id)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const previous = labelDrag?.previous ?? connectorDrag?.previous
+  if (previous)
+    setLabelDraft(props.id, previous)
+  else
+    clearLabelDraft(props.id)
+  labelDrag = undefined
+  connectorDrag = undefined
+  annotationEditorStatus.value = 'Annotation drag cancelled'
+}
+
+onMounted(() => window.addEventListener('keydown', cancelActiveDrag, true))
+onBeforeUnmount(() => window.removeEventListener('keydown', cancelActiveDrag, true))
 </script>
 
 <template>
-  <div ref="container" class="drawn-annotation" :class="{ 'is-fading-out': fadingOut }">
+  <div
+    ref="container"
+    class="drawn-annotation"
+    :class="{ 'is-fading-out': fadingOut }"
+    :data-drawn-annotation-id="props.id"
+  >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
     <span ref="clickMarker" v-click="manualClicks ? false : atClick" class="click-marker annotation-ignore" />
@@ -1801,13 +2101,46 @@ watch(props, () => {
           />
         </g>
       </template>
+      <!-- Development-only hit targets deliberately live in the shared SVG
+           canvas, so their coordinates match the persisted connector. -->
+      <g
+        v-if="connectorEditable && annotationEditMode && geometry.connectorStart && geometry.connectorEnd"
+        class="annotation-connector-editor"
+      >
+        <line
+          class="annotation-connector-hit"
+          :x1="geometry.connectorStart.x" :y1="geometry.connectorStart.y"
+          :x2="geometry.connectorEnd.x" :y2="geometry.connectorEnd.y"
+          @pointerdown="beginConnectorDrag($event, 'body')"
+          @pointermove="moveConnectorDrag"
+          @pointerup="endConnectorDrag"
+          @pointercancel="endConnectorDrag"
+        />
+        <circle
+          v-for="(point, index) in [geometry.connectorStart, geometry.connectorEnd]"
+          :key="index"
+          class="annotation-connector-handle"
+          :cx="point.x" :cy="point.y" r="9"
+          :aria-label="index ? 'Move connector end' : 'Move connector start'"
+          role="button"
+          tabindex="0"
+          @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
+          @pointermove="moveConnectorDrag"
+          @pointerup="endConnectorDrag"
+          @pointercancel="endConnectorDrag"
+        />
+      </g>
     </svg>
     <div
       v-if="hasLabel"
       ref="labelEl"
       class="annotation-label annotation-ignore"
-      :class="{ 'is-active': labelActive && geometry.ready, 'is-placed': geometry.labelPlaced }"
+      :class="{ 'is-active': labelActive && geometry.ready, 'is-placed': geometry.labelPlaced, 'is-editable': editable && annotationEditMode, 'is-selected-for-editing': selectedForEditing }"
       :data-click="resolvedLabelClick"
+      @pointerdown="beginLabelDrag($event)"
+      @pointermove="moveLabelDrag"
+      @pointerup="endLabelDrag"
+      @pointercancel="endLabelDrag"
       :style="{
         '--annotation-color': props.color,
         '--label-delay': `${delays.label}ms`,
@@ -1819,6 +2152,17 @@ watch(props, () => {
       aria-hidden="true"
     >
       {{ props.label }}
+      <button
+        v-if="selectedForEditing"
+        class="annotation-width-handle"
+        type="button"
+        aria-label="Resize annotation label"
+        title="Drag to resize label"
+        @pointerdown.stop="beginLabelDrag($event, true)"
+        @pointermove="moveLabelDrag"
+        @pointerup="endLabelDrag"
+        @pointercancel="endLabelDrag"
+      />
     </div>
     <slot />
     <!-- Keep the live region mounted so screen readers announce the label when
@@ -1936,6 +2280,39 @@ watch(props, () => {
 .annotation-label.is-active {
   opacity: 1;
   transition-delay: var(--label-delay);
+}
+
+/* Enabled only in Vite development by Alt+Shift+A. */
+.annotation-label.is-editable { pointer-events: auto; cursor: grab; }
+.annotation-label.is-editable:active { cursor: grabbing; }
+.annotation-label.is-selected-for-editing { outline: 1px dashed currentColor; outline-offset: 6px; }
+.annotation-width-handle {
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  width: 12px;
+  height: 28px;
+  transform: translateY(-50%);
+  padding: 0;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  background: Canvas;
+  cursor: ew-resize;
+}
+.annotation-connector-editor { pointer-events: auto; }
+.annotation-connector-hit {
+  stroke: transparent;
+  stroke-width: 24px;
+  cursor: move;
+}
+.annotation-connector-handle {
+  fill: Canvas;
+  stroke: currentColor;
+  stroke-width: 2px;
+  cursor: crosshair;
+}
+@media print {
+  .annotation-width-handle { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

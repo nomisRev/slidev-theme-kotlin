@@ -328,7 +328,7 @@ Every bundled mascot variant is ready to use in your slides.
 
 # Annotate Kotlin code
 
-<DrawnAnnotation type="circle" text="fun main" label="the entry point of every Kotlin program" :on="1">
+<DrawnAnnotation id="kotlin-main-entry-label" type="circle" text="fun main" label="the entry point of every Kotlin program" :on="1">
 
 ```kotlin [Main.kt]
 fun main() {
@@ -343,6 +343,7 @@ fun main() {
 # Connect two elements
 
 <DrawnAnnotation
+  id="annotation-connect-elements"
   source-type="circle"
   selector="[data-source]"
   target="[data-target]"

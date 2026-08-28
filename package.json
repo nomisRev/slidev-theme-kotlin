@@ -12,6 +12,9 @@
   "files": [
     "assets",
     "components",
+    "plugins",
+    "annotation-editor.ts",
+    "global-top.vue",
     "layouts",
     "public",
     "setup",
