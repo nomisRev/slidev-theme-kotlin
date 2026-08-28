@@ -153,6 +153,17 @@ async function requestBody(request: any): Promise<unknown> {
  */
 export function drawnAnnotationEditor(options: DrawnAnnotationEditorOptions = {}) {
   let output = ''
+  // Vite middlewares serve requests concurrently. Revision checking must share
+  // the same critical section as the write: otherwise two requests can both
+  // read revision A and each successfully write a different revision B.
+  // Keep the queue alive after a failed request so one malformed save cannot
+  // disable all later edits.
+  let writes = Promise.resolve()
+  function serializeWrite<T>(operation: () => Promise<T>) {
+    const result = writes.then(operation, operation)
+    writes = result.then(() => undefined, () => undefined)
+    return result
+  }
   return {
     name: 'slidev-theme-kotlin:drawn-annotation-editor',
     apply: 'serve' as const,
@@ -167,39 +178,47 @@ export function drawnAnnotationEditor(options: DrawnAnnotationEditorOptions = {}
         if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/__drawn-annotations')
           return next()
         try {
-          const geometry = await readGeometry(output)
-          const revision = geometryRevision(geometry)
-          if (request.method === 'GET')
-            return json(response, 200, { geometry, revision })
+          if (request.method === 'GET') {
+            const geometry = await readGeometry(output)
+            return json(response, 200, { geometry, revision: geometryRevision(geometry) })
+          }
           if (request.method !== 'POST')
             return json(response, 405, { error: 'use GET or POST' })
+
+          // Reading/parsing the body need not block other writers. The fresh
+          // revision check and atomic rewrite below do.
           const payload = await requestBody(request) as { expectedRevision?: unknown, annotations?: unknown }
-          if (payload.expectedRevision !== revision)
-            return json(response, 409, { error: 'geometry changed; reload before saving', geometry, revision })
-          const patch = validateGeometryPatch(payload.annotations)
-          const nextGeometry = { ...geometry }
-          for (const [id, value] of Object.entries(patch)) {
-            if (value === null) {
-              delete nextGeometry[id]
-              continue
-            }
-            // Patches are property-wise: moving a label must not accidentally
-            // erase its already-saved width or the other coordinate. Null is
-            // the explicit counterpart for toolbar reset actions.
-            const next = { ...nextGeometry[id] }
-            for (const [key, property] of Object.entries(value)) {
-              if (property === null)
-                delete next[key as keyof DrawnAnnotationLabelGeometry]
+          const result = await serializeWrite(async () => {
+            const geometry = await readGeometry(output)
+            const revision = geometryRevision(geometry)
+            if (payload.expectedRevision !== revision)
+              return { status: 409, body: { error: 'geometry changed; reload before saving', geometry, revision } }
+            const patch = validateGeometryPatch(payload.annotations)
+            const nextGeometry = { ...geometry }
+            for (const [id, value] of Object.entries(patch)) {
+              if (value === null) {
+                delete nextGeometry[id]
+                continue
+              }
+              // Patches are property-wise: moving a label must not accidentally
+              // erase its already-saved width or the other coordinate. Null is
+              // the explicit counterpart for toolbar reset actions.
+              const next = { ...nextGeometry[id] }
+              for (const [key, property] of Object.entries(value)) {
+                if (property === null)
+                  delete next[key as keyof DrawnAnnotationLabelGeometry]
+                else
+                  next[key as keyof DrawnAnnotationLabelGeometry] = property
+              }
+              if (Object.keys(next).length)
+                nextGeometry[id] = next
               else
-                next[key as keyof DrawnAnnotationLabelGeometry] = property
+                delete nextGeometry[id]
             }
-            if (Object.keys(next).length)
-              nextGeometry[id] = next
-            else
-              delete nextGeometry[id]
-          }
-          await writeGeometry(output, nextGeometry)
-          return json(response, 200, { geometry: nextGeometry, revision: geometryRevision(nextGeometry) })
+            await writeGeometry(output, nextGeometry)
+            return { status: 200, body: { geometry: nextGeometry, revision: geometryRevision(nextGeometry) } }
+          })
+          return json(response, result.status, result.body)
         }
         catch (error: any) {
           return json(response, 400, { error: error instanceof Error ? error.message : 'unable to save annotation geometry' })

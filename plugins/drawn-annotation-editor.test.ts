@@ -107,6 +107,28 @@ describe('DrawnAnnotation editor writer format', () => {
     }
   })
 
+  it('serializes simultaneous writes so a stale revision cannot overwrite a newer edit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'drawn-annotation-editor-'))
+    try {
+      const { request } = editorServer(root)
+      const initial = await request('GET')
+      const [first, second] = await Promise.all([
+        request('POST', { expectedRevision: initial.body.revision, annotations: { first: { x: .1, y: .2 } } }),
+        request('POST', { expectedRevision: initial.body.revision, annotations: { second: { x: .3, y: .4 } } }),
+      ])
+
+      expect([first.statusCode, second.statusCode].sort()).toEqual([200, 409])
+      const current = await request('GET')
+      // Exactly one request was allowed to establish the next revision. In
+      // particular, the losing request did not silently overwrite the file.
+      expect(Object.keys(current.body.geometry)).toHaveLength(1)
+      expect(['first', 'second']).toContain(Object.keys(current.body.geometry)[0])
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses an output path outside the consuming deck root', () => {
     const plugin = drawnAnnotationEditor({ output: '../outside.css' })
     expect(() => plugin.configResolved?.({ root: '/tmp/deck' })).toThrow('must stay under the Vite root')
