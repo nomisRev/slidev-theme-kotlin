@@ -12,6 +12,11 @@
   and `labelWidth` persistence APIs, generated-CSS writer, selector namespace,
   and global annotation-ID registry have been removed. Enable the opt-in
   development Vite plugin when visual editing is needed.
+- Editor locators no longer embed the file revision or the `:geometry`
+  binding, so a save keeps the selection, drafts, undo history and toolbar
+  actions of every annotation on the slide; the client fetches revisions per
+  file from `GET /__drawn-annotation-source`. Undo and Reset now return to the
+  geometry the source actually holds, including hand-authored `:geometry`.
 
 ## 0.11.0
 

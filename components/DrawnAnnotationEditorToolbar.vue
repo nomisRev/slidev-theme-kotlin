@@ -53,7 +53,11 @@ const selectedConnectorManual = computed(() => {
   annotationGeometryVersion.value
   return annotationEditorActionsFor(selected.value)?.isManualConnector() ?? false
 })
-const canToggleConnector = computed(() => !!annotationEditorActionsFor(selected.value))
+const canToggleConnector = computed(() => {
+  // A remounted annotation restores its selection before it registers again.
+  annotationEditorRegistryVersion.value
+  return !!annotationEditorActionsFor(selected.value)
+})
 
 async function toggleSelectedConnectorAttachment() {
   const actions = annotationEditorActionsFor(selected.value)
@@ -135,11 +139,13 @@ async function resetSelected(part: 'label' | 'connector' | 'all') {
     const { cachedAnnotationGeometry, resetAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
     // Resetting is a completed edit too: keep the rule we are about to remove
     // so Undo can restore it instead of making reset a destructive dead end.
-    const previous = cachedAnnotationGeometry(selected.value)
+    // The baseline is what the source holds: this tab's last save, otherwise
+    // the geometry authored in the annotation's binding.
+    const previous = cachedAnnotationGeometry(selected.value) ?? annotationEditorActionsFor(selected.value)?.persistedGeometry() ?? null
     if (part === 'all')
       await saveLabelGeometry(selected.value, null)
     else
-      await resetAnnotationGeometry(selected.value, part)
+      await resetAnnotationGeometry(selected.value, part, previous)
     recordAnnotationUndo(selected.value, previous)
     // A local draft has higher precedence than CSS, so drop it after a reset.
     clearLabelDraft(selected.value)

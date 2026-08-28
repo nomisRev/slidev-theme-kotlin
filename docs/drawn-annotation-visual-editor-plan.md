@@ -70,9 +70,20 @@ While Vite serves Markdown, the plugin adds an opaque internal locator to each
 transformed `DrawnAnnotation` tag. The locator contains the Markdown path
 relative to the Vite root (mapped back from Slidev's per-slide virtual module
 id), a fingerprint of the opening tag with its ordinal among identical tags,
-its line for display, and the file
-revision. It is never written to Markdown and is not present in a production
-build. The toolbar displays a readable file-and-line preview instead.
+and its line for display. The fingerprint ignores the `:geometry` binding and
+the locator carries no file revision, so the writer's own saves never change
+the locator: every piece of browser editor state (selection, drafts, undo
+history, toolbar actions) is keyed by it and must survive a save, including
+the autosaves during a long drag. Should a locator still change (a save
+elsewhere in the file can move a tag to another line), the component migrates
+that state to the new locator. The locator is never written to Markdown and is
+not present in a production build. The toolbar displays a readable
+file-and-line preview instead.
+
+The source revision travels out of band: `GET /__drawn-annotation-source`
+returns the current revision of every transformed Markdown file, and each
+write response carries the file's new revision, so the client always sends
+the expected revision of the file rather than of a single tag.
 
 The writer endpoint exists only in Vite serve mode. It accepts the locator, the
 expected source revision, and a validated normalized geometry document. Before

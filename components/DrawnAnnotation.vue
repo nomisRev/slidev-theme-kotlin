@@ -13,7 +13,7 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { nudgeConnector, nudgeLabelWidth, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
@@ -1243,6 +1243,23 @@ const SLIDE_MARGIN = 24
 const labelSizeCache = new Map<number | 'natural', { width: number, height: number }>()
 
 const locator = computed(() => props.__drawnAnnotationLocator)
+if (isAnnotationEditorDevelopment) {
+  // A save remounts the slide. The locator survives the writer's own edits,
+  // so this instance can take over the selection the unmounting one released.
+  if (locator.value)
+    claimAnnotationSelection(locator.value)
+  // A write elsewhere in the file can still move this tag to another line.
+  // Should Vue patch the prop in place, the editor state keyed by the old
+  // locator has to follow it.
+  watch(locator, (next, previous) => {
+    if (!previous)
+      return
+    if (next)
+      migrateAnnotationLocator(previous, next)
+    else
+      clearAnnotationSelection(previous)
+  })
+}
 /** Source geometry is the persisted state; editor drafts remain visible through HMR. */
 function persistedLabelGeometry(): PersistedAnnotationGeometry {
   const value = props.geometry
@@ -1420,6 +1437,7 @@ onMounted(async () => {
     unregisterEditorActions = registerAnnotationEditorActions(locator.value, {
       isManualConnector: () => !!manualConnector(),
       toggleConnectorAttachment,
+      persistedGeometry: persistedLabelGeometry,
     })
   }
   // Registered synchronously, while the clicks context still accepts it.
@@ -1485,7 +1503,8 @@ onBeforeUnmount(() => {
   mounted = false
   unregisterEditorActions?.()
   unregisterEditorActions = undefined
-  clearAnnotationSelection(locator.value)
+  if (locator.value)
+    releaseAnnotationSelection(locator.value)
   settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
@@ -1645,10 +1664,10 @@ async function saveDraft(id: string, session?: DragSaveSession) {
     if (!isAnnotationEditorDevelopment)
       return
     const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
-    // The writer is loaded before edit mode opens, so this is the actual
-    // persisted rule, not a local partial drag patch. Store it for Undo before
-    // replacing it with the newly saved geometry.
-    const previous = cachedAnnotationGeometry(id)
+    // Undo must return to what the source holds now: the geometry this tab
+    // last saved (HMR may not have delivered it as a prop yet), otherwise the
+    // authored binding. Store it before replacing it with the new geometry.
+    const previous = cachedAnnotationGeometry(id) ?? persistedLabelGeometry()
     // A long drag may autosave before the pointer is released. Remember the
     // pre-drag rule before that first request, so Escape can truly cancel the
     // whole gesture instead of merely hiding a value that HMR has saved.
@@ -1691,8 +1710,8 @@ async function toggleConnectorAttachment() {
     annotationEditorStatus.value = 'Restoring automatic connector…'
     try {
       const { cachedAnnotationGeometry, resetAnnotationGeometry } = await loadWriterClient()
-      const previous = cachedAnnotationGeometry(locator.value)
-      await resetAnnotationGeometry(locator.value, 'connector')
+      const previous = cachedAnnotationGeometry(locator.value) ?? persistedLabelGeometry()
+      await resetAnnotationGeometry(locator.value, 'connector', previous)
       recordAnnotationUndo(locator.value, previous)
       clearLabelDraft(locator.value)
       annotationEditorStatus.value = 'Connector now follows its source and label'

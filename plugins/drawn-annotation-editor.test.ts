@@ -10,9 +10,9 @@ const revision = (source: string) => createHash('sha256').update(source).digest(
 const locatorOf = (transformed: string) => / __drawn-annotation-locator="([^"]+)"/.exec(transformed)?.[1]
 const decode = (locator: string) => JSON.parse(Buffer.from(locator, 'base64url').toString())
 
-async function sourceRequest(handler: Function, body: unknown) {
-  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
-    method: 'POST', url: '/__drawn-annotation-source',
+async function sourceRequest(handler: Function, body?: unknown) {
+  const request = Object.assign(Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]), {
+    method: body === undefined ? 'GET' : 'POST', url: '/__drawn-annotation-source',
   })
   return await new Promise<{ status: number, body: any }>((resolve, reject) => {
     const response = {
@@ -73,7 +73,10 @@ describe('source geometry editor', () => {
     try {
       const locator = locatorOf(plugin.transform(source, file)?.code ?? '')
       expect(locator).toBeTruthy()
-      expect(decode(locator!)).toMatchObject({ file: 'slides.md', line: 2, ordinal: 0, revision: revision(source) })
+      expect(decode(locator!)).toMatchObject({ file: 'slides.md', line: 2, ordinal: 0 })
+      // The revision travels out of band, so a write cannot invalidate a locator.
+      expect(decode(locator!)).not.toHaveProperty('revision')
+      expect(await sourceRequest(handler)).toEqual({ status: 200, body: { ok: true, revisions: { 'slides.md': revision(source) } } })
 
       const saved = await sourceRequest(handler, {
         locator,
@@ -118,7 +121,7 @@ describe('source geometry editor', () => {
       const lines = source.split('\n')
       const line = lines.indexOf(tag, lines.indexOf(tag) + 1) + 1
       expect(line).toBeGreaterThan(1)
-      expect(decode(locator!)).toMatchObject({ file: 'slides.md', ordinal: 1, line, revision: revision(source) })
+      expect(decode(locator!)).toMatchObject({ file: 'slides.md', ordinal: 1, line })
 
       const saved = await sourceRequest(handler, { locator, expectedRevision: revision(source), geometry: { label: { x: .25, y: .75 } } })
       expect(saved.status, JSON.stringify(saved.body)).toBe(200)
@@ -133,6 +136,50 @@ describe('source geometry editor', () => {
       // Frontmatter modules and unreadable files never receive a locator.
       expect(plugin.transform(chunk, `${join(root, 'slides.md')}__slidev_3.frontmatter`)).toBeNull()
       expect(plugin.transform(chunk, `${join(root, 'missing.md')}__slidev_1.md`)).toBeNull()
+    }
+    finally {
+      await dispose()
+    }
+  })
+
+  it('keeps locators stable across its own writes', async () => {
+    // Editor state (selection, drafts, undo history) is keyed by the locator,
+    // so rewriting a tag's `:geometry` binding must not change its locator.
+    const authored = '<DrawnAnnotation text="first" :geometry="{ label: { x: .1, y: .2 } }">'
+    const plain = '<DrawnAnnotation text="first">'
+    const source = `# One\n\n${authored}\n\n---\n\n# Two\n\n${plain}\n`
+    const { root, plugin, handler, dispose } = await serve({ 'slides.md': source })
+    const file = join(root, 'slides.md')
+    const locatorsOf = (code: string) => [...code.matchAll(/ __drawn-annotation-locator="([^"]+)"/g)].map(match => match[1])
+    try {
+      const [first, second] = locatorsOf(plugin.transform(source, file)?.code ?? '')
+      // The binding is not part of the tag's identity, so both tags share a
+      // fingerprint and are told apart by ordinal alone.
+      expect(decode(first).fingerprint).toBe(decode(second).fingerprint)
+      expect(decode(first)).toMatchObject({ ordinal: 0, line: 3 })
+      expect(decode(second)).toMatchObject({ ordinal: 1, line: 9 })
+
+      const saved = await sourceRequest(handler, { locator: first, expectedRevision: revision(source), geometry: { label: { x: .3, y: .4, width: .5 } } })
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+      const written = await readFile(file, 'utf8')
+      expect(written).toContain('<DrawnAnnotation text="first" :geometry="{ label: { x: 0.3000, y: 0.4000, width: 0.5000 } }">')
+      expect(written).toContain(plain)
+      expect(locatorsOf(plugin.transform(written, file)?.code ?? '')).toEqual([first, second])
+      expect((await sourceRequest(handler)).body.revisions).toEqual({ 'slides.md': saved.body.revision })
+
+      // Removing the binding, or adding one to a tag that never had it, is
+      // just as invisible to the locator.
+      const removed = await sourceRequest(handler, { locator: first, expectedRevision: saved.body.revision, geometry: {} })
+      expect(removed.status, JSON.stringify(removed.body)).toBe(200)
+      const added = await sourceRequest(handler, { locator: second, expectedRevision: removed.body.revision, geometry: { connector: { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } } } })
+      expect(added.status, JSON.stringify(added.body)).toBe(200)
+      const final = await readFile(file, 'utf8')
+      expect(final).toContain(`# One\n\n${plain}\n`)
+      expect(final).toContain('<DrawnAnnotation text="first" :geometry="{ connector: { start: { x: 0.0000, y: 0.0000 }, end: { x: 1.0000, y: 1.0000 } } }">')
+      expect(locatorsOf(plugin.transform(final, file)?.code ?? '')).toEqual([first, second])
+      // Slide chunks resolve to the same locators as the whole file.
+      const chunk = final.split('\n---\n\n')[1]
+      expect(locatorsOf(plugin.transform(chunk, `${file}__slidev_2.md`)?.code ?? '')).toEqual([second])
     }
     finally {
       await dispose()

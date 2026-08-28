@@ -90,27 +90,40 @@ export function findDrawnAnnotationTags(source: string): Tag[] {
  * by offset: the code Vite hands to `transform` is usually a slide chunk whose
  * offsets mean nothing in the file. `ordinal` separates identical tags,
  * `line` is only shown to the author.
+ *
+ * The locator is the key for every piece of editor state in the browser, so
+ * it must survive the writer's own edits: it carries no file revision (the
+ * client fetches that out of band), and the fingerprint ignores the
+ * `:geometry` binding, the only part of the tag the writer rewrites.
  */
-interface Locator { file: string, fingerprint: string, ordinal: number, line: number, revision: string }
+interface Locator { file: string, fingerprint: string, ordinal: number, line: number }
 function encodeLocator(value: Locator) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
 function decodeLocator(value: unknown): Locator {
   if (typeof value !== 'string') throw new Error('a source locator is required')
   try {
     const data = JSON.parse(Buffer.from(value, 'base64url').toString())
-    if (!data || typeof data.file !== 'string' || typeof data.fingerprint !== 'string' || typeof data.revision !== 'string') throw new Error()
+    if (!data || typeof data.file !== 'string' || typeof data.fingerprint !== 'string') throw new Error()
     if (!Number.isInteger(data.ordinal) || data.ordinal < 0 || !Number.isInteger(data.line)) throw new Error()
-    return { file: data.file, fingerprint: data.fingerprint, ordinal: data.ordinal, line: data.line, revision: data.revision }
+    return { file: data.file, fingerprint: data.fingerprint, ordinal: data.ordinal, line: data.line }
   } catch { throw new Error('invalid source locator') }
+}
+/** The tag's identity: its text without the writer-owned `:geometry` binding. */
+export function fingerprintDrawnAnnotationTag(tag: string) {
+  let binding: { start: number, end: number } | undefined
+  // A malformed binding cannot be patched later anyway; fingerprint it as is.
+  try { binding = geometryBinding(tag) } catch {}
+  return hash(binding ? `${tag.slice(0, binding.start)}${tag.slice(binding.end)}` : tag)
 }
 function lineAt(source: string, offset: number) { let line = 1; for (let index = source.indexOf('\n'); index >= 0 && index < offset; index = source.indexOf('\n', index + 1)) line++; return line }
 /** Where `tag`, found in `source` (a chunk of `fileSource`), sits in the file. */
 function locateInFile(source: string, tag: Tag, fileSource: string, fileTags: Tag[]) {
   const chunk = fileSource.indexOf(source)
-  const identical = fileTags.filter(candidate => candidate.text === tag.text)
+  const fingerprint = fingerprintDrawnAnnotationTag(tag.text)
+  const identical = fileTags.filter(candidate => fingerprintDrawnAnnotationTag(candidate.text) === fingerprint)
   // The chunk is normally a verbatim slice of the file, so the tag's file
   // position is exact. Otherwise only an unambiguous tag can be addressed.
   const match = chunk >= 0 ? identical.find(candidate => candidate.start === chunk + tag.start) : identical.length === 1 ? identical[0] : undefined
-  return match && { fingerprint: hash(tag.text), ordinal: identical.indexOf(match), line: lineAt(fileSource, match.start) }
+  return match && { fingerprint, ordinal: identical.indexOf(match), line: lineAt(fileSource, match.start) }
 }
 
 /**
@@ -122,13 +135,12 @@ function locateInFile(source: string, tag: Tag, fileSource: string, fileTags: Ta
  */
 export function injectDrawnAnnotationLocators(source: string, file: string, fileSource = source) {
   const fileTags = findDrawnAnnotationTags(fileSource)
-  const revision = hash(fileSource)
   let result = source
   for (const tag of findDrawnAnnotationTags(source).reverse()) {
     const location = locateInFile(source, tag, fileSource, fileTags)
     // A tag the writer could not find again stays a plain, non-editable annotation.
     if (!location) continue
-    const value = encodeLocator({ file, ...location, revision })
+    const value = encodeLocator({ file, ...location })
     result = `${result.slice(0, tag.end - 1)} __drawn-annotation-locator="${value}"${result.slice(tag.end - 1)}`
   }
   return result
@@ -182,8 +194,20 @@ async function requestBody(request: any): Promise<unknown> {
 }
 function json(response: any, status: number, body: unknown) { response.statusCode = status; response.setHeader('Content-Type', 'application/json; charset=utf-8'); response.end(JSON.stringify(body)) }
 
+/** The current revision of every transformed Markdown file, for the client's `expectedRevision`. */
+async function currentRevisions(root: string, files: Iterable<string>) {
+  const revisions: Record<string, string> = {}
+  for (const file of files) {
+    try { revisions[file] = hash(await readFile(resolve(root, file), 'utf8')) } catch {}
+  }
+  return revisions
+}
+
 export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {}) {
   let root = ''; let writes = Promise.resolve()
+  // Files that received locators. Their revisions live outside the locator so
+  // a write never invalidates the locators of the annotations it rewrites.
+  const files = new Set<string>()
   const serialized = <T>(operation: () => Promise<T>) => { const result = writes.then(operation, operation); writes = result.then(() => undefined, () => undefined); return result }
   return {
     name: 'slidev-theme-kotlin:drawn-annotation-editor', apply: 'serve' as const,
@@ -198,16 +222,18 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
       // the configured root keeps the locator correct for programmatic use.
       const absolute = isAbsolute(pathname) ? resolve(pathname) : resolve(root, pathname)
       if (!isWithinRoot(root, absolute) || absolute === root) return null
-      // The revision and every tag position come from the file on disk, the
-      // only source the writer will ever read back.
+      // Every tag position comes from the file on disk, the only source the
+      // writer will ever read back.
       let fileSource: string
       try { fileSource = readFileSync(absolute, 'utf8') } catch { return null }
-      return { code: injectDrawnAnnotationLocators(code, relative(root, absolute), fileSource), map: null }
+      const file = relative(root, absolute)
+      files.add(file)
+      return { code: injectDrawnAnnotationLocators(code, file, fileSource), map: null }
     },
     configureServer(server: { middlewares: { use: (handler: Function) => void } }) {
       server.middlewares.use(async (request: any, response: any, next: Function) => {
         if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/__drawn-annotation-source') return next()
-        if (request.method === 'GET') return json(response, 200, { ok: true })
+        if (request.method === 'GET') return json(response, 200, { ok: true, revisions: await currentRevisions(root, files) })
         if (request.method !== 'POST') return json(response, 405, { error: 'use POST' })
         try {
           const payload = await requestBody(request) as { locator?: unknown, expectedRevision?: unknown, geometry?: unknown }
@@ -220,7 +246,7 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
             if (!isWithinRoot(root, path) || path === root) throw new Error('source file must stay under the Vite root')
             const source = await readFile(path, 'utf8'); const revision = hash(source)
             if (payload.expectedRevision !== revision) return { status: 409, body: { error: 'source changed; reload before saving', revision, recovery: 'Reload saved geometry before retrying.' } }
-            const tag = findDrawnAnnotationTags(source).filter(candidate => hash(candidate.text) === token.fingerprint)[token.ordinal]
+            const tag = findDrawnAnnotationTags(source).filter(candidate => fingerprintDrawnAnnotationTag(candidate.text) === token.fingerprint)[token.ordinal]
             if (!tag) return { status: 409, body: { error: 'annotation source changed; refusing stale locator', revision, recovery: 'Reload the slide and select the annotation again.' } }
             const geometry = validateGeometryPatch(payload.geometry)
             const nextSource = `${source.slice(0, tag.start)}${patchDrawnAnnotationTag(tag.text, geometry)}${source.slice(tag.end)}`
