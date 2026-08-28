@@ -1968,6 +1968,11 @@ onBeforeUnmount(() => {
         />
       </g>
     </svg>
+    <!-- In authoring mode the label itself is the keyboard target for moving
+         it. It must not remain aria-hidden: otherwise the selected width
+         handle nested below is invisible to assistive technology. Outside
+         that development-only mode the positioned copy stays presentation
+         only; the live region after the slot announces its text instead. -->
     <div
       v-if="hasLabel"
       ref="labelEl"
@@ -1986,7 +1991,10 @@ onBeforeUnmount(() => {
         'top': `${geometry.labelTop}px`,
         'maxWidth': geometry.labelWidth === undefined ? undefined : `${geometry.labelWidth}px`,
       }"
-      aria-hidden="true"
+      :tabindex="editable && annotationEditMode ? 0 : undefined"
+      :aria-label="editable && annotationEditMode ? `Move annotation label ${props.id}` : undefined"
+      :aria-hidden="!(editable && annotationEditMode)"
+      @focus="selectAnnotation(props.id!, 'label')"
     >
       {{ props.label }}
       <button
