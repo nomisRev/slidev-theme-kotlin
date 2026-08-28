@@ -2,6 +2,9 @@
   "name": "slidev-theme-kotlin",
   "version": "0.11.0",
   "type": "module",
+  "exports": {
+    "./annotation-editor": "./annotation-editor.ts"
+  },
   "keywords": [
     "slidev-theme",
     "slidev"
