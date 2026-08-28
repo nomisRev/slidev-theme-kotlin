@@ -1,4 +1,4 @@
-/** Geometry shared by the annotation renderer and its future development editor. */
+/** Geometry shared by the annotation renderer and development editor. */
 export interface ViewportBox {
   left: number
   top: number
@@ -9,6 +9,84 @@ export interface ViewportBox {
 export interface LocalCanvas {
   width: number
   height: number
+}
+
+/**
+ * Source-local geometry for a DrawnAnnotation.
+ *
+ * Every value is a fraction of the concrete `.slidev-layout`, rather than of
+ * an annotation's (possibly nested) SVG overlay. This is deliberately the
+ * public shape accepted by the component's `geometry` prop and persisted in a
+ * Markdown `:geometry` binding.
+ */
+export interface DrawnAnnotationGeometry {
+  label?: {
+    x: number
+    y: number
+    width?: number
+  }
+  connector?: {
+    start: FractionPoint
+    end: FractionPoint
+  }
+}
+
+/** The smallest useful source-authored label width, as a slide-width fraction. */
+export const MIN_NORMALIZED_LABEL_WIDTH = 0.02
+
+/** True only for finite coordinates inside the concrete slide. */
+export function isNormalizedFraction(value: unknown, minimum = 0, maximum = 1): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum
+}
+
+/**
+ * Validate and clone geometry received from a Vue binding or editor request.
+ * Unknown keys are rejected so a malformed source binding cannot silently
+ * become a different persisted document shape. A label has a position as a
+ * unit; a connector has both endpoints as a unit.
+ */
+export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotationGeometry {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('geometry must be an object')
+
+  const candidate = value as Record<string, unknown>
+  if (Object.keys(candidate).some(key => key !== 'label' && key !== 'connector'))
+    throw new Error('geometry has an unknown property')
+
+  const geometry: DrawnAnnotationGeometry = {}
+  if (candidate.label !== undefined) {
+    const label = candidate.label
+    if (!label || typeof label !== 'object' || Array.isArray(label))
+      throw new Error('geometry.label must be an object')
+    const fields = label as Record<string, unknown>
+    if (Object.keys(fields).some(key => key !== 'x' && key !== 'y' && key !== 'width'))
+      throw new Error('geometry.label has an unknown property')
+    if (!isNormalizedFraction(fields.x) || !isNormalizedFraction(fields.y))
+      throw new Error('geometry.label x and y must be finite fractions from 0 to 1')
+    if (fields.width !== undefined && !isNormalizedFraction(fields.width, MIN_NORMALIZED_LABEL_WIDTH))
+      throw new Error(`geometry.label width must be a finite fraction from ${MIN_NORMALIZED_LABEL_WIDTH} to 1`)
+    geometry.label = { x: fields.x, y: fields.y, ...(fields.width === undefined ? {} : { width: fields.width }) }
+  }
+
+  if (candidate.connector !== undefined) {
+    const connector = candidate.connector
+    if (!connector || typeof connector !== 'object' || Array.isArray(connector))
+      throw new Error('geometry.connector must be an object')
+    const fields = connector as Record<string, unknown>
+    if (Object.keys(fields).some(key => key !== 'start' && key !== 'end'))
+      throw new Error('geometry.connector has an unknown property')
+    const point = (input: unknown, name: string): FractionPoint => {
+      if (!input || typeof input !== 'object' || Array.isArray(input))
+        throw new Error(`geometry.connector.${name} must be an object`)
+      const coordinates = input as Record<string, unknown>
+      if (Object.keys(coordinates).some(key => key !== 'x' && key !== 'y')
+        || !isNormalizedFraction(coordinates.x) || !isNormalizedFraction(coordinates.y))
+        throw new Error(`geometry.connector.${name} must contain finite x and y fractions from 0 to 1`)
+      return { x: coordinates.x, y: coordinates.y }
+    }
+    geometry.connector = { start: point(fields.start, 'start'), end: point(fields.end, 'end') }
+  }
+  return geometry
 }
 
 export interface PersistedLabelGeometry {
@@ -89,6 +167,36 @@ export function localToSlideFraction(point: number, axis: 'x' | 'y', slide: View
   const slideStart = axis === 'x' ? slide.left : slide.top
   const slideSize = axis === 'x' ? slide.width : slide.height
   return (overlayStart + point * overlaySize / canvasSize - slideStart) / slideSize
+}
+
+/** Convert a normalized point between a concrete slide and a local SVG. */
+export function slideFractionPointToLocal(point: FractionPoint, slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): FractionPoint {
+  return {
+    x: slideFractionToLocal(point.x, 'x', slide, overlay, canvas),
+    y: slideFractionToLocal(point.y, 'y', slide, overlay, canvas),
+  }
+}
+
+/** Convert a local SVG point to the concrete slide's normalized coordinates. */
+export function localPointToSlideFraction(point: FractionPoint, slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): FractionPoint {
+  return {
+    x: localToSlideFraction(point.x, 'x', slide, overlay, canvas),
+    y: localToSlideFraction(point.y, 'y', slide, overlay, canvas),
+  }
+}
+
+/**
+ * Convert a source-authored label width to local SVG pixels. Unlike an x
+ * coordinate, a width has no origin: it is simply the slide width scaled into
+ * the overlay's local coordinate system.
+ */
+export function slideFractionWidthToLocal(width: number, slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): number {
+  return width * slide.width * canvas.width / overlay.width
+}
+
+/** Convert a local SVG label width back to a concrete-slide fraction. */
+export function localWidthToSlideFraction(width: number, slide: ViewportBox, overlay: ViewportBox, canvas: LocalCanvas): number {
+  return width * overlay.width / canvas.width / slide.width
 }
 
 /**

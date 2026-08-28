@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, nudgeConnector, nudgeLabelWidth, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint, translateConnector } from './geometry'
+import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, isNormalizedFraction, localPointToSlideFraction, localToSlideFraction, localWidthToSlideFraction, MIN_NORMALIZED_LABEL_WIDTH, nudgeConnector, nudgeLabelWidth, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionPointToLocal, slideFractionToLocal, slideFractionWidthToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './geometry'
 
 describe('drawn annotation persisted geometry', () => {
   it('accepts only finite plain unit fractions', () => {
@@ -28,6 +28,32 @@ describe('drawn annotation persisted geometry', () => {
     const point = slideFractionToLocal(.75, 'x', slide, overlay, canvas)
     expect(point).toBe(1440)
     expect(localToSlideFraction(point, 'x', slide, overlay, canvas)).toBeCloseTo(.75)
+
+    const localPoint = slideFractionPointToLocal({ x: .75, y: .5 }, slide, overlay, canvas)
+    expect(localPoint).toEqual({ x: 1440, y: 486 })
+    expect(localPointToSlideFraction(localPoint, slide, overlay, canvas)).toEqual({ x: .75, y: .5 })
+
+    // Width is measured against the full slide width, not the nested overlay.
+    const width = slideFractionWidthToLocal(.25, slide, overlay, canvas)
+    expect(width).toBe(720)
+    expect(localWidthToSlideFraction(width, slide, overlay, canvas)).toBeCloseTo(.25)
+  })
+
+  it('validates the public source-local geometry shape without retaining caller objects', () => {
+    const input = {
+      label: { x: .6842, y: .3146, width: .2188 },
+      connector: { start: { x: .4221, y: .4729 }, end: { x: .6314, y: .3486 } },
+    }
+    expect(validateDrawnAnnotationGeometry(input)).toEqual(input)
+    const geometry = validateDrawnAnnotationGeometry(input)
+    input.label.x = .1
+    expect(geometry.label?.x).toBe(.6842)
+    expect(isNormalizedFraction(1)).toBe(true)
+    expect(isNormalizedFraction(Number.NaN)).toBe(false)
+    expect(() => validateDrawnAnnotationGeometry({ label: { x: .5 } })).toThrow('x and y')
+    expect(() => validateDrawnAnnotationGeometry({ label: { x: .5, y: .5, width: MIN_NORMALIZED_LABEL_WIDTH - .001 } })).toThrow('width')
+    expect(() => validateDrawnAnnotationGeometry({ connector: { start: { x: 0, y: 0 } } })).toThrow('end')
+    expect(() => validateDrawnAnnotationGeometry({ label: { x: .5, y: .5, css: 'nope' } })).toThrow('unknown')
   })
 
   it('uses CSS-safe authored IDs', () => {
