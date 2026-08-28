@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 
 export interface DrawnAnnotationLabelGeometry { x: number, y: number, width?: number }
 export interface DrawnAnnotationGeometryPatch {
@@ -14,22 +14,28 @@ const component = '<DrawnAnnotation'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16)
 const fraction = (value: unknown, min = 0) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= 1
 
+/** Whether candidate is root itself or a descendant, without prefix ambiguity. */
+function isWithinRoot(root: string, candidate: string) {
+  const path = relative(root, candidate)
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+}
+
 /** Validate the only document shape the development writer accepts. */
 export function validateGeometryPatch(value: unknown): DrawnAnnotationGeometryPatch {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('geometry patch must be an object')
   const input = value as Record<string, unknown>
   if (Object.keys(input).some(key => key !== 'label' && key !== 'connector')) throw new Error('geometry patch has an unknown property')
-  const point = (value: unknown, name: string) => {
+  const point = (value: unknown, name: string, allowed = ['x', 'y']) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} must be an object`)
     const item = value as Record<string, unknown>
-    if (Object.keys(item).some(key => key !== 'x' && key !== 'y') || !fraction(item.x) || !fraction(item.y)) throw new Error(`${name} must contain x and y fractions from 0 to 1`)
+    if (Object.keys(item).some(key => !allowed.includes(key)) || !fraction(item.x) || !fraction(item.y)) throw new Error(`${name} must contain x and y fractions from 0 to 1`)
     return { x: item.x, y: item.y }
   }
   const result: DrawnAnnotationGeometryPatch = {}
   if (input.label !== undefined) {
     if (input.label === null) result.label = null
     else {
-      const label = point(input.label, 'label') as DrawnAnnotationLabelGeometry
+      const label = point(input.label, 'label', ['x', 'y', 'width']) as DrawnAnnotationLabelGeometry
       const source = input.label as Record<string, unknown>
       if (Object.keys(source).some(key => key !== 'x' && key !== 'y' && key !== 'width') || (source.width !== undefined && !fraction(source.width, .02))) throw new Error('label width must be a fraction from 0.02 to 1')
       if (source.width !== undefined) label.width = source.width as number
@@ -154,9 +160,11 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
       // locator.
       const pathname = id.split('?', 1)[0]
       if (!pathname.endsWith('.md') || !findDrawnAnnotationTags(code).length) return null
-      const absolute = resolve(pathname); const file = relative(root, absolute)
-      if (file.startsWith('..') || file === '') return null
-      return { code: injectDrawnAnnotationLocators(code, file), map: null }
+      // Vite normally supplies absolute IDs, but resolving a relative ID from
+      // the configured root keeps the locator correct for programmatic use.
+      const absolute = isAbsolute(pathname) ? resolve(pathname) : resolve(root, pathname)
+      if (!isWithinRoot(root, absolute) || absolute === root) return null
+      return { code: injectDrawnAnnotationLocators(code, relative(root, absolute)), map: null }
     },
     configureServer(server: { middlewares: { use: (handler: Function) => void } }) {
       server.middlewares.use(async (request: any, response: any, next: Function) => {
@@ -166,8 +174,12 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
         try {
           const payload = await requestBody(request) as { locator?: unknown, expectedRevision?: unknown, geometry?: unknown }
           const result = await serialized(async () => {
+            if (Object.keys(payload).some(key => key !== 'locator' && key !== 'expectedRevision' && key !== 'geometry'))
+              throw new Error('source writer payload has an unknown property')
+            if (typeof payload.expectedRevision !== 'string')
+              throw new Error('an expected source revision is required')
             const token = decodeLocator(payload.locator); const path = resolve(root, token.file)
-            if (relative(root, path).startsWith('..')) throw new Error('source file must stay under the Vite root')
+            if (!isWithinRoot(root, path) || path === root) throw new Error('source file must stay under the Vite root')
             const source = await readFile(path, 'utf8'); const revision = hash(source)
             if (payload.expectedRevision !== revision) return { status: 409, body: { error: 'source changed; reload before saving', revision, recovery: 'Reload saved geometry before retrying.' } }
             const tag = source.slice(token.start, token.end)
