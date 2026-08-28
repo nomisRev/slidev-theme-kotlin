@@ -1546,7 +1546,13 @@ watch(annotationGeometryVersion, () => {
 const editable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && hasLabel.value && labelActive.value && geometry.ready)
 const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
 const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === props.id)
-let labelDrag: { pointerId: number, width: boolean, startLeft: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } | undefined
+interface DragSaveSession {
+  /** The generated rule before this gesture's first autosave. */
+  persistedCaptured: boolean
+  persistedBefore?: PersistedAnnotationGeometry | null
+}
+
+let labelDrag: ({ pointerId: number, width: boolean, startLeft: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function fraction(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -1573,6 +1579,7 @@ function beginLabelDrag(event: PointerEvent, width = false) {
     offsetX: event.clientX - (labelBox.left + labelBox.width / 2),
     offsetY: event.clientY - (labelBox.top + labelBox.height / 2),
     previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined,
+    persistedCaptured: false,
   }
   ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
 }
@@ -1595,7 +1602,7 @@ function moveLabelDrag(event: PointerEvent) {
       y: fraction((event.clientY - labelDrag.offsetY - box.top) / box.height),
     })
   }
-  scheduleDraftSave()
+  scheduleDraftSave(labelDrag)
 }
 
 /**
@@ -1627,15 +1634,15 @@ function draftSignature(geometry: PersistedAnnotationGeometry) {
 }
 
 /** Save during a pause in a long drag as well as on pointer release. */
-function scheduleDraftSave() {
+function scheduleDraftSave(session?: DragSaveSession) {
   clearTimeout(draftSaveTimer)
   draftSaveTimer = setTimeout(() => {
     if (props.id)
-      void saveDraft(props.id)
+      void saveDraft(props.id, session)
   }, 350)
 }
 
-async function saveDraft(id: string) {
+async function saveDraft(id: string, session?: DragSaveSession) {
   const draft = annotationDrafts.get(id)
   if (!draft)
     return
@@ -1655,6 +1662,13 @@ async function saveDraft(id: string) {
     // persisted rule, not a local partial drag patch. Store it for Undo before
     // replacing it with the newly saved geometry.
     const previous = cachedAnnotationGeometry(id)
+    // A long drag may autosave before the pointer is released. Remember the
+    // pre-drag rule before that first request, so Escape can truly cancel the
+    // whole gesture instead of merely hiding a value that HMR has saved.
+    if (session && !session.persistedCaptured) {
+      session.persistedBefore = previous
+      session.persistedCaptured = true
+    }
     const saved = await saveLabelGeometry(id, savedDraft)
     recordAnnotationUndo(id, previous)
     // The writer emits CSS at fixed precision and returns the corresponding
@@ -1686,31 +1700,56 @@ async function endLabelDrag(event: PointerEvent) {
     return
   event.preventDefault()
   event.stopPropagation()
+  const session = labelDrag
   labelDrag = undefined
   clearTimeout(draftSaveTimer)
-  await saveDraft(props.id)
+  await saveDraft(props.id, session)
 }
 
 // A pointer cancellation means the browser interrupted the gesture (for
 // example, a window focus change), not that the author released it. Never turn
 // that partial movement into a persisted edit.
+function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry | undefined, session: DragSaveSession) {
+  if (previous)
+    setLabelDraft(id, previous)
+  else
+    clearLabelDraft(id)
+  // No request has started, so reverting the local preview is sufficient.
+  if (!session.persistedCaptured) {
+    annotationEditorStatus.value = 'Annotation drag cancelled'
+    return
+  }
+  annotationEditorStatus.value = 'Cancelling annotation drag…'
+  // Keep this dynamic import behind the explicit serve-mode boundary. Slidev's
+  // build renderer can still set DEV, but a published deck must not ship a
+  // browser client capable of reaching the local writer endpoint.
+  if (!isAnnotationEditorDevelopment)
+    return
+  // Writer-client writes are serialized. This restore runs after any autosave
+  // already in flight, preventing CSS HMR from resurrecting a cancelled drag.
+  void import('./drawn-annotation/writer-client').then(({ restoreAnnotationGeometry }) =>
+    restoreAnnotationGeometry(id, session.persistedBefore ?? null),
+  ).then(() => {
+    clearLabelDraft(id)
+    annotationEditorStatus.value = 'Annotation drag cancelled'
+  }).catch((error) => {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to cancel saved annotation geometry'
+  })
+}
+
 function cancelLabelDrag(event: PointerEvent) {
   if (!labelDrag || labelDrag.pointerId !== event.pointerId || !props.id)
     return
   event.preventDefault()
   event.stopPropagation()
-  const previous = labelDrag.previous
+  const drag = labelDrag
   labelDrag = undefined
   clearTimeout(draftSaveTimer)
-  if (previous)
-    setLabelDraft(props.id, previous)
-  else
-    clearLabelDraft(props.id)
-  annotationEditorStatus.value = 'Annotation drag cancelled'
+  restoreCancelledDrag(props.id, drag.previous, drag)
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
-let connectorDrag: { pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, connector: { x1: number, y1: number, x2: number, y2: number }, previous?: PersistedAnnotationGeometry } | undefined
+let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, connector: { x1: number, y1: number, x2: number, y2: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function localConnectorFraction(point: Point) {
   const slide = slideRoot()
@@ -1778,7 +1817,7 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   event.preventDefault()
   event.stopPropagation()
   selectAnnotation(props.id, kind)
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined }
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(props.id) ? { ...annotationDrafts.get(props.id) } : undefined, persistedCaptured: false }
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
 
@@ -1813,7 +1852,7 @@ function moveConnectorDrag(event: PointerEvent) {
     next.x2 = fraction(next.x2 + dx + correctionX); next.y2 = fraction(next.y2 + dy + correctionY)
   }
   setLabelDraft(props.id, next)
-  scheduleDraftSave()
+  scheduleDraftSave(connectorDrag)
 }
 
 async function endConnectorDrag(event: PointerEvent) {
@@ -1821,9 +1860,10 @@ async function endConnectorDrag(event: PointerEvent) {
     return
   event.preventDefault()
   event.stopPropagation()
+  const session = connectorDrag
   connectorDrag = undefined
   clearTimeout(draftSaveTimer)
-  await saveDraft(props.id)
+  await saveDraft(props.id, session)
 }
 
 function cancelConnectorDrag(event: PointerEvent) {
@@ -1831,14 +1871,10 @@ function cancelConnectorDrag(event: PointerEvent) {
     return
   event.preventDefault()
   event.stopPropagation()
-  const previous = connectorDrag.previous
+  const drag = connectorDrag
   connectorDrag = undefined
   clearTimeout(draftSaveTimer)
-  if (previous)
-    setLabelDraft(props.id, previous)
-  else
-    clearLabelDraft(props.id)
-  annotationEditorStatus.value = 'Annotation drag cancelled'
+  restoreCancelledDrag(props.id, drag.previous, drag)
 }
 
 let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -1898,15 +1934,11 @@ function cancelActiveDrag(event: KeyboardEvent) {
     return
   event.preventDefault()
   event.stopPropagation()
-  const previous = labelDrag?.previous ?? connectorDrag?.previous
-  if (previous)
-    setLabelDraft(props.id, previous)
-  else
-    clearLabelDraft(props.id)
+  const drag = labelDrag ?? connectorDrag
   labelDrag = undefined
   connectorDrag = undefined
   clearTimeout(draftSaveTimer)
-  annotationEditorStatus.value = 'Annotation drag cancelled'
+  restoreCancelledDrag(props.id, drag?.previous, drag!)
 }
 
 onMounted(() => {
