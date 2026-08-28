@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, nudgeConnector, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint, translateConnector } from './geometry'
+import { draftMatchesPersisted, DRAWN_ANNOTATION_ID, localToSlideFraction, nudgeConnector, nudgeLabelWidth, readPersistedLabelGeometry, readUnitFraction, reconcileSavedDraft, slideFractionToLocal, snapFractionPoint, translateConnector } from './geometry'
 
 describe('drawn annotation persisted geometry', () => {
   it('accepts only finite plain unit fractions', () => {
@@ -51,6 +51,12 @@ describe('drawn annotation persisted geometry', () => {
     expect(snapFractionPoint({ x: .493, y: .73 }, guides)).toEqual({ x: .5, y: .73 })
     expect(snapFractionPoint({ x: .493, y: .73 }, guides, .005)).toEqual({ x: .493, y: .73 })
     expect(snapFractionPoint({ x: .496, y: .504 }, guides)).toEqual({ x: .5, y: .5 })
+  })
+
+  it('nudges label widths within the persisted writer range', () => {
+    expect(nudgeLabelWidth(.5, .01)).toBeCloseTo(.51)
+    expect(nudgeLabelWidth(.02, -.01)).toBe(.02)
+    expect(nudgeLabelWidth(1, .01)).toBe(1)
   })
 
   it('keeps connector body movement rigid at slide edges for pointer and keyboard input', () => {

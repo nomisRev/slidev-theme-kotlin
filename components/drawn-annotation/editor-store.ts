@@ -5,7 +5,7 @@ import type { PersistedAnnotationGeometry } from './geometry'
 export const annotationEditMode = ref(false)
 export const selectedAnnotationId = ref<string>()
 /** Which control selected the annotation, for keyboard nudging semantics. */
-export const selectedAnnotationPart = ref<'label' | 'start' | 'end' | 'body'>()
+export const selectedAnnotationPart = ref<'label' | 'width' | 'start' | 'end' | 'body'>()
 export const annotationDrafts = reactive(new Map<string, PersistedAnnotationGeometry>())
 export const annotationGeometryVersion = ref(0)
 export const annotationEditorStatus = ref<string>()
@@ -126,7 +126,7 @@ export function installAnnotationEditorShortcut() {
   })
 }
 
-export function selectAnnotation(id: string, part: 'label' | 'start' | 'end' | 'body' = 'label') {
+export function selectAnnotation(id: string, part: 'label' | 'width' | 'start' | 'end' | 'body' = 'label') {
   selectedAnnotationId.value = id
   selectedAnnotationPart.value = part
 }

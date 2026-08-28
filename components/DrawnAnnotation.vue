@@ -11,7 +11,7 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { draftMatchesPersisted, nudgeConnector, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
+import { draftMatchesPersisted, nudgeConnector, nudgeLabelWidth, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
 import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
@@ -1954,11 +1954,24 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
   const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
   const part = selectedAnnotationPart.value
 
-  if (part === 'label' && editable.value) {
-    const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
-    if (!current)
-      return
-    setLabelDraft(props.id, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
+  if ((part === 'label' || part === 'width') && editable.value) {
+    if (part === 'width') {
+      const slide = slideRoot()
+      const label = labelEl.value
+      if (!slide || !label)
+        return
+      // An unbounded label has no saved maximum yet. Materialize the width it
+      // occupies now, so the first key press changes the visible label rather
+      // than jumping to an unrelated default cap.
+      const currentWidth = geometry.labelWidth ?? label.getBoundingClientRect().width * geometry.width / slide.getBoundingClientRect().width
+      setLabelDraft(props.id, { width: nudgeLabelWidth(currentWidth / geometry.width, dx || dy) })
+    }
+    else {
+      const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
+      if (!current)
+        return
+      setLabelDraft(props.id, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
+    }
     scheduleDraftSave()
   }
   else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
@@ -2151,6 +2164,7 @@ onBeforeUnmount(() => {
         @pointermove="moveLabelDrag"
         @pointerup="endLabelDrag"
         @pointercancel="cancelLabelDrag"
+        @focus.stop="selectAnnotation(props.id!, 'width')"
       />
     </div>
     <slot />

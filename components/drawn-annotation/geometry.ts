@@ -157,6 +157,11 @@ export function translateConnector(connector: ConnectorEndpoints, dx: number, dy
   }
 }
 
+/** Keep keyboard label-width edits within the same writer contract as drags. */
+export function nudgeLabelWidth(width: number, delta: number) {
+  return Math.max(.02, Math.min(1, width + delta))
+}
+
 /**
  * Apply a keyboard nudge without giving body movement different geometry
  * semantics than a pointer drag. In particular, independently clamping both

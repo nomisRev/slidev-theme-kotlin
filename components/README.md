@@ -224,10 +224,11 @@ is loaded by the deck. Enable the writer in the consuming deck's
 [README](../README.md#visual-drawnannotation-editor). With the writer plugin configured,
 press **Alt+Shift+A** (or use the global **Edit annotations** toolbar) in a
 development deck. Click and drag a visible identified label to move it; select
-it and drag its right handle to set its maximum width. In edit mode, labels and
-connector endpoint handles are keyboard focusable: focus one, then use the
-arrow keys to nudge it (`Shift` for larger steps). Connector endpoints and its
-body can likewise be dragged; endpoints snap to slide edge/centre guides
+it and drag its right handle to set its maximum width. In edit mode, labels,
+the label width handle, and connector endpoint handles are keyboard focusable:
+focus one, then use the arrow keys to nudge it (`Shift` for larger steps). The
+width handle adjusts maximum width; connector endpoints and its body can
+likewise be dragged; endpoints snap to slide edge/centre guides
 and the annotation's source, target, and label ports. Hold `Alt` to temporarily
 disable snapping. The first connector drag materializes the currently automatic
 route as two manual endpoints. Pointer release saves through the local writer;
