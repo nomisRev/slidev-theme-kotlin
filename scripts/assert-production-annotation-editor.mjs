@@ -8,16 +8,20 @@ const jsFiles = files.filter(file => typeof file === 'string' && file.endsWith('
 // The editor's browser client is the only code that knows the local writer
 // endpoint. It must be absent from a built deck, not merely hidden by CSS.
 const writerChunks = jsFiles.filter(file => file.includes('writer-client'))
-const endpointChunks = []
+const editorChunks = []
 for (const file of jsFiles) {
   const contents = await readFile(join(assets, file), 'utf8')
-  if (contents.includes('/__drawn-annotations'))
-    endpointChunks.push(file)
+  // The endpoint is the write capability; these UI strings ensure the global
+  // development toolbar was not merely hidden with a production v-if.
+  if (contents.includes('/__drawn-annotations')
+    || contents.includes('drawn-annotation-toolbar')
+    || contents.includes('Edit annotations'))
+    editorChunks.push(file)
 }
 
-if (writerChunks.length || endpointChunks.length) {
-  const leaked = [...new Set([...writerChunks, ...endpointChunks])]
-  throw new Error(`production build contains DrawnAnnotation writer code: ${leaked.join(', ')}`)
+if (writerChunks.length || editorChunks.length) {
+  const leaked = [...new Set([...writerChunks, ...editorChunks])]
+  throw new Error(`production build contains DrawnAnnotation editor code: ${leaked.join(', ')}`)
 }
 
-console.log('✔ production build contains no DrawnAnnotation writer client')
+console.log('✔ production build contains no DrawnAnnotation writer or toolbar')
