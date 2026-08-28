@@ -90,8 +90,20 @@ describe('DrawnAnnotation editor writer format', () => {
       expect(saved.body.geometry.note).toMatchObject({ x: .25, y: .5, width: .3, x1: .1, y1: .2, x2: .3, y2: .4 })
       expect(await readFile(join(root, 'styles/drawn-annotations.generated.css'), 'utf8')).toBe(serializeGeometry(saved.body.geometry))
 
-      const patched = await request('POST', {
+      // A save response is the exact value CSS HMR will apply. The browser
+      // uses it to clear its immediate drag preview after the stylesheet has
+      // caught up, so raw pointer precision must not leak into this response.
+      const rounded = await request('POST', {
         expectedRevision: saved.body.revision,
+        annotations: { precise: { x: .123456, y: .987654 } },
+      })
+      expect(rounded.statusCode).toBe(200)
+      expect(rounded.body.geometry.precise).toMatchObject({ x: .1235, y: .9877 })
+      expect(await readFile(join(root, 'styles/drawn-annotations.generated.css'), 'utf8')).toContain('--da-label-x: 0.1235;')
+
+      const patched = await request('POST', {
+        expectedRevision: rounded.body.revision,
+
         annotations: { note: { width: .4, x1: null, y1: null, x2: null, y2: null } },
       })
       expect(patched.statusCode).toBe(200)

@@ -215,8 +215,13 @@ export function drawnAnnotationEditor(options: DrawnAnnotationEditorOptions = {}
               else
                 delete nextGeometry[id]
             }
-            await writeGeometry(output, nextGeometry)
-            return { status: 200, body: { geometry: nextGeometry, revision: geometryRevision(nextGeometry) } }
+            // The stylesheet has fixed precision. Return that same canonical
+            // representation instead of the raw request values: otherwise a
+            // .123456 drag preview would wait forever for CSS HMR to equal the
+            // emitted .1235 declaration.
+            const canonicalGeometry = parseGeometry(serializeGeometry(nextGeometry))
+            await writeGeometry(output, canonicalGeometry)
+            return { status: 200, body: { geometry: canonicalGeometry, revision: geometryRevision(canonicalGeometry) } }
           })
           return json(response, result.status, result.body)
         }

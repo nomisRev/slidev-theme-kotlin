@@ -1641,9 +1641,19 @@ async function saveDraft(id: string) {
     // persisted rule, not a local partial drag patch. Store it for Undo before
     // replacing it with the newly saved geometry.
     const previous = cachedAnnotationGeometry(id)
-    await saveLabelGeometry(id, savedDraft)
+    const saved = await saveLabelGeometry(id, savedDraft)
     recordAnnotationUndo(id, previous)
-    clearDraftAfterCssHmr(id, savedDraft)
+    // The writer emits CSS at fixed precision and returns the corresponding
+    // canonical document. Replace just this drag's fields with those values
+    // before waiting for HMR; comparing the raw pointer fraction (for example
+    // .123456) with CSS's .1235 would otherwise leave a draft permanently
+    // above the persisted rule.
+    const persisted = saved.geometry[id]
+    const savedPatch = persisted
+      ? Object.fromEntries(Object.keys(savedDraft).map(key => [key, persisted[key as keyof PersistedAnnotationGeometry]])) as PersistedAnnotationGeometry
+      : savedDraft
+    setLabelDraft(id, savedPatch)
+    clearDraftAfterCssHmr(id, savedPatch)
     annotationEditorStatus.value = 'Annotation saved'
   }
   catch (error) {
