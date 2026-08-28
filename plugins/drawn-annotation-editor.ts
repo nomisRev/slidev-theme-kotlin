@@ -69,10 +69,50 @@ export function serializeGeometry(geometry: DrawnAnnotationGeometryPatch) {
 }
 
 interface Tag { start: number, end: number, text: string }
-/** Finds opening component tags while respecting quoted Vue bindings. */
+/**
+ * Regions where a tag is only shown, never rendered: fenced code blocks
+ * (``` or ~~~, closed by a fence of the same character at least as long) and
+ * HTML comments. Injecting there pastes a locator into a code sample, and
+ * counting there shifts the ordinals of the real tags after it.
+ */
+function excludedRanges(source: string) {
+  const ranges: Array<[number, number]> = []
+  const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/
+  let open: { marker: string, start: number } | undefined
+  for (let lineStart = 0; lineStart < source.length;) {
+    const lineEnd = source.indexOf('\n', lineStart)
+    const next = lineEnd < 0 ? source.length : lineEnd + 1
+    const match = fence.exec(source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd))
+    if (!open) {
+      if (match) open = { marker: match[1], start: lineStart }
+    }
+    else if (match && match[1][0] === open.marker[0] && match[1].length >= open.marker.length && !match[2].trim()) {
+      ranges.push([open.start, next]); open = undefined
+    }
+    lineStart = next
+  }
+  if (open) ranges.push([open.start, source.length])
+  const inside = (offset: number) => ranges.some(([start, end]) => offset >= start && offset < end)
+  for (let start = source.indexOf('<!--'); start >= 0; start = source.indexOf('<!--', start + 4)) {
+    if (inside(start)) continue
+    const close = source.indexOf('-->', start + 4)
+    ranges.push([start, close < 0 ? source.length : close + 3])
+    if (close < 0) break
+  }
+  return ranges
+}
+
+/**
+ * Finds opening component tags while respecting quoted Vue bindings. The name
+ * must end the tag name, so `<DrawnAnnotationEditorToolbar>` never matches,
+ * and tags inside fenced code or comments are left to the reader.
+ */
 export function findDrawnAnnotationTags(source: string): Tag[] {
   const tags: Tag[] = []
+  const excluded = excludedRanges(source)
   for (let start = source.indexOf(component); start >= 0; start = source.indexOf(component, start + component.length)) {
+    if (!/[\s/>]/.test(source[start + component.length] ?? '')) continue
+    if (excluded.some(([from, to]) => start >= from && start < to)) continue
     let quote = ''; let braces = 0; let end = start + component.length
     for (; end < source.length; end++) {
       const char = source[end]
@@ -141,16 +181,34 @@ export function injectDrawnAnnotationLocators(source: string, file: string, file
     // A tag the writer could not find again stays a plain, non-editable annotation.
     if (!location) continue
     const value = encodeLocator({ file, ...location })
-    result = `${result.slice(0, tag.end - 1)} __drawn-annotation-locator="${value}"${result.slice(tag.end - 1)}`
+    const at = tag.start + attributeInsertionPoint(tag.text)
+    result = `${result.slice(0, at)} __drawn-annotation-locator="${value}"${result.slice(at)}`
   }
   return result
 }
 
+/**
+ * Where a new attribute goes in an opening tag. Vue permits self-closing
+ * component tags; insert before the slash rather than splitting `/>` into
+ * malformed markup that swallows the rest of the slide.
+ */
+function attributeInsertionPoint(tag: string) {
+  return /\/\s*>$/.test(tag) ? tag.lastIndexOf('/') : tag.length - 1
+}
+
+/**
+ * The span of the `:geometry` binding, including its closing quote. Only an
+ * object literal can be replaced safely: for any other expression the first
+ * `{` belongs to some later attribute, and replacing up to its `}` would
+ * delete that attribute.
+ */
 function geometryBinding(tag: string) {
+  const match = /\s:geometry\s*=\s*(["']?)\s*\{/.exec(tag)
   const start = tag.search(/\s:geometry\s*=/)
   if (start < 0) return undefined
-  const value = tag.indexOf('{', start)
-  if (value < 0) throw new Error('geometry binding must contain an object literal')
+  if (!match || match.index !== start) throw new Error('`:geometry` must be an object literal to be edited')
+  const opening = match[1]
+  const value = start + match[0].length - 1
   let depth = 0
   let quote = ''
   for (let index = value; index < tag.length; index++) {
@@ -162,10 +220,12 @@ function geometryBinding(tag: string) {
     if (character === '"' || character === "'" || character === '`') { quote = character; continue }
     if (character === '{') depth++
     else if (character === '}' && --depth === 0) {
-      // `:geometry` is a Vue bound attribute, normally quoted around the
-      // object literal. Consume that closing quote with the binding so a
-      // replacement cannot leave an extra quote in the opening tag.
-      return { start, end: tag[index + 1] === '"' || tag[index + 1] === "'" ? index + 2 : index + 1 }
+      // Consume the closing quote with the binding so a replacement cannot
+      // leave an extra quote in the opening tag.
+      if (!opening) return { start, end: index + 1 }
+      const close = tag.indexOf(opening, index + 1)
+      if (close < 0 || tag.slice(index + 1, close).trim()) throw new Error('`:geometry` must be an object literal to be edited')
+      return { start, end: close + 1 }
     }
   }
   throw new Error('geometry binding is incomplete')
@@ -181,9 +241,7 @@ export function patchDrawnAnnotationTag(tag: string, patch: DrawnAnnotationGeome
     return empty ? `${tag.slice(0, existing.start)}${tag.slice(existing.end)}` : `${tag.slice(0, existing.start)} :geometry="${serializeGeometry(patch)}"${tag.slice(existing.end)}`
   if (empty)
     return tag
-  // Vue permits self-closing component tags. Insert before the slash rather
-  // than turning `<DrawnAnnotation />` into malformed markup.
-  const close = /\/\s*>$/.test(tag) ? tag.lastIndexOf('/') : tag.length - 1
+  const close = attributeInsertionPoint(tag)
   return `${tag.slice(0, close)} :geometry="${serializeGeometry(patch)}"${tag.slice(close)}`
 }
 

@@ -66,6 +66,76 @@ describe('source geometry editor', () => {
     expect(patchDrawnAnnotationTag(tag, {})).toBe('<DrawnAnnotation text="Suspend" on="0">')
   })
 
+  it('injects locators into self-closing tags without splitting the slash', () => {
+    const transformed = injectDrawnAnnotationLocators('<DrawnAnnotation text="a" />', 'x.md')
+    // Splitting `/>` makes Vue treat the tag as opened and swallow the rest of the slide.
+    expect(transformed).toMatch(/^<DrawnAnnotation text="a" {1,2}__drawn-annotation-locator="[^"]+" ?\/>$/)
+    expect(transformed).not.toMatch(/\/ __drawn/)
+  })
+
+  it('refuses to edit a non-literal geometry binding instead of deleting a later attribute', () => {
+    const tag = '<DrawnAnnotation :geometry="pos" :options="{ roughness: 0 }" label="x">'
+    expect(() => patchDrawnAnnotationTag(tag, { label: { x: .1, y: .2 } })).toThrow(':geometry` must be an object literal')
+    expect(() => patchDrawnAnnotationTag('<DrawnAnnotation :geometry="pos || {}" label="x">', {})).toThrow(':geometry` must be an object literal')
+    expect(() => patchDrawnAnnotationTag('<DrawnAnnotation :geometry="{ label: { x: .1, y: .2 } }.label" label="x">', {})).toThrow(':geometry` must be an object literal')
+    // Unquoted and single-quoted literals are still object literals.
+    expect(patchDrawnAnnotationTag('<DrawnAnnotation :geometry=\'{ label: { x: .1, y: .2 } }\' label="x">', {})).toBe('<DrawnAnnotation label="x">')
+    expect(patchDrawnAnnotationTag('<DrawnAnnotation :geometry={} label="x">', {})).toBe('<DrawnAnnotation label="x">')
+  })
+
+  it('scans only real component tags, outside fenced code and comments', () => {
+    const source = [
+      '<DrawnAnnotationEditorToolbar />',
+      '<DrawnAnnotation label="real">',
+      '```html',
+      '<DrawnAnnotation label="fenced">',
+      '```',
+      '~~~',
+      '<DrawnAnnotation label="tilde">',
+      '~~~',
+      '<!-- <DrawnAnnotation label="commented"> -->',
+      '<!--',
+      '<DrawnAnnotation label="multiline comment" />',
+      '-->',
+      '````md',
+      '```',
+      '<DrawnAnnotation label="inside a longer fence">',
+      '````',
+      '<DrawnAnnotation label="last" />',
+    ].join('\n')
+    expect(findDrawnAnnotationTags(source).map(tag => tag.text)).toEqual(['<DrawnAnnotation label="real">', '<DrawnAnnotation label="last" />'])
+    const transformed = injectDrawnAnnotationLocators(source, 'slides.md')
+    expect(transformed.match(/__drawn-annotation-locator/g)).toHaveLength(2)
+    // Every excluded line is byte-identical after injection.
+    const untouched = source.split('\n').filter(line => !/label="(real|last)"/.test(line))
+    for (const line of untouched) expect(transformed.split('\n')).toContain(line)
+    expect(decode(locatorOf(transformed)!)).toMatchObject({ ordinal: 0, line: 2 })
+  })
+
+  it('never changes a character outside the geometry binding across inject and patch', () => {
+    const tags = [
+      '<DrawnAnnotation text="a" />',
+      '<DrawnAnnotation text="a"/>',
+      '<DrawnAnnotation text="a" label="x">',
+      '<DrawnAnnotation :geometry="{ label: { x: .1, y: .2 } }" text="a">',
+      '<DrawnAnnotation text="a" :geometry="{ label: { x: .1, y: .2 } }" :options="{ roughness: 0, seed: \'}\' }" />',
+      '<DrawnAnnotation\n  text="a"\n  :on="[1, 2]"\n/>',
+    ]
+    const strip = (tag: string) => tag.replace(/ ?:geometry="[^"]*"/, '').replace(/ ?__drawn-annotation-locator="[^"]+"/, '').replace(/ +/g, ' ')
+    for (const tag of tags) {
+      const injected = injectDrawnAnnotationLocators(tag, 'slides.md')
+      const locator = locatorOf(injected)
+      expect(locator, tag).toBeTruthy()
+      for (const geometry of [{ label: { x: .5, y: .5 } }, {}]) {
+        const patched = patchDrawnAnnotationTag(injected, geometry)
+        expect(strip(patched), tag).toBe(strip(tag))
+        expect(patched).toContain(` __drawn-annotation-locator="${locator}"`)
+        expect(patched.includes(':geometry='), tag).toBe(Boolean(geometry.label))
+        expect(findDrawnAnnotationTags(patched).map(found => found.text)).toEqual([patched])
+      }
+    }
+  })
+
   it('writes only the located tag and rejects stale source revisions or fingerprints', async () => {
     const source = ['before', '<DrawnAnnotation text="first" label="one">', '<DrawnAnnotation text="second" label="two">', 'after'].join('\n')
     const { root, plugin, handler, dispose } = await serve({ 'slides.md': source })
