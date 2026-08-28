@@ -215,9 +215,13 @@ those props.
 }
 ```
 
-Import `styles/drawn-annotations.generated.css` once from the consuming deck's
-stylesheet (it is an empty, tool-owned placeholder until the first save). With
-the writer plugin configured,
+The generated stylesheet is deck-owned rather than theme-owned: create
+`styles/drawn-annotations.generated.css` with the generated-file header, import
+it once from the consuming deck's global stylesheet, and ensure that stylesheet
+is loaded by the deck. Enable the writer in the consuming deck's
+`vite.config.ts` with `drawnAnnotationEditor()` from
+`slidev-theme-kotlin/annotation-editor`; the complete setup is in the root
+[README](../README.md#visual-drawnannotation-editor). With the writer plugin configured,
 press **Alt+Shift+A** (or use the global **Edit annotations** toolbar) in a
 development deck. Click and drag a visible identified label to move it; select
 it and drag its right handle to set its maximum width. In edit mode, labels and
