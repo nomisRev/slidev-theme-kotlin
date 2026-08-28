@@ -1953,8 +1953,12 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
     return
   // Do not steal arrow keys from toolbar controls or a deck's editable text.
+  // The width handle is deliberately a real button for accessibility, but it
+  // is also an annotation control: its focused arrow keys must resize rather
+  // than being discarded by the generic form-control guard.
   const target = event.target instanceof Element ? event.target : undefined
-  if (target?.closest('button, input, textarea, select, [contenteditable="true"]'))
+  const annotationControl = target?.closest('.annotation-width-handle, .annotation-connector-handle')
+  if (!annotationControl && target?.closest('button, input, textarea, select, [contenteditable="true"]'))
     return
 
   const step = event.shiftKey ? .01 : .002
