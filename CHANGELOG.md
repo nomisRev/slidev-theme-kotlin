@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `DrawnAnnotation` geometry is now source-local: the development editor writes
+  normalized `:geometry` directly to the annotation's Markdown opening tag.
+  Geometry moves and copies with that source tag and works in builds and
+  exports without an additional generated stylesheet.
+- This is a deliberate breaking change. The former `id`, `labelX`, `labelY`,
+  and `labelWidth` persistence APIs, generated-CSS writer, selector namespace,
+  and global annotation-ID registry have been removed. Enable the opt-in
+  development Vite plugin when visual editing is needed.
+
 ## 0.11.0
 
 ### Added
