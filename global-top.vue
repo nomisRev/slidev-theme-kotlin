@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useNav } from '@slidev/client'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   annotationEditMode,
@@ -14,6 +15,12 @@ import {
 } from './components/drawn-annotation/editor-store'
 
 const isDevelopment = import.meta.env.DEV
+// Slidev's CLI export runs through a development server, so `DEV` alone is
+// not an export guard. Keep authoring controls exclusively on the primary
+// normal-slide route: no print/export, presenter, overview, notes, or preview
+// layer can expose a control that changes the deck while it is being shown.
+const { hasPrimarySlide, isPresenter, isPrintMode } = useNav()
+const editorAvailable = computed(() => isDevelopment && hasPrimarySlide.value && !isPresenter.value && !isPrintMode.value)
 const checkingWriter = ref(false)
 const canWrite = ref(false)
 const selected = computed(() => selectedAnnotationId.value)
@@ -24,6 +31,8 @@ const hasIdProblems = computed(() => duplicateAnnotationIds.value.size > 0 || mi
 const selectedHasDuplicateId = computed(() => !!selected.value && duplicateAnnotationIds.value.has(selected.value))
 
 async function toggleEditor() {
+  if (!editorAvailable.value)
+    return
   if (annotationEditMode.value) {
     annotationEditMode.value = false
     clearAnnotationSelection()
@@ -126,8 +135,9 @@ async function resetAll() {
 
 <template>
   <!-- Global layers are singletons, unlike DrawnAnnotation instances. This
-       keeps controls out of nested/clipped annotation canvases. -->
-  <aside v-if="isDevelopment" class="drawn-annotation-toolbar" aria-label="Drawn annotation editor" @pointerdown.stop @click.stop>
+       keeps controls out of nested/clipped annotation canvases. `DEV` is not
+       enough here: CLI PNG/PDF export uses a Vite server too. -->
+  <aside v-if="editorAvailable" class="drawn-annotation-toolbar" aria-label="Drawn annotation editor" @pointerdown.stop @click.stop>
     <button type="button" :disabled="checkingWriter" :aria-pressed="annotationEditMode" @click="toggleEditor">
       {{ annotationEditMode ? 'Done editing annotations' : 'Edit annotations' }}
     </button>

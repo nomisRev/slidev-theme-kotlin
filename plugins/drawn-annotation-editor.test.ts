@@ -1,5 +1,41 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { geometryRevision, parseGeometry, serializeGeometry, validateGeometryPatch } from './drawn-annotation-editor'
+import { drawnAnnotationEditor, geometryRevision, parseGeometry, serializeGeometry, validateGeometryPatch } from './drawn-annotation-editor'
+
+/** Exercise the plugin through its narrow HTTP middleware, not its internals. */
+function editorServer(root: string, output = 'styles/drawn-annotations.generated.css') {
+  let middleware: ((request: any, response: any, next: () => void) => void) | undefined
+  const plugin = drawnAnnotationEditor({ output })
+  plugin.configResolved?.({ root })
+  plugin.configureServer?.({ middlewares: { use(handler: typeof middleware) { middleware = handler } } })
+
+  async function request(method: string, body?: unknown) {
+    const input = new PassThrough() as PassThrough & { method: string, url: string }
+    input.method = method
+    input.url = '/__drawn-annotations'
+    input.end(body === undefined ? undefined : JSON.stringify(body))
+    let statusCode = 200
+    const headers: Record<string, string> = {}
+    let text = ''
+    await new Promise<void>((resolve, reject) => {
+      try {
+        middleware?.(input, {
+          setHeader(name: string, value: string) { headers[name] = value },
+          set statusCode(value: number) { statusCode = value },
+          get statusCode() { return statusCode },
+          end(value: string) { text = value; resolve() },
+        }, () => reject(new Error('editor middleware unexpectedly called next')))
+      }
+      catch (error) { reject(error) }
+    })
+    return { statusCode, headers, body: JSON.parse(text) }
+  }
+
+  return { request, plugin }
+}
 
 describe('DrawnAnnotation editor writer format', () => {
   it('serializes in a stable order with fixed precision', () => {
@@ -36,5 +72,43 @@ describe('DrawnAnnotation editor writer format', () => {
 
   it('round-trips manual connector endpoints and ignores malformed generated rules', () => {
     expect(parseGeometry('[data-drawn-annotation-id="okay"] { --da-label-x: 2; }\n[data-drawn-annotation-id="good"] { --da-label-y: .5; --da-connector-x1: .1; --da-connector-y1: .2; --da-connector-x2: .3; --da-connector-y2: .4; }')).toEqual({ good: { x: undefined, y: .5, width: undefined, x1: .1, y1: .2, x2: .3, y2: .4 } })
+  })
+
+  it('serves and atomically persists revision-guarded, property-wise patches', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'drawn-annotation-editor-'))
+    try {
+      const { request } = editorServer(root)
+      const initial = await request('GET')
+      expect(initial.statusCode).toBe(200)
+      expect(initial.body.geometry).toEqual({})
+
+      const saved = await request('POST', {
+        expectedRevision: initial.body.revision,
+        annotations: { note: { x: .25, y: .5, width: .3, x1: .1, y1: .2, x2: .3, y2: .4 } },
+      })
+      expect(saved.statusCode).toBe(200)
+      expect(saved.body.geometry.note).toMatchObject({ x: .25, y: .5, width: .3, x1: .1, y1: .2, x2: .3, y2: .4 })
+      expect(await readFile(join(root, 'styles/drawn-annotations.generated.css'), 'utf8')).toBe(serializeGeometry(saved.body.geometry))
+
+      const patched = await request('POST', {
+        expectedRevision: saved.body.revision,
+        annotations: { note: { width: .4, x1: null, y1: null, x2: null, y2: null } },
+      })
+      expect(patched.statusCode).toBe(200)
+      expect(patched.body.geometry.note).toMatchObject({ x: .25, y: .5, width: .4 })
+      expect(patched.body.geometry.note.x1).toBeUndefined()
+
+      const stale = await request('POST', { expectedRevision: saved.body.revision, annotations: { note: { x: .1 } } })
+      expect(stale.statusCode).toBe(409)
+      expect(stale.body.geometry).toEqual(patched.body.geometry)
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses an output path outside the consuming deck root', () => {
+    const plugin = drawnAnnotationEditor({ output: '../outside.css' })
+    expect(() => plugin.configResolved?.({ root: '/tmp/deck' })).toThrow('must stay under the Vite root')
   })
 })
