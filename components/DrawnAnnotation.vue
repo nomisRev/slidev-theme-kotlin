@@ -13,7 +13,8 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { draftMatchesPersisted, nudgeConnector, readPersistedLabelGeometry, reconcileSavedDraft, DRAWN_ANNOTATION_ID, slideFractionToLocal, snapFractionPoint, translateConnector } from './drawn-annotation/geometry'
 import type { PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, registerAnnotationEditorActions, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, clearAnnotationSelection, clearLabelDraft, installAnnotationEditorShortcut, isDuplicateAnnotationId, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, registerAnnotationEditorId, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
@@ -1564,7 +1565,7 @@ watch(annotationGeometryVersion, () => {
 const editable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && hasLabel.value && labelActive.value && geometry.ready)
 const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!props.id && DRAWN_ANNOTATION_ID.test(props.id) && !isDuplicateAnnotationId(props.id) && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
 const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === props.id)
-interface DragSaveSession {
+interface DragSaveSession extends AnnotationUndoSession {
   /** The generated rule before this gesture's first autosave. */
   persistedCaptured: boolean
   persistedBefore?: PersistedAnnotationGeometry | null
@@ -1691,7 +1692,13 @@ async function saveDraft(id: string, session?: DragSaveSession) {
       session.persistedCaptured = true
     }
     const saved = await saveLabelGeometry(id, savedDraft)
-    recordAnnotationUndo(id, previous)
+    // A debounced save and the release save belong to the same pointer
+    // gesture. Record the pre-gesture snapshot once, rather than making Undo
+    // stop at every intermediate autosave position.
+    if (session)
+      recordAnnotationUndoOnce(session, id, session.persistedBefore ?? previous)
+    else
+      recordAnnotationUndo(id, previous)
     // The writer emits CSS at fixed precision and returns the corresponding
     // canonical document. Replace just this drag's fields with those values
     // before waiting for HMR; comparing the raw pointer fraction (for example

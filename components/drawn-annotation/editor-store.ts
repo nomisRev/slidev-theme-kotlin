@@ -50,6 +50,25 @@ export function recordAnnotationUndo(id: string, geometry: PersistedAnnotationGe
     annotationUndoHistory.shift()
 }
 
+/** State carried by one pointer gesture, including any debounced autosaves. */
+export interface AnnotationUndoSession {
+  undoRecorded?: boolean
+}
+
+/**
+ * A long pointer drag can save more than once, but it remains one authoring
+ * gesture. Preserve the geometry from before its first save exactly once so
+ * Undo returns to the pre-drag snapshot rather than merely to an intermediate
+ * autosave position.
+ */
+export function recordAnnotationUndoOnce(session: AnnotationUndoSession | undefined, id: string, geometry: PersistedAnnotationGeometry | null) {
+  if (session?.undoRecorded)
+    return
+  recordAnnotationUndo(id, geometry)
+  if (session)
+    session.undoRecorded = true
+}
+
 export function takeAnnotationUndo(id: string) {
   for (let index = annotationUndoHistory.length - 1; index >= 0; index--) {
     if (annotationUndoHistory[index].id === id)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { annotationDrafts, annotationEditorActionsFor, annotationEditorRegistryVersion, annotationGeometryVersion, clearAllAnnotationDrafts, clearAnnotationSelection, recordAnnotationUndo, registerAnnotationEditorActions, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft, takeAnnotationUndo } from './editor-store'
+import { annotationDrafts, annotationEditorActionsFor, annotationEditorRegistryVersion, annotationGeometryVersion, clearAllAnnotationDrafts, clearAnnotationSelection, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft, takeAnnotationUndo } from './editor-store'
 
 describe('DrawnAnnotation editor undo history', () => {
   it('keeps independent persisted snapshots per annotation and returns newest first', () => {
@@ -11,6 +11,17 @@ describe('DrawnAnnotation editor undo history', () => {
     expect(takeAnnotationUndo('undo-label')).toEqual({ id: 'undo-label', geometry: { x: .1, y: .2 } })
     expect(takeAnnotationUndo('undo-label')).toBeUndefined()
     expect(takeAnnotationUndo('undo-other')).toEqual({ id: 'undo-other', geometry: null })
+  })
+
+  it('records one pre-drag snapshot despite multiple debounced autosaves', () => {
+    const session = {}
+    recordAnnotationUndoOnce(session, 'long-drag', { x: .1, y: .2 })
+    // A release save after an autosave must not replace the original undo
+    // target with the intermediate value saved during the same gesture.
+    recordAnnotationUndoOnce(session, 'long-drag', { x: .5, y: .6 })
+
+    expect(takeAnnotationUndo('long-drag')).toEqual({ id: 'long-drag', geometry: { x: .1, y: .2 } })
+    expect(takeAnnotationUndo('long-drag')).toBeUndefined()
   })
 
   it('records the selected control and clears stale slide selection', () => {
