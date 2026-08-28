@@ -1,9 +1,16 @@
 <script lang="ts">
-// Module scope, shared by every annotation instance. Several annotations on
-// one slide all measure the same content on the same animation frame while a
-// Magic Move step or a transition is travelling; scanning the slide once per
-// frame and letting each instance convert the shared viewport rects into its
-// own coordinates removes the most expensive duplicated work.
+// Module scope, shared by every annotation instance — the pure geometry and
+// text-matching helpers live here so they are allocated once, not once per
+// annotation. Several annotations on one slide all measure the same content
+// on the same animation frame while a Magic Move step or a transition is
+// travelling; scanning the slide once per frame and letting each instance
+// convert the shared viewport rects into its own coordinates removes the most
+// expensive duplicated work.
+import type { ClicksContext } from '@slidev/types'
+import type { ComputedRef, InjectionKey, Ref } from 'vue'
+import type { TextMatch, TextSegment } from './code-text-match'
+import rough from 'roughjs'
+import { findTextInSegments } from './code-text-match'
 
 // Elements considered while measuring obstacles, capped: the collectors run on
 // animation frames while the slide moves, and a slide with more elements than
@@ -92,19 +99,252 @@ function scanObstacles(slide: HTMLElement): ObstacleScan {
   requestAnimationFrame(() => scanCache.delete(slide))
   return scan
 }
+
+// Carries the unshifted clicks context past an annotation that inserts a click.
+// Module scope, so every annotation instance shares one Symbol; `<script setup>`
+// runs per component and would mint a new, never-matching Symbol for each.
+const realClicksKey: InjectionKey<ClicksContext> = Symbol('drawn-annotation-clicks')
+/**
+ * What an annotation tells the ones nested inside it: the click it is drawn on,
+ * and the moment after that click at which it has finished drawing. A nested
+ * annotation on the same click starts there, so the two read as one sequence.
+ */
+interface SequenceContext {
+  click: ComputedRef<number> | Ref<number>
+  end: ComputedRef<number>
+}
+const sequenceKey: InjectionKey<SequenceContext> = Symbol('drawn-annotation-sequence')
+
+const MARK_TYPES = ['underline', 'circle', 'box', 'strike-through', 'none'] as const
+const PLACEMENTS = ['auto', 'up', 'down', 'left', 'right'] as const
+
+interface Box {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+  cx: number
+  cy: number
+}
+
+interface Point { x: number, y: number }
+
+/** The leader's cubic bezier, produced by `leaderCurve` in the instance. */
+interface Curve {
+  start: Point
+  end: Point
+  distance: number
+  c1x: number
+  c1y: number
+  c2x: number
+  c2y: number
+}
+
+const generator = rough.generator()
+
+function toPaths(drawable: ReturnType<typeof generator.line>) {
+  return generator.toPaths(drawable).map(path => path.d)
+}
+
+function hashSeed(value: string) {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i++)
+    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619)
+  // Never zero: rough.js reads a zero seed as "roll a random one", which would
+  // re-randomise the wobble on every re-measurement.
+  return Math.abs(hash) % 2147483646 + 1
+}
+
+function makeBox(left: number, top: number, right: number, bottom: number): Box {
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    cx: (left + right) / 2,
+    cy: (top + bottom) / 2,
+  }
+}
+
+function unionBox(boxes: Box[]) {
+  return makeBox(
+    Math.min(...boxes.map(box => box.left)),
+    Math.min(...boxes.map(box => box.top)),
+    Math.max(...boxes.map(box => box.right)),
+    Math.max(...boxes.map(box => box.bottom)),
+  )
+}
+
+/**
+ * A Range reports one client rect for each rendered inline fragment. Shiki
+ * makes those fragments syntax-token spans, so one continuous selected line
+ * such as `package org.jetbrains.example` commonly has several rects. Combine
+ * only fragments from this one range that share a visual line; separate lines
+ * stay separate for the `multiline` option.
+ */
+function mergeVisualLineBoxes(boxes: Box[]): Box[] {
+  const lines: Box[] = []
+  const sorted = [...boxes].sort((a, b) => a.cy - b.cy || a.left - b.left)
+
+  for (const box of sorted) {
+    const line = lines.find((candidate) => {
+      // Text in one line can have slightly different bounds for, for example,
+      // superscripted or differently-sized inline text. A quarter of the
+      // smaller fragment's height accepts that while keeping adjacent lines
+      // distinct, even when their line boxes touch.
+      const tolerance = Math.max(1, Math.min(candidate.height, box.height) / 4)
+      return Math.abs(candidate.cy - box.cy) <= tolerance
+    })
+    if (line)
+      Object.assign(line, unionBox([line, box]))
+    else
+      lines.push(box)
+  }
+
+  return lines
+}
+
+function padBox(box: Box, padding: number) {
+  return makeBox(box.left - padding, box.top - padding, box.right + padding, box.bottom + padding)
+}
+
+/**
+ * Finds the requested occurrence of `needle` across the slot's text nodes.
+ * Text inside a code block is split over one span per token, so the match
+ * regularly starts and ends in different nodes; `findTextInSegments` maps the
+ * match's string offsets back onto Range boundaries. The number of matches is
+ * reported either way, so a miss can be explained rather than silently
+ * swallowed.
+ */
+function textRange(root: HTMLElement, needle: string, occurrence: number): TextMatch {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      const parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement
+      // Skip our own overlay, and the snapshot Magic Move is animating out, so
+      // a match is never made against text that is on its way off the slide.
+      if (!parent || parent.closest('svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'))
+        return NodeFilter.FILTER_REJECT
+      if (node.nodeType === Node.ELEMENT_NODE)
+        return (node as HTMLElement).tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+
+  // Magic Move renders line breaks as <br> instead of newline characters, so
+  // they are folded back into the searched text to keep line-aware matches
+  // working in both kinds of code block.
+  const segments: TextSegment[] = []
+  let node: Node | null
+  // eslint-disable-next-line no-cond-assign
+  while ((node = walker.nextNode())) {
+    segments.push(node.nodeType === Node.TEXT_NODE
+      ? { node: node as Text, text: (node as Text).data }
+      : { text: '\n' })
+  }
+
+  return findTextInSegments(segments, needle, occurrence)
+}
+
+function nextFrame() {
+  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+}
+
+function unitVector(x: number, y: number): Point | undefined {
+  const length = Math.hypot(x, y)
+  return length > 0.001 ? { x: x / length, y: y / length } : undefined
+}
+
+// The bow of a leader is capped in slide pixels: proportional to length alone,
+// a long leader turns into a swooping gesture instead of a connection.
+const LEADER_MAX_BOW = 40
+
+/**
+ * How much of the curve runs through the given boxes, and how much ink it
+ * spends overall, both in slide pixels and both sampled from the same points.
+ * The arc length is what prices a detour: a route that dodges text is only
+ * worth taking when it saves more crossing than the extra line it draws.
+ */
+function measureCurve(curve: Curve, obstacles: Box[]) {
+  const samples = 24
+  let inside = 0
+  let length = 0
+  let px = 0
+  let py = 0
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples
+    const u = 1 - t
+    const x = u ** 3 * curve.start.x + 3 * u ** 2 * t * curve.c1x + 3 * u * t ** 2 * curve.c2x + t ** 3 * curve.end.x
+    const y = u ** 3 * curve.start.y + 3 * u ** 2 * t * curve.c1y + 3 * u * t ** 2 * curve.c2y + t ** 3 * curve.end.y
+    if (obstacles.some(box => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom))
+      inside++
+    if (i)
+      length += Math.hypot(x - px, y - py)
+    px = x
+    py = y
+  }
+  return { crossing: inside / (samples + 1) * curve.distance, length }
+}
+
+// Stands in for a label that cannot be measured yet, so placement still has a
+// plausible box to work with on the very first frame.
+const FALLBACK_LABEL_HEIGHT = 40
+
+// The label never sits closer to a slide edge than this, in slide pixels.
+const SLIDE_MARGIN = 24
+
+// Sideways nudges tried for each gap while placing the label, nearest first.
+const LATERAL_OFFSETS = (() => {
+  const offsets = [0]
+  for (let step = 40; step <= 400; step += 40)
+    offsets.push(step, -step)
+  return offsets
+})()
+
+function overlapArea(a: Box, b: Box) {
+  const w = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+  const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+  return w > 0 && h > 0 ? w * h : 0
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+/** Where a ray leaving the centre of `box` towards a point crosses its border. */
+function edgePoint(box: Box, towardX: number, towardY: number, extra = 0) {
+  const dx = towardX - box.cx
+  const dy = towardY - box.cy
+  if (!dx && !dy)
+    return { x: box.cx, y: box.cy }
+  const scale = Math.min(
+    dx ? (box.width / 2) / Math.abs(dx) : Number.POSITIVE_INFINITY,
+    dy ? (box.height / 2) / Math.abs(dy) : Number.POSITIVE_INFINITY,
+  )
+  const length = Math.hypot(dx, dy)
+  const reach = scale + extra / length
+  return { x: box.cx + dx * reach, y: box.cy + dy * reach }
+}
+
+function backOff(point: { x: number, y: number }, from: { x: number, y: number }, distance: number) {
+  const dx = point.x - from.x
+  const dy = point.y - from.y
+  const length = Math.hypot(dx, dy) || 1
+  return { x: point.x - dx / length * distance, y: point.y - dy / length * distance }
+}
 </script>
 
 <script setup lang="ts">
 import type { Options as RoughOptions } from 'roughjs/bin/core'
-import type { ClicksContext } from '@slidev/types'
-import type { ComputedRef, InjectionKey, Ref } from 'vue'
 import { injectLocal } from '@vueuse/core'
-import { useSlideContext } from '@slidev/client'
+import { useIsSlideActive, useSlideContext } from '@slidev/client'
 // The explicit `.ts` extension is required: Slidev's client ships bare TypeScript
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
-import rough from 'roughjs'
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useTemplateRef, watch, watchEffect } from 'vue'
 
 /**
  * Hand-drawn annotation for anything on a slide.
@@ -288,32 +528,6 @@ const props = withDefaults(defineProps<{
   track: true,
 })
 
-// Carries the unshifted clicks context past an annotation that inserts a click.
-// A string key, because `<script setup>` runs per component: a Symbol created
-// here would be a different one in every annotation, and never match.
-const realClicksKey = '$$drawn-annotation-clicks' as unknown as InjectionKey<ClicksContext>
-/**
- * What an annotation tells the ones nested inside it: the click it is drawn on,
- * and the moment after that click at which it has finished drawing. A nested
- * annotation on the same click starts there, so the two read as one sequence.
- */
-interface SequenceContext {
-  click: ComputedRef<number> | Ref<number>
-  end: ComputedRef<number>
-}
-const sequenceKey = '$$drawn-annotation-sequence' as unknown as InjectionKey<SequenceContext>
-
-interface Box {
-  left: number
-  top: number
-  right: number
-  bottom: number
-  width: number
-  height: number
-  cx: number
-  cy: number
-}
-
 // `on` is `at` and `until` in one, so everything that resolves a click reads it
 // through here rather than the raw prop. Named apart from the `at` prop so the
 // two can never be confused, in the script or in the template.
@@ -331,7 +545,6 @@ function warn(message: string) {
 }
 
 // The types arrive from Markdown, so a typo is a string TypeScript never saw.
-const MARK_TYPES = ['underline', 'circle', 'box', 'strike-through', 'none'] as const
 function resolveMarkType(value: unknown, prop: string, fallback: MarkType): MarkType {
   if ((MARK_TYPES as readonly unknown[]).includes(value))
     return value as MarkType
@@ -350,7 +563,6 @@ const targetMarkType = computed(() => props.targetType === undefined
   ? (props.targetMark ? 'circle' : 'none')
   : resolveMarkType(props.targetType, 'target-type', 'circle'))
 
-const PLACEMENTS = ['auto', 'up', 'down', 'left', 'right'] as const
 const resolvedPlacement = computed(() => {
   if ((PLACEMENTS as readonly string[]).includes(props.placement))
     return props.placement
@@ -368,11 +580,11 @@ if (props.on !== undefined && (props.at !== undefined || props.until !== undefin
 if (props.labelAt !== undefined && props.label === undefined)
   warn('`label-at` names the click that writes the label, but no `label` was given.')
 
-const container = ref<HTMLElement>()
-const clickMarker = ref<HTMLElement>()
-const labelMarker = ref<HTMLElement>()
-const overlay = ref<SVGSVGElement>()
-const labelEl = ref<HTMLElement>()
+const container = useTemplateRef<HTMLElement>('container')
+const clickMarker = useTemplateRef<HTMLElement>('clickMarker')
+const labelMarker = useTemplateRef<HTMLElement>('labelMarker')
+const overlay = useTemplateRef<SVGSVGElement>('overlay')
+const labelEl = useTemplateRef<HTMLElement>('labelEl')
 
 // The mark and the label can share one click or be spread over two, which is
 // what makes "mark it, then name it" possible from Markdown.
@@ -389,13 +601,12 @@ const showImmediately = ref(false)
 // own clicks context reaches nested components the same way.
 const outerClicksContext = injectLocal(realClicksKey, null)
 const slideContext = useSlideContext()
-const $nav = slideContext.$nav
 const $clicksContext = outerClicksContext ?? slideContext.$clicksContext
 const $clicks = toRef($clicksContext, 'current')
 // Slidev mounts the previous and next slides ahead of time. An annotation on
 // one of those hidden slides must not paint before that slide becomes current,
 // otherwise the view-transition snapshot captures the finished mark.
-const isCurrentSlide = computed(() => slideContext.$page.value === $nav.value.currentSlideNo)
+const isCurrentSlide = useIsSlideActive()
 provide(realClicksKey, $clicksContext)
 // Slidev's click ordering runs in the context the markers are rendered in, and
 // that one is shifted here. So these annotations resolve and register their
@@ -619,20 +830,9 @@ function markerClick(marker: HTMLElement | undefined) {
   return Number.POSITIVE_INFINITY
 }
 
-const generator = rough.generator()
-
 // A stable seed keeps the wobble identical across re-measurements, so the mark
 // glides with a Magic Move transition instead of re-drawing itself every frame.
 const seed = computed(() => hashSeed(`${sourceMarkType.value}:${targetMarkType.value}:${props.text ?? props.selector}:${props.label ?? props.target ?? ''}`))
-
-function hashSeed(value: string) {
-  let hash = 2166136261
-  for (let i = 0; i < value.length; i++)
-    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619)
-  // Never zero: rough.js reads a zero seed as "roll a random one", which would
-  // re-randomise the wobble on every re-measurement.
-  return Math.abs(hash) % 2147483646 + 1
-}
 
 // Rough Notation's exact stroke recipe, so a mark looks like Slidev's own
 // `v-mark` out of the box: roughness 1.5, single strokes redrawn `iterations`
@@ -649,143 +849,6 @@ function roughOptions(variant: 'single' | 'double' = 'single'): RoughOptions {
     seed: seed.value,
     ...props.options,
   }
-}
-
-function toPaths(drawable: ReturnType<typeof generator.line>) {
-  return generator.toPaths(drawable).map(path => path.d)
-}
-
-function makeBox(left: number, top: number, right: number, bottom: number): Box {
-  return {
-    left,
-    top,
-    right,
-    bottom,
-    width: right - left,
-    height: bottom - top,
-    cx: (left + right) / 2,
-    cy: (top + bottom) / 2,
-  }
-}
-
-function unionBox(boxes: Box[]) {
-  return makeBox(
-    Math.min(...boxes.map(box => box.left)),
-    Math.min(...boxes.map(box => box.top)),
-    Math.max(...boxes.map(box => box.right)),
-    Math.max(...boxes.map(box => box.bottom)),
-  )
-}
-
-/**
- * A Range reports one client rect for each rendered inline fragment. Shiki
- * makes those fragments syntax-token spans, so one continuous selected line
- * such as `package org.jetbrains.example` commonly has several rects. Combine
- * only fragments from this one range that share a visual line; separate lines
- * stay separate for the `multiline` option.
- */
-function mergeVisualLineBoxes(boxes: Box[]): Box[] {
-  const lines: Box[] = []
-  const sorted = [...boxes].sort((a, b) => a.cy - b.cy || a.left - b.left)
-
-  for (const box of sorted) {
-    const line = lines.find((candidate) => {
-      // Text in one line can have slightly different bounds for, for example,
-      // superscripted or differently-sized inline text. A quarter of the
-      // smaller fragment's height accepts that while keeping adjacent lines
-      // distinct, even when their line boxes touch.
-      const tolerance = Math.max(1, Math.min(candidate.height, box.height) / 4)
-      return Math.abs(candidate.cy - box.cy) <= tolerance
-    })
-    if (line)
-      Object.assign(line, unionBox([line, box]))
-    else
-      lines.push(box)
-  }
-
-  return lines
-}
-
-function padBox(box: Box, padding: number) {
-  return makeBox(box.left - padding, box.top - padding, box.right + padding, box.bottom + padding)
-}
-
-/**
- * Finds the requested occurrence of `needle` across the slot's text nodes. Text
- * inside a code block is split over one span per token, so the match regularly
- * starts and ends in different nodes. The number of matches is reported either
- * way, so a miss can be explained rather than silently swallowed.
- */
-function textRange(root: HTMLElement, needle: string, occurrence: number): { range?: Range, matches: number } {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-    acceptNode(node) {
-      const parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement
-      // Skip our own overlay, and the snapshot Magic Move is animating out, so
-      // a match is never made against text that is on its way off the slide.
-      if (!parent || parent.closest('svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'))
-        return NodeFilter.FILTER_REJECT
-      if (node.nodeType === Node.ELEMENT_NODE)
-        return (node as HTMLElement).tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-      return NodeFilter.FILTER_ACCEPT
-    },
-  })
-
-  // Magic Move renders line breaks as <br> instead of newline characters, so
-  // they are folded back into the searched text to keep line-aware matches
-  // working in both kinds of code block.
-  const segments: { node?: Text, text: string }[] = []
-  let value = ''
-  let node: Node | null
-  // eslint-disable-next-line no-cond-assign
-  while ((node = walker.nextNode())) {
-    const segment = node.nodeType === Node.TEXT_NODE
-      ? { node: node as Text, text: (node as Text).data }
-      : { text: '\n' }
-    segments.push(segment)
-    value += segment.text
-  }
-
-  const starts: number[] = []
-  for (let index = value.indexOf(needle); index >= 0; index = value.indexOf(needle, index + 1))
-    starts.push(index)
-  const start = starts[Math.max(1, occurrence) - 1]
-  if (start === undefined)
-    return { matches: starts.length }
-
-  const end = start + needle.length
-  let offset = 0
-  let startNode: Text | undefined
-  let endNode: Text | undefined
-  let startOffset = 0
-  let endOffset = 0
-  for (const segment of segments) {
-    const next = offset + segment.text.length
-    if (segment.node) {
-      if (!startNode && start >= offset && start < next) {
-        startNode = segment.node
-        startOffset = start - offset
-      }
-      if (startNode && end > offset && end <= next) {
-        endNode = segment.node
-        endOffset = end - offset
-        break
-      }
-      // A match that ends on a line break ends inside a <br>, which cannot hold
-      // a range boundary. Trail the last real node the match covered instead.
-      if (startNode && end > next) {
-        endNode = segment.node
-        endOffset = segment.text.length
-      }
-    }
-    offset = next
-  }
-  if (!startNode || !endNode)
-    return { matches: starts.length }
-
-  const range = document.createRange()
-  range.setStart(startNode, startOffset)
-  range.setEnd(endNode, endOffset)
-  return { range, matches: starts.length }
 }
 
 function slideRoot() {
@@ -841,10 +904,6 @@ function relevantAnimations() {
     return (belongsToPageTransition || belongsToSlot)
       && Number.isFinite(animation.effect?.getComputedTiming().endTime)
   })
-}
-
-function nextFrame() {
-  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
 }
 
 /**
@@ -956,7 +1015,7 @@ const missingIsAnError = computed(() =>
   isCurrentSlide.value && settled.value && $clicks.value >= resolvedClick.value && withinRange.value)
 
 /** Explains why nothing was drawn, once something should have been. */
-function explainMissing(match?: { range?: Range, matches: number }) {
+function explainMissing(match?: TextMatch) {
   if (everFound || !missingIsAnError.value)
     return
   if (!props.text)
@@ -1189,17 +1248,6 @@ function paintDestinationInto(
   }
 }
 
-interface Point { x: number, y: number }
-
-function unitVector(x: number, y: number): Point | undefined {
-  const length = Math.hypot(x, y)
-  return length > 0.001 ? { x: x / length, y: y / length } : undefined
-}
-
-// The bow of a leader is capped in slide pixels: proportional to length alone,
-// a long leader turns into a swooping gesture instead of a connection.
-const LEADER_MAX_BOW = 40
-
 /**
  * The leader's bezier between two points. `out` is the direction the line
  * leaves the mark and `into` the direction it arrives at its destination; the
@@ -1208,7 +1256,7 @@ const LEADER_MAX_BOW = 40
  * line read as pointing at the label rather than curling flat and sweeping
  * past it.
  */
-function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?: Point) {
+function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?: Point): Curve {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const distance = Math.hypot(dx, dy)
@@ -1230,35 +1278,6 @@ function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?:
     c2x: end.x - inDir.x * reach + perpX * 0.35,
     c2y: end.y - inDir.y * reach + perpY * 0.35,
   }
-}
-
-type Curve = ReturnType<typeof leaderCurve>
-
-/**
- * How much of the curve runs through the given boxes, and how much ink it
- * spends overall, both in slide pixels and both sampled from the same points.
- * The arc length is what prices a detour: a route that dodges text is only
- * worth taking when it saves more crossing than the extra line it draws.
- */
-function measureCurve(curve: Curve, obstacles: Box[]) {
-  const samples = 24
-  let inside = 0
-  let length = 0
-  let px = 0
-  let py = 0
-  for (let i = 0; i <= samples; i++) {
-    const t = i / samples
-    const u = 1 - t
-    const x = u ** 3 * curve.start.x + 3 * u ** 2 * t * curve.c1x + 3 * u * t ** 2 * curve.c2x + t ** 3 * curve.end.x
-    const y = u ** 3 * curve.start.y + 3 * u ** 2 * t * curve.c1y + 3 * u * t ** 2 * curve.c2y + t ** 3 * curve.end.y
-    if (obstacles.some(box => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom))
-      inside++
-    if (i)
-      length += Math.hypot(x - px, y - py)
-    px = x
-    py = y
-  }
-  return { crossing: inside / (samples + 1) * curve.distance, length }
 }
 
 /**
@@ -1387,21 +1406,6 @@ function collectTextObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box
   }
   return boxes
 }
-
-// Stands in for a label that cannot be measured yet, so placement still has a
-// plausible box to work with on the very first frame.
-const FALLBACK_LABEL_HEIGHT = 40
-
-// The label never sits closer to a slide edge than this, in slide pixels.
-const SLIDE_MARGIN = 24
-
-// Sideways nudges tried for each gap while placing the label, nearest first.
-const LATERAL_OFFSETS = (() => {
-  const offsets = [0]
-  for (let step = 40; step <= 400; step += 40)
-    offsets.push(step, -step)
-  return offsets
-})()
 
 // Measured label sizes per width cap. Writing a candidate max-width and
 // reading the resulting box back forces a synchronous layout, and the answer
@@ -1602,36 +1606,56 @@ function collectObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): B
   return boxes
 }
 
-function overlapArea(a: Box, b: Box) {
-  const w = Math.min(a.right, b.right) - Math.max(a.left, b.left)
-  const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-  return w > 0 && h > 0 ? w * h : 0
+/**
+ * The observers only run while this annotation's slide is current. Every
+ * slide of the deck stays mounted, so without the gate a deck full of
+ * annotations would keep reacting to layout changes on slides nobody is
+ * looking at. Nothing goes stale from being disconnected: becoming current
+ * re-measures everything anyway, in the `isCurrentSlide` watch below.
+ */
+let observersConnected = false
+
+function connectObservers() {
+  if (observersConnected || !mounted)
+    return
+  observersConnected = true
+
+  resizeObserver = new ResizeObserver(scheduleUpdate)
+  if (container.value)
+    resizeObserver.observe(container.value)
+  if (overlay.value)
+    resizeObserver.observe(overlay.value)
+  const source = container.value?.querySelector(props.selector)
+  if (source)
+    resizeObserver.observe(source)
+  for (const image of Array.from(container.value?.querySelectorAll('img') ?? [])) {
+    image.addEventListener('load', scheduleUpdate)
+    watchedImages.push(image)
+  }
+
+  // Watch the code blocks only. Observing the whole slot would pick up our own
+  // paths and spin the tracking loop forever.
+  const animated = container.value?.querySelectorAll('.slidev-code, .slidev-code-magic-move, pre.shiki')
+  if (animated?.length) {
+    mutationObserver = new MutationObserver(() => track())
+    for (const element of Array.from(animated))
+      mutationObserver.observe(element, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] })
+  }
+
+  window.addEventListener('resize', scheduleUpdate)
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
-}
-
-/** Where a ray leaving the centre of `box` towards a point crosses its border. */
-function edgePoint(box: Box, towardX: number, towardY: number, extra = 0) {
-  const dx = towardX - box.cx
-  const dy = towardY - box.cy
-  if (!dx && !dy)
-    return { x: box.cx, y: box.cy }
-  const scale = Math.min(
-    dx ? (box.width / 2) / Math.abs(dx) : Number.POSITIVE_INFINITY,
-    dy ? (box.height / 2) / Math.abs(dy) : Number.POSITIVE_INFINITY,
-  )
-  const length = Math.hypot(dx, dy)
-  const reach = scale + extra / length
-  return { x: box.cx + dx * reach, y: box.cy + dy * reach }
-}
-
-function backOff(point: { x: number, y: number }, from: { x: number, y: number }, distance: number) {
-  const dx = point.x - from.x
-  const dy = point.y - from.y
-  const length = Math.hypot(dx, dy) || 1
-  return { x: point.x - dx / length * distance, y: point.y - dy / length * distance }
+function disconnectObservers() {
+  if (!observersConnected)
+    return
+  observersConnected = false
+  resizeObserver?.disconnect()
+  resizeObserver = undefined
+  mutationObserver?.disconnect()
+  mutationObserver = undefined
+  for (const image of watchedImages.splice(0))
+    image.removeEventListener('load', scheduleUpdate)
+  window.removeEventListener('resize', scheduleUpdate)
 }
 
 onMounted(async () => {
@@ -1664,33 +1688,13 @@ onMounted(async () => {
   unsettle()
   scheduleUpdate()
 
-  resizeObserver = new ResizeObserver(scheduleUpdate)
-  if (container.value)
-    resizeObserver.observe(container.value)
-  if (overlay.value)
-    resizeObserver.observe(overlay.value)
-  const source = container.value?.querySelector(props.selector)
-  if (source)
-    resizeObserver.observe(source)
-  for (const image of Array.from(container.value?.querySelectorAll('img') ?? [])) {
-    image.addEventListener('load', scheduleUpdate)
-    watchedImages.push(image)
-  }
-
-  // Watch the code blocks only. Observing the whole slot would pick up our own
-  // paths and spin the tracking loop forever.
-  const animated = container.value?.querySelectorAll('.slidev-code, .slidev-code-magic-move, pre.shiki')
-  if (animated?.length) {
-    mutationObserver = new MutationObserver(() => track())
-    for (const element of Array.from(animated))
-      mutationObserver.observe(element, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] })
-  }
+  if (isCurrentSlide.value)
+    connectObservers()
 
   document.fonts?.ready.then(() => {
     labelSizeCache.clear()
     scheduleUpdate()
   })
-  window.addEventListener('resize', scheduleUpdate)
 })
 
 onBeforeUnmount(() => {
@@ -1701,11 +1705,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(frame)
   cancelAnimationFrame(paintFrame)
   cancelAnimationFrame(trackFrame)
-  resizeObserver?.disconnect()
-  mutationObserver?.disconnect()
-  for (const image of watchedImages.splice(0))
-    image.removeEventListener('load', scheduleUpdate)
-  window.removeEventListener('resize', scheduleUpdate)
+  disconnectObservers()
 })
 
 // Magic Move and click transitions are driven by the click count, and both move
@@ -1722,14 +1722,21 @@ watch($clicks, () => {
 // document-level pseudo-elements before the first animation scan.
 watch(isCurrentSlide, (current) => {
   if (current) {
+    connectObservers()
     unsettle(VIEW_TRANSITION_START_GRACE)
     track()
+  }
+  else {
+    disconnectObservers()
   }
 }, { flush: 'sync' })
 
 // Any prop can change what is drawn or where the label may go, so re-measure
 // on all of them instead of maintaining a list that can silently go stale.
 // The caches assume unchanged props, so they are dropped along the way.
+// (The click props — `at`, `on`, `label-at`, `insert` — are the exception:
+// clicks resolve and register once at mount, like Slidev's own components, so
+// changing them afterwards requires a remount.)
 watch(props, () => {
   labelSizeCache.clear()
   lastMarkKey = ''

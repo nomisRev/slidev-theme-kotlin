@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { ClicksInfo } from '@slidev/types'
-import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, shallowRef, useId, watch } from 'vue'
+import type { TextSegment } from './code-text-match'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useNav, useSlideContext } from '@slidev/client'
 import { useMutationObserver, useResizeObserver } from '@vueuse/core'
+import { findTextInSegments } from './code-text-match'
 
 const props = defineProps<{
   /** One-based source line number inside the single fenced code block this component wraps. Optional when `text` identifies the target. */
@@ -28,7 +30,7 @@ const props = defineProps<{
 const { $clicksContext, $clicks, $scale, $zoom } = useSlideContext()
 const { isPrintMode } = useNav()
 const id = useId()
-const container = ref<HTMLElement>()
+const container = useTemplateRef<HTMLElement>('container')
 const position = ref({
   left: '0px',
   top: '0px',
@@ -64,6 +66,8 @@ function isFromStart(at?: number | string) {
 // reads `at` and `until`. Slidev ranges accept a relative end, so '+1' means
 // "one click after the start" whether `on` itself is absolute or relative; an
 // `on` that shows from the start is gone at the first click.
+// Deliberately read once, not reactively: the clicks register at mount, like
+// Slidev's own components, so changing these props requires a remount.
 if (import.meta.env.DEV && props.on !== undefined && (props.at !== undefined || props.until !== undefined))
   console.warn('[InlineCompilerError] `on` is `at` and `until` in one, so the separate `at` / `until` given here are ignored. Use either `on` alone, or `at` and `until`.')
 const at = props.on ?? props.at
@@ -89,7 +93,6 @@ onMounted(() => {
   if (clickInfo.value)
     $clicksContext.register(id, clickInfo.value)
 })
-onUnmounted(() => $clicksContext?.unregister(id))
 const visible = computed(() => {
   const info = clickInfo.value
   if (!info)
@@ -180,11 +183,6 @@ function findLineTargets(host: HTMLElement, line: number): HTMLElement[] {
   return tokens
 }
 
-interface TextSegment {
-  node?: Text
-  text: string
-}
-
 function appendTextSegments(element: HTMLElement, segments: TextSegment[]) {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -240,54 +238,7 @@ function requestedOccurrence() {
 
 /** Finds an exact text match even when Shiki split it across token spans. */
 function findTextTarget(code: HTMLElement, needle: string, line?: number) {
-  const segments = codeTextSegments(code, line)
-  const value = segments.map(segment => segment.text).join('')
-  const starts: number[] = []
-  for (let index = value.indexOf(needle); index >= 0; index = value.indexOf(needle, index + 1))
-    starts.push(index)
-
-  const start = starts[requestedOccurrence() - 1]
-  if (start === undefined)
-    return { range: null, elements: [] as HTMLElement[], matches: starts.length }
-
-  const end = start + needle.length
-  let offset = 0
-  let startNode: Text | undefined
-  let endNode: Text | undefined
-  let startOffset = 0
-  let endOffset = 0
-  const elements: HTMLElement[] = []
-  for (const segment of segments) {
-    const next = offset + segment.text.length
-    if (segment.node) {
-      if (!startNode && start >= offset && start < next) {
-        startNode = segment.node
-        startOffset = start - offset
-      }
-      if (start < next && end > offset && segment.node.parentElement
-        && !elements.includes(segment.node.parentElement))
-        elements.push(segment.node.parentElement)
-      if (startNode && end > offset && end <= next) {
-        endNode = segment.node
-        endOffset = end - offset
-        break
-      }
-      // A match ending on a normalised line break cannot put its boundary in
-      // that synthetic segment, so retain the last real text node it covered.
-      if (startNode && end > next) {
-        endNode = segment.node
-        endOffset = segment.text.length
-      }
-    }
-    offset = next
-  }
-  if (!startNode || !endNode)
-    return { range: null, elements: [] as HTMLElement[], matches: starts.length }
-
-  const range = document.createRange()
-  range.setStart(startNode, startOffset)
-  range.setEnd(endNode, endOffset)
-  return { range, elements, matches: starts.length }
+  return findTextInSegments(codeTextSegments(code, line), needle, requestedOccurrence())
 }
 
 function rangeForElements(elements: HTMLElement[]): Range | null {
@@ -513,6 +464,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  $clicksContext?.unregister(id)
   if (pendingSync !== undefined)
     cancelAnimationFrame(pendingSync)
   clearTimeout(revealTimer)
@@ -602,17 +554,24 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 <style scoped>
 .inline-compiler-error-host { position: relative; }
 .inline-compiler-error-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: #e95757; font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
+/* Themeable like the other annotation colours: a deck recolours the whole
+   diagnostic by defining `--inline-compiler-error-color`, at :root or any
+   narrower scope; the fallbacks are IntelliJ's error reds. */
+.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: var(--inline-compiler-error-color, #e95757); font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
 .compiler-error-enter-active,
 .compiler-error-leave-active { transition: opacity .18s ease; }
 .compiler-error-enter-from,
 .compiler-error-leave-to { opacity: 0; }
-.inline-compiler-error-message i { color: #f05b5b; font-size: .55em; font-style: normal; }
+.inline-compiler-error-message i { color: var(--inline-compiler-error-color, #f05b5b); font-size: .55em; font-style: normal; }
 .inline-compiler-error-underline {
   position: absolute;
   z-index: 2;
   height: 6px;
   pointer-events: none;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 1 6 3 T12 3' fill='none' stroke='%23f05b5b' stroke-width='1.5'/%3E%3C/svg%3E") repeat-x left top / 12px 6px;
+  /* The squiggle is an SVG mask over a plain background colour, so it follows
+     the theme variable; only the mask's alpha matters, not its stroke colour. */
+  background-color: var(--inline-compiler-error-color, #f05b5b);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 1 6 3 T12 3' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") repeat-x left top / 12px 6px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 1 6 3 T12 3' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") repeat-x left top / 12px 6px;
 }
 </style>

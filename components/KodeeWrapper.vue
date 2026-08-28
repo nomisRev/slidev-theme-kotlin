@@ -1,21 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSlideContext } from '@slidev/client'
+import type { KodeeProps } from './kodee-props'
 import Kodee from './Kodee.vue'
-
-interface KodeeConfig {
-  variant?: string
-  size?: 'small' | 'medium' | 'large'
-  position?: 'corner' | 'featured' | 'custom'
-  x?: number
-  y?: number
-  scale?: number
-}
 
 interface Props {
   defaultVariant?: string
-  defaultSize?: KodeeConfig['size']
-  defaultPosition?: KodeeConfig['position']
+  defaultSize?: KodeeProps['size']
+  defaultPosition?: KodeeProps['position']
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -26,15 +18,15 @@ const props = withDefaults(defineProps<Props>(), {
 
 const { $frontmatter, $slidev } = useSlideContext()
 
-const defaults = computed<KodeeConfig>(() => ({
+const defaults = computed<KodeeProps>(() => ({
   variant: props.defaultVariant,
   size: props.defaultSize,
   position: props.defaultPosition,
 }))
 
-const kodeeConfig = computed<KodeeConfig | null>(() => {
+const kodeeConfig = computed<KodeeProps | null>(() => {
   // A slide-level value wins. Otherwise use the deck-wide theme setting.
-  const configured = $frontmatter?.kodee ?? $slidev.configs.themeConfig?.kodee
+  const configured = $frontmatter?.kodee ?? $slidev?.configs.themeConfig?.kodee
 
   if (configured === undefined || configured === null || configured === false)
     return null
@@ -50,10 +42,10 @@ const kodeeConfig = computed<KodeeConfig | null>(() => {
   }
 
   if (typeof configured === 'object') {
-    return {
-      ...defaults.value,
-      ...configured,
-    }
+    // Only the known options: anything else in the frontmatter object would
+    // otherwise fall through `v-bind` onto the mascot's DOM element.
+    const { variant, size, position, x, y, scale } = { ...defaults.value, ...configured }
+    return { variant, size, position, x, y, scale }
   }
 
   return null
@@ -61,13 +53,5 @@ const kodeeConfig = computed<KodeeConfig | null>(() => {
 </script>
 
 <template>
-  <Kodee
-    v-if="kodeeConfig"
-    :variant="kodeeConfig.variant"
-    :size="kodeeConfig.size"
-    :position="kodeeConfig.position"
-    :x="kodeeConfig.x"
-    :y="kodeeConfig.y"
-    :scale="kodeeConfig.scale"
-  />
+  <Kodee v-if="kodeeConfig" v-bind="kodeeConfig" />
 </template>

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
-import type { PropType } from 'vue'
 import { ShikiMagicMovePrecompiled } from '@shikijs/magic-move/vue'
 import { useNav, useSlideContext } from '@slidev/client'
 import { CLICKS_MAX } from '@slidev/client/constants.ts'
@@ -9,7 +8,7 @@ import TitleIcon from '@slidev/client/internals/TitleIcon.vue'
 import { makeId, updateCodeHighlightRange } from '@slidev/client/logic/utils.ts'
 import { useClipboard, useStyleTag } from '@vueuse/core'
 import lz from 'lz-string'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 
 // Cross-slide Magic Move. The codeblock transformer in `setup/transformers.ts`
 // emits one instance per code window on every slide of a `magic-move` chain,
@@ -17,67 +16,70 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 // slide's position in it. Navigating between two chained slides animates the
 // tokens from the neighbour's step to ours, like a classic Magic Move block
 // does on clicks.
-const props = defineProps({
-  stepsLz: {
-    type: String,
-    required: true,
-  },
+const props = withDefaults(defineProps<{
+  stepsLz: string
   /** This slide's position in the chain of code snippets. */
-  step: {
-    type: Number,
-    required: true,
-  },
+  step: number
   /**
    * Identifier shared by the whole chain. Used as `view-transition-name` so
    * decks with `transition: view-transition` pair the code windows of both
    * slides instead of cross-fading them with the rest of the page.
    */
-  navKey: {
-    type: String,
-    required: true,
-  },
-  title: {
-    type: String,
-    default: '',
-  },
-  duration: {
-    type: Number,
-    default: configs.magicMoveDuration,
-  },
+  navKey: string
+  title?: string
+  duration?: number
   /**
    * `{1|2-3}` highlight ranges of this slide's fence. Extra ranges register
    * as clicks on this slide, exactly like one step of a classic magic-move
    * block steps through its ranges.
    */
-  stepRanges: {
-    type: Array as PropType<string[]>,
-    default: () => [],
-  },
+  stepRanges?: string[]
   /** Click at which the first extra highlight range activates. */
-  at: {
-    type: [String, Number],
-    default: '+1',
-  },
+  at?: string | number
   /** Line numbers are baked into the precompiled steps; declared so the fence option doesn't land on the DOM. */
-  lines: {
-    type: Boolean,
-    default: configs.lineNumbers,
-  },
+  lines?: boolean
+}>(), {
+  title: '',
+  duration: configs.magicMoveDuration,
+  stepRanges: () => [],
+  at: '+1',
+  lines: configs.lineNumbers,
 })
 
-const steps = JSON.parse(lz.decompressFromBase64(props.stepsLz)) as KeyedTokensInfo[]
+// The transformer emits `steps-lz` as a static attribute, so this computes
+// once per payload — but a corrupt payload must not take the whole slide down
+// with it, and an HMR edit can hand the same instance a new payload.
+const steps = computed<KeyedTokensInfo[]>(() => {
+  try {
+    const decompressed = lz.decompressFromBase64(props.stepsLz)
+    const parsed = decompressed ? JSON.parse(decompressed) : null
+    if (Array.isArray(parsed) && parsed.length)
+      return parsed
+    console.error('[MagicMoveBetween] The precompiled steps decoded to nothing — the code window is not rendered.')
+  }
+  catch (error) {
+    console.error('[MagicMoveBetween] Could not parse the precompiled steps — the code window is not rendered.', error)
+  }
+  return []
+})
 const { $page, $scale: scale, $zoom: zoom, $frontmatter, $clicksContext: clicks } = useSlideContext()
 const { currentSlideNo, isPrintMode } = useNav()
-const container = ref<HTMLElement>()
+const container = useTemplateRef<HTMLElement>('container')
 
 const stepIndex = ref(props.step)
 // The animation duration is 0 until we are deliberately moving between steps,
 // so re-renders (theme switch, HMR) never replay the transition.
 const animated = ref(false)
 
+// Guards the awaits in the watcher below: rapid navigation re-enters it, and
+// a stale continuation resuming after its awaits must not replay the animation
+// or overwrite the step a newer navigation already settled on.
+let navigationEpoch = 0
+
 watch(currentSlideNo, async (to, from) => {
   if (isPrintMode.value)
     return
+  const epoch = ++navigationEpoch
   if (to !== $page.value) {
     // Reset silently while hidden so a revisit starts from a clean state.
     animated.value = false
@@ -89,7 +91,7 @@ watch(currentSlideNo, async (to, from) => {
     : from === $page.value + 1
       ? props.step + 1
       : null
-  if (fromStep === null || fromStep < 0 || fromStep >= steps.length)
+  if (fromStep === null || fromStep < 0 || fromStep >= steps.value.length)
     return
   // First render the neighbour's code without animation, wait for the slide
   // to become visible (the renderer measures real token positions), then move
@@ -98,10 +100,14 @@ watch(currentSlideNo, async (to, from) => {
   stepIndex.value = fromStep
   await nextTick()
   await new Promise(resolve => requestAnimationFrame(resolve))
+  if (epoch !== navigationEpoch)
+    return
   animated.value = true
   stepIndex.value = props.step
   // The animation rebuilt the token elements; re-apply the highlight range.
   await nextTick()
+  if (epoch !== navigationEpoch)
+    return
   applyHighlight()
 })
 
@@ -186,13 +192,13 @@ const showCopyButton = computed(() => {
   if (magicCopy === true || magicCopy === 'always')
     return true
   if (magicCopy === 'final')
-    return stepIndex.value === steps.length - 1
+    return stepIndex.value === steps.value.length - 1
   return false
 })
 const { copied, copy } = useClipboard()
 
 function copyCode() {
-  const currentStep = steps[stepIndex.value]
+  const currentStep = steps.value[stepIndex.value]
   if (currentStep?.code)
     copy(currentStep.code.trim())
 }
@@ -211,6 +217,7 @@ function copyCode() {
       </div>
     </div>
     <ShikiMagicMovePrecompiled
+      v-if="steps.length"
       class="slidev-code relative shiki overflow-visible"
       :steps="steps"
       :step="stepIndex"
@@ -233,9 +240,11 @@ function copyCode() {
   </div>
 </template>
 
-<style>
-.magic-move-between .shiki-magic-move-enter-from,
-.magic-move-between .shiki-magic-move-leave-to {
+<style scoped>
+/* The classes live on tokens the Magic Move renderer creates inside the child
+   component, so they need :deep() to be reached from scoped CSS. */
+:deep(.shiki-magic-move-enter-from),
+:deep(.shiki-magic-move-leave-to) {
   opacity: 0;
 }
 </style>
