@@ -83,6 +83,10 @@ html.dark {
     background: var(--editor-bg) !important;
     color: var(--editor-fg) !important;
     box-shadow: 0 0.4rem 1.2rem var(--editor-shadow);
+    /* Magic Move deliberately uses Tailwind's `overflow-visible` so its
+       transitions can extend freely. The editor surface itself must still
+       be the clipping boundary, including its rounded corners. */
+    overflow: clip !important;
     font-size: inherit !important;
     line-height: inherit !important;
 }

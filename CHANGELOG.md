@@ -2,21 +2,10 @@
 
 ## Unreleased
 
-### Changed
+### Added
 
-- `DrawnAnnotation` geometry is now source-local: the development editor writes
-  normalized `:geometry` directly to the annotation's Markdown opening tag.
-  Geometry moves and copies with that source tag and works in builds and
-  exports without an additional generated stylesheet.
-- This is a deliberate breaking change. The former `id`, `labelX`, `labelY`,
-  and `labelWidth` persistence APIs, generated-CSS writer, selector namespace,
-  and global annotation-ID registry have been removed. Enable the opt-in
-  development Vite plugin when visual editing is needed.
-- Editor locators no longer embed the file revision or the `:geometry`
-  binding, so a save keeps the selection, drafts, undo history and toolbar
-  actions of every annotation on the slide; the client fetches revisions per
-  file from `GET /__drawn-annotation-source`. Undo and Reset now return to the
-  geometry the source actually holds, including hand-authored `:geometry`.
+- Support Magic Move between slides: a `magic-move` separator (or `magicMove: true` frontmatter) links consecutive slides, and their top-level code fences morph across the slide boundary in both navigation directions. Code windows pair up by position, so parallel snippets (for example Kotlin next to SQL) animate independently, and decks using `transition: view-transition` pair the code windows through the View Transitions API instead of cross-fading them.
+- Support per-click line highlighting (`{1|2-3}`) and fence options (`{lines:true, at:2}`) on chained fences: the ranges register as clicks on their slide and step through before navigation moves on, matching classic Magic Move behaviour.
 
 ## 0.11.0
 

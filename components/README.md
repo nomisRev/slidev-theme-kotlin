@@ -233,20 +233,22 @@ its configuration error instead of entering an editor that cannot save.
 | `iterations` | `2` | how many times each shape is drawn over itself — the sketchy redraw |
 | `color` | `--drawn-annotation-color` | stroke and label colour, any CSS colour; the variable falls back to the text colour |
 | `stroke-width` | `2` | stroke width, in slide pixels |
-| `duration` | `800` | how long drawing one stage takes, in milliseconds |
+§| `duration` | `500` | how long drawing one stage takes, in milliseconds |
 
 Out of the box a mark looks exactly like Slidev's own `v-mark`: the defaults
 are Rough Notation's — a 2px stroke, roughness 1.5, every shape drawn twice,
-800&nbsp;ms drawn stroke by stroke — and `options` overrides the rough.js
-layer of that recipe: `:options="{ roughness: 2.6 }"` makes the strokes
-wobblier, `:options="{ roughness: 0, bowing: 0 }"` (with `:iterations="1"`)
-turns them into clean geometric lines. Colour and stroke width are the
-exception — they are set through `color` and `stroke-width`, as in Rough
-Notation itself, because they are applied in CSS, which is what animates the
-drawing. The one departure: Rough Notation rolls a random seed, but here the
-randomness is always seeded from the annotation's own props, so a mark keeps
-its shape while it follows a Magic Move transition; pass `seed` in `options`
-to pick one by hand.
+stroke by stroke — and `options` overrides the rough.js layer of that recipe:
+`:options="{ roughness: 2.6 }"` makes the strokes wobblier,
+`:options="{ roughness: 0, bowing: 0 }"` (with `:iterations="1"`) turns them
+into clean geometric lines. Colour and stroke width are the exception — they
+are set through `color` and `stroke-width`, as in Rough Notation itself,
+because they are applied in CSS, which is what animates the drawing. Two
+departures: a stage draws in 500&nbsp;ms rather than Rough Notation's
+800&nbsp;ms, keeping the hand-drawn pace aligned with Magic Move and page
+transitions; and Rough Notation rolls a random seed, but here the randomness
+is always seeded from the annotation's own props, so a mark keeps its shape
+while it follows a Magic Move transition; pass `seed` in `options` to pick one
+by hand.
 
 The default colour is the `--drawn-annotation-color` CSS variable, which this
 deck points at the theme purple in `style.css`. The variable is read where it
@@ -269,12 +271,16 @@ narrower scope:
 
 ## Dropping it into a theme
 
-The component is self-contained: it talks to Slidev only through the public
-`@slidev/client` context, and `vue` and `@vueuse/core` already ship with
-Slidev. To move it into a theme:
+The component talks to Slidev through the public `@slidev/client` context —
+plus one internal constant, `injectionClicksContext` from
+`@slidev/client/constants.ts`, which `insert` needs in order to shift a Magic
+Move block's clicks — and `vue` and `@vueuse/core` already ship with Slidev.
+To move it into a theme:
 
-1. copy `DrawnAnnotation.vue` into the theme's `components/` directory, where
-   Slidev auto-registers it for every deck that uses the theme;
+1. copy `DrawnAnnotation.vue` and `code-text-match.ts` (the text matching it
+   shares with `InlineCompilerError`) into the theme's `components/`
+   directory, where Slidev auto-registers the component for every deck that
+   uses the theme;
 2. add `roughjs` to the theme's `dependencies` — it draws every stroke;
 3. define `--drawn-annotation-color` (and, if wanted, the label variables
    above) in the theme's styles to pick the theme-wide default look.
@@ -355,3 +361,13 @@ to `:at="2" :until="3"`; `:on="0"` shows it only before the first click.
 The diagnostic waits for a Magic Move transition to finish before it appears,
 then recalculates its position as code, fonts, or slide scale change. In print
 mode it is shown synchronously so exports capture it.
+
+## Styling
+
+| CSS variable | default | meaning |
+| --- | --- | --- |
+| `--inline-compiler-error-color` | IntelliJ's error reds | colour of the squiggle, the dot, and the message |
+| `--inline-compiler-error-message-size` | the annotated code's font size | message font size |
+
+Both are read where they are used, so any scope can redefine them — a single
+slide's class as well as `:root`.
