@@ -1,24 +1,5 @@
-<script setup lang="ts">
-import { computed } from 'vue'
-import { useSlideContext } from '@slidev/client'
-
-interface Props {
-  variant?: string
-  size?: 'small' | 'large' | 'medium'
-  position?: 'corner' | 'featured' | 'custom'
-  x?: number
-  y?: number
-  scale?: number
-}
-
-const props = withDefaults(defineProps<Props>(), {
-  variant: 'greeting',
-  size: 'small',
-  position: 'corner',
-  x: undefined,
-  y: undefined,
-  scale: undefined,
-})
+<script lang="ts">
+// Module scope, shared by every mascot instance.
 
 // Bundle mascot assets with the theme instead of relying on Slidev to copy a
 // dependency's public directory into the consuming presentation.
@@ -28,11 +9,62 @@ const kodeeAssets = import.meta.glob('../assets/kodee-*.svg', {
   query: '?url',
 }) as Record<string, string>
 
+// Per-variant offsets for the `corner` position. Each artwork carries its own
+// padding inside its viewBox, so the baseline is tuned by hand to sit on the
+// slide edge; `kodee-heart`, for example, extends 10px farther below its
+// viewBox center than `kodee-greeting`, which establishes the default.
+const CORNER_OFFSETS: Record<string, Record<string, string>> = {
+  'kodee-greeting': { bottom: '-42px', right: '-15px' },
+  'kodee-wink': { bottom: '-35px', right: '-20px' },
+  'kodee-wave': { bottom: '-15px', right: '-15px' },
+  'kodee-heart': { bottom: '-32px', right: '-30px' },
+  'kodee-jumping': { bottom: '-34px', right: '-15px' },
+  'kodee-sitting': { bottom: '-35px', right: '-5px' },
+  'kodee-drinking': { bottom: '-36px', right: '-31px' },
+  'kodee-in-love': { bottom: '-31px', right: '-15px' },
+  'kodee-welcome': { bottom: '-37px', right: '-15px' },
+  'kodee-winter': { bottom: '-27px', right: '-15px' },
+  'kodee-tiny': { bottom: '-8px', width: '100px', height: '100px' },
+}
+
+// Per-variant offsets for the `featured` position, over its shared baseline.
+const FEATURED_OFFSETS: Record<string, Record<string, string>> = {
+  'kodee-greeting': { top: '13%' },
+  'kodee-wink': { top: '10%' },
+  'kodee-wave': { top: '16%', right: '3%' },
+}
+</script>
+
+<script setup lang="ts">
+import { computed, watchEffect } from 'vue'
+import { useSlideContext } from '@slidev/client'
+import type { KodeeProps } from './kodee-props'
+
+const props = withDefaults(defineProps<KodeeProps>(), {
+  variant: 'greeting',
+  size: 'small',
+  position: 'corner',
+})
+
 const variantName = computed(() =>
   props.variant.startsWith('kodee-') ? props.variant : `kodee-${props.variant}`,
 )
 
 const kodeeImage = computed(() => kodeeAssets[`../assets/${variantName.value}.svg`])
+
+// A typo'd variant renders nothing, so name the alternatives instead of
+// leaving the author to diff file names against their frontmatter.
+if (import.meta.env.DEV) {
+  watchEffect(() => {
+    if (!kodeeImage.value) {
+      const available = Object.keys(kodeeAssets)
+        .map(path => path.replace('../assets/kodee-', '').replace('.svg', ''))
+        .sort()
+        .join(', ')
+      console.warn(`[Kodee] Unknown variant "${props.variant}" — no mascot is shown. Available variants: ${available}`)
+    }
+  })
+}
 
 // Compute size classes and dimensions
 const sizeConfig = computed(() => {
@@ -55,67 +87,15 @@ const positionStyles = computed(() => {
     position: 'absolute',
     width: sizeConfig.value.width,
     height: sizeConfig.value.height,
+    right: '0px',
   }
 
   const variant = variantName.value
 
-  styles.right = '0px'
   if (props.position === 'corner') {
-    if (variant === 'kodee-greeting') {
-      styles.bottom = '-42px'
-      styles.right = '-15px'
-    } else if (variant === 'kodee-wink') {
-      styles.bottom = '-35px'
-      styles.right = '-20px'
-    } else if (variant === 'kodee-wave') {
-      styles.bottom = '-15px'
-      styles.right = '-15px'
-    } else if (variant === 'kodee-heart') {
-      // This artwork extends 10px farther below its viewBox center than the
-      // greeting variant that establishes the default corner baseline.
-      styles.bottom = '-32px'
-      styles.right = '-30px'
-    } else if (variant === 'kodee-jumping') {
-      styles.bottom = '-34px'
-      styles.right = '-15px'
-    } else if (variant === 'kodee-sitting') {
-      styles.bottom = '-35px'
-      styles.right = '-5px'
-    } else if (variant === 'kodee-drinking') {
-      styles.bottom = '-36px'
-      styles.right = '-31px'
-    } else if (variant === 'kodee-in-love') {
-      styles.bottom = '-31px'
-      styles.right = '-15px'
-    } else if (variant === 'kodee-welcome') {
-      styles.bottom = '-37px'
-      styles.right = '-15px'
-    } else if (variant === 'kodee-winter') {
-      styles.bottom = '-27px'
-      styles.right = '-15px'
-    } else if (variant === 'kodee-tiny') {
-      styles.height = '100px'
-      styles.width = '100px'
-      styles.bottom = '-8px'
-    } else {
-      styles.bottom = '-42px'
-    }
-
+    Object.assign(styles, { bottom: '-42px' }, CORNER_OFFSETS[variant])
   } else if (props.position === 'featured') {
-    styles.right = '-5%'
-    styles.transform = 'translateY(-40%)'
-
-    if (variant === 'kodee-greeting') {
-      styles.top = '13%'
-    } else if (variant === 'kodee-wink') {
-      styles.top = '10%'
-    } else if (variant === 'kodee-wave') {
-      styles.top = '16%'
-      styles.right = '3%'
-    } else {
-      styles.top = '0%'
-    }
-
+    Object.assign(styles, { right: '-5%', transform: 'translateY(-40%)', top: '0%' }, FEATURED_OFFSETS[variant])
   } else if (props.position === 'custom' && props.x !== undefined && props.y !== undefined) {
     styles.left = `${props.x}px`
     styles.top = `${props.y}px`
@@ -170,13 +150,16 @@ const motionConfig = computed(() => {
 </script>
 
 <template>
+  <!-- The mascot is decoration; an empty alt keeps screen readers from
+       announcing it on every slide. -->
   <img
+      v-if="kodeeImage"
       v-motion
       :initial="motionConfig.initial"
       :enter="motionConfig.enter"
       :leave="motionConfig.leave"
       :src="kodeeImage"
-      :alt="`Kodee ${variant}`"
+      alt=""
       :style="positionStyles"
       class="kodee-character"
   />

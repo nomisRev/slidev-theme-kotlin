@@ -33,7 +33,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@shikijs/magic-move": "4.4.3",
     "@slidev/types": "52.19.1",
+    "lz-string": "1.5.0",
     "roughjs": "4.6.6"
   },
   "devDependencies": {
