@@ -33,9 +33,7 @@ npm install slidev-theme-kotlin
 
 ### Visual annotation editor (development)
 
-The optional editor writer is a Vite development plugin. It writes normalized
-geometry directly to the selected `DrawnAnnotation` opening tag; it is not
-included in builds or exports. Enable it from the consuming deck's
+Enable the optional, development-only source writer in the consuming deck's
 `vite.config.ts`:
 
 ```ts
@@ -47,25 +45,14 @@ export default defineConfig({
 })
 ```
 
-No generated stylesheet or annotation ID is required. While serving, the plugin
-injects an opaque locator derived from the Markdown opening tag; it is never
-written to Markdown or emitted in builds. The local `POST
-/__drawn-annotation-source` endpoint validates that locator and the source
-revision, rejects stale changes, and atomically rewrites only the selected tag's
-`:geometry` binding. In development, press **Alt+Shift+A**, then drag a visible
-label (or its selected width handle), connector body, or connector endpoint. Connector endpoints snap
-to slide edge/centre guides and the annotation's source, target, and label
-ports; hold `Alt` while dragging to place freely. Arrow keys nudge whichever
-control was selected: labels move their label, the label width handle changes
-maximum width, endpoint handles move that endpoint, and a connector body moves
-the complete line (`Shift` makes larger steps). The toolbar can undo completed
-saves (or press **Cmd/Ctrl+Z** while an annotation is selected), reset a
-selected label, connector, or complete annotation to its authored defaults,
-and explicitly switch the selected connector between a manual frozen route and
-its automatic attached route. If another browser saves first and the writer
-reports a revision conflict, use **Reload saved geometry** to discard local
-drafts and adopt that saved revision before continuing.
-The writer is source-local: it needs no output file or stylesheet import.
+Open Slidev's annotation editor (or press **Alt+Shift+A**) and drag a visible
+label, its width handle, or a connector control. The editor persists normalized
+`:geometry` on exactly that `DrawnAnnotation` tag. **Cmd/Ctrl+Z** undoes a
+saved edit; reset controls restore label, connector, or all geometry. Source
+revisions are checked, so a conflict preserves the local draft until **Reload
+saved geometry** is chosen. The locator, toolbar, and write endpoint exist only
+while Vite serves the deck; builds and exports render saved geometry without
+editor code.
 
 ### Basic Setup
 
@@ -91,14 +78,6 @@ the presentation color scheme:
 fun main() = println("Hello")
 ```
 
-```kotlin jdbc
-val database = Database.connect("jdbc:postgresql://localhost/example")
-```
-
-```kotlin r2dbc
-val database = R2dbcDatabase.connect("r2dbc:postgresql://localhost/example")
-```
-
 ```kts gradle
 plugins { kotlin("jvm") }
 ```
@@ -116,8 +95,7 @@ SELECT * FROM presentations;
 ```
 ````
 
-`kotlin`, `kt`, and `kts` use the Kotlin icon. Kotlin fences with the `jdbc` or
-`r2dbc` modifier use matching text badges and border colours; the `gradle` modifier
+`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle` modifier
 uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the
 Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
 remain plain code surfaces.
@@ -129,8 +107,6 @@ value:
 ```css
 :root {
   --code-window-kotlin-color: #834df0;
-  --code-window-jdbc-color: #f59e0b;
-  --code-window-r2dbc-color: #06b6d4;
   --code-window-gradle-color: #6c707e;
   --code-window-amper-color: #087cfa;
   --code-window-java-color: #e66d17;
@@ -296,26 +272,7 @@ fun main() = println("Hello, Kotlin!")
 </DrawnAnnotation>
 ````
 
-The full prop reference, timing behavior, visual-editor controls, and troubleshooting guide are in [`components/README.md`](components/README.md). The bundled [`slides.md`](slides.md) includes working examples of code annotations, connectors, labels, sequential reveals, and Magic Move integration.
-
-### Visual DrawnAnnotation editor
-
-The editor is opt-in and exists only while Vite serves a deck. It writes normalized geometry into the exact `DrawnAnnotation` opening tag; builds, exports, presenter mode, and deployed decks render that source geometry but expose neither controls nor a write endpoint.
-
-Enable the narrowly scoped development writer in the deck's `vite.config.ts`:
-
-```ts
-import { defineConfig } from 'vite'
-import { drawnAnnotationEditor } from 'slidev-theme-kotlin/annotation-editor'
-
-export default defineConfig({
-  plugins: [drawnAnnotationEditor()],
-})
-```
-
-No annotation ID, generated CSS file, or stylesheet import is needed. While serving, the plugin injects an opaque locator derived from the Markdown file and the opening tag's text without its `:geometry` binding, so the locator stays the same across the editor's own saves. Slidev serves each slide as its own virtual module, so the locator always names the real file, and the tag is found again by content rather than by offset. It is never written to Markdown or emitted in a production build. The writer validates that locator and the source revision (fetched separately, per file), then atomically replaces only the tag's `:geometry` binding. A stale source change returns a conflict rather than modifying another tag. Undo always returns to the geometry the source held before the edit, including geometry authored by hand before the editing session.
-
-Run `slidev slides.md`, then use **Edit annotations** or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. Drag a visible label to move it, use its right-side handle to change maximum width, and drag a connector's endpoints or body to make its route manual. Connector snapping targets the slide edges/centre and the current annotation's source, target, and label ports; hold <kbd>Alt</kbd> while dragging to disable it. Focus a selected label, its width handle, a connector endpoint, or the connector body and use arrow keys to nudge it (<kbd>Shift</kbd> for larger steps; the width handle uses left/right only). Clicking outside editor controls clears the current selection without suppressing Slidev's normal canvas click behavior. The toolbar resets label/connector/all geometry, switches a connector back to automatic attachment, and supports <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> for the selected annotation. A revision conflict preserves the local draft for inspection; choose **Reload saved geometry** to discard it and continue from the revision saved by the other browser.
+The full prop reference, timing behavior, and troubleshooting guide are in [`components/README.md`](components/README.md). The bundled [`slides.md`](slides.md) includes working examples of code annotations, connectors, labels, sequential reveals, and Magic Move integration.
 
 ### Using InlineCompilerError
 
@@ -369,9 +326,6 @@ npm run export
 
 # Export every slide and click state as PNG screenshots
 npm run screenshot
-
-# Drive the annotation editor in a real browser against a throwaway copy of slides.md
-npm run test:annotation-editor
 
 # Export one slide; --click is zero-based (0 is the initial state)
 npm run export:slide -- --slide 12 --click 3
@@ -473,17 +427,9 @@ The `.visual/` directory contains disposable base/current captures and diffs
 and is ignored by Git. `npm run screenshot` is the non-comparison escape hatch
 when raw PNGs are all that is needed.
 
-The visual exporter and `npm run test:annotation-editor` require the Chromium
-binary supplied by `playwright-chromium`. The editor browser test copies
-`slides.md` to a temporary deck, starts an isolated development server on it,
-and drives the editor with real pointer and keyboard gestures: dragging the
-label, width handle and a connector endpoint must write `:geometry` to that
-one tag; the selection must survive each HMR cycle; Undo must restore the
-previous source geometry; an external edit must produce the 409 recovery
-prompt that "Reload saved geometry" clears; and an arrow key must nudge the
-focused label. The checked-in `slides.md` is never modified. If dependency
-installation is configured not to run package install scripts, download
-Chromium once with:
+The visual exporter requires the Chromium binary supplied by
+`playwright-chromium`. If dependency installation is configured not to run
+package install scripts, download it once with:
 
 ```bash
 npx playwright install chromium

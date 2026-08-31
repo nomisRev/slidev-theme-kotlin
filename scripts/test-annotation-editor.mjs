@@ -22,12 +22,12 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 // resolve relative to the entry file.
 const entry = 'slides.annotation-editor-test.md'
 const copy = resolve(root, entry)
-const FIXTURE_SLIDE = 27
+const FIXTURE_SLIDE = 32
 const FIXTURE_LABEL = 'the entry point of every Kotlin program'
 const FIXTURE_TAG_MARKER = 'text="fun main"'
 const STEP_TIMEOUT = 15_000
 const port = randomInt(31000, 39000)
-const origin = `http://127.0.0.1:${port}`
+const origin = `http://localhost:${port}`
 
 await copyFile(resolve(root, 'slides.md'), copy)
 const server = spawn(process.execPath, [
