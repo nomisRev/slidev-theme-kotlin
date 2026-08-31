@@ -50,8 +50,11 @@
     "colorSchema": "both",
     "defaults": {
       "fonts": {
-        "sans": "Inter",
-        "mono": "JetBrains Mono"
+        "sans": "JetBrains Sans,Inter",
+        "mono": "JetBrains Mono Local,JetBrains Mono",
+        "local": "JetBrains Sans,JetBrains Mono Local",
+        "weights": "400,700,800",
+        "italic": true
       }
     }
   }

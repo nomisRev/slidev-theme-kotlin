@@ -12,7 +12,7 @@ This theme provides a professional presentation template tailored for Kotlin dev
 - **Kotlin Syntax Highlighting**: Custom Shiki configuration optimized for Kotlin code
 - **Multiple Layouts**: Pre-built layouts including default, cover, and intro
 - **Kotlin Branding**: Official Kotlin logos for both light and dark modes
-- **JetBrains Fonts**: Uses Inter for sans-serif and JetBrains Mono for code
+- **JetBrains Fonts**: Prefers locally installed JetBrains Sans and JetBrains Mono, with Inter and Google-hosted JetBrains Mono fallbacks
 - **Drawn annotations**: Click-aware, hand-drawn marks, labels, and connectors for elements and code
 - **Inline compiler diagnostics**: IntelliJ-style squiggles and messages for static and Magic Move code blocks
 
