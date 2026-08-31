@@ -1,10 +1,6 @@
 export function codeWindowIcon(language: string, meta = ''): string | undefined {
   const modifier = meta.trim().split(/\s+/)[0]
 
-  if (['kotlin', 'kt', 'kts'].includes(language) && modifier === 'jdbc')
-    return 'jdbc'
-  if (['kotlin', 'kt', 'kts'].includes(language) && modifier === 'r2dbc')
-    return 'r2dbc'
   if (['kotlin', 'kt', 'kts'].includes(language) && modifier === 'gradle')
     return 'gradle'
   if (language === 'yaml' && modifier === 'toolchain')
