@@ -15,7 +15,7 @@ import { localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFracti
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, watch, watchEffect } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
 // development-only editing to Vite's explicit serve mode so published decks
@@ -73,8 +73,8 @@ const props = withDefaults(defineProps<{
   selector?: string
   /** Exact text to annotate inside the slot. Works inside Shiki and Magic Move. */
   text?: string
-  /** Which occurrence of `text` to annotate, 1-based. */
-  occurrence?: number
+  /** Which occurrence of `text` to annotate, 1-based. Markdown attributes arrive as strings. */
+  occurrence?: number | string
   /** Mark every visual line of a wrapped or multi-line match. */
   multiline?: boolean
   /** Extra space between the annotated box and the mark, in slide pixels. */
@@ -298,6 +298,18 @@ const clickMarker = ref<HTMLElement>()
 const labelMarker = ref<HTMLElement>()
 const overlay = ref<SVGSVGElement>()
 const labelEl = ref<HTMLElement>()
+
+// Wrapped annotations only search their own slot. A self-closing annotation
+// intentionally searches the remaining slide so it can point at following
+// Markdown without adding a wrapper around it.
+const slots = useSlots()
+function searchRoot() {
+  const root = container.value
+  if (slots.default || !root)
+    return root
+  return root.closest<HTMLElement>('.slidev-layout') ?? root.parentElement ?? root
+}
+const searchScope = () => slots.default ? 'the slot' : 'the content below this annotation on the slide'
 
 // The mark and the label can share one click or be spread over two, which is
 // what makes "mark it, then name it" possible from Markdown.
@@ -647,7 +659,7 @@ function padBox(box: Box, padding: number) {
  * starts and ends in different nodes. The number of matches is reported either
  * way, so a miss can be explained rather than silently swallowed.
  */
-function textRange(root: HTMLElement, needle: string, occurrence: number): { range?: Range, matches: number } {
+function textRange(root: HTMLElement, needle: string, occurrence: number | string): { range?: Range, matches: number } {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
     acceptNode(node) {
       const parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement
@@ -679,7 +691,8 @@ function textRange(root: HTMLElement, needle: string, occurrence: number): { ran
   const starts: number[] = []
   for (let index = value.indexOf(needle); index >= 0; index = value.indexOf(needle, index + 1))
     starts.push(index)
-  const start = starts[Math.max(1, occurrence) - 1]
+  const requestedOccurrence = Number(occurrence)
+  const start = starts[Math.max(1, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1) - 1]
   if (start === undefined)
     return { matches: starts.length }
 
@@ -892,17 +905,17 @@ function explainMissing(match?: { range?: Range, matches: number }) {
   if (everFound || !missingIsAnError.value)
     return
   if (!props.text)
-    warn(`Selector "${props.selector}" matched nothing inside the slot. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
+    warn(`Selector "${props.selector}" matched nothing inside ${searchScope()}. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
   else if (!match || match.matches === 0)
-    warn(`Text "${props.text}" was not found in the slot. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
-  else if (match.matches < Math.max(1, props.occurrence))
+    warn(`Text "${props.text}" was not found in ${searchScope()}. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
+  else if (match.matches < Math.max(1, Number(props.occurrence)))
     warn(`Text "${props.text}" ${match.matches === 1 ? 'matches only once' : `matches only ${match.matches} times`}, but \`occurrence\` asks for match ${props.occurrence}.`)
   else
     warn(`Text "${props.text}" was found, but has no size on screen right now, so there is nothing to draw around.`)
 }
 
 function updateGeometry() {
-  const root = container.value
+  const root = searchRoot()
   const svg = overlay.value
   if (!root || !svg)
     return
