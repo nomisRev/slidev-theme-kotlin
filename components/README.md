@@ -83,9 +83,13 @@ props are accepted for compatibility but no longer affect placement.
 
 ## When it is drawn
 
+An annotation with neither `at` nor `on` is part of the initial slide state;
+it does not add a click. Give `at` or `on` to create a reveal, using Slidev's
+native `v-click` click-ordering semantics.
+
 | prop | default | meaning |
 | --- | --- | --- |
-| `at` | next click | click that draws the mark and its leader line; takes part in Slidev's click ordering like `v-click` |
+| `at` | – | click that draws the mark and its leader line; when omitted, the annotation is visible in the initial state. An explicit value takes part in Slidev's click ordering like `v-click` |
 | `label-at` | `at` | click that writes the label |
 | `until` | – | click that takes the annotation away again; exclusive, like the end of a `v-click` range |
 | `on` | – | `at` and `until` in one, for an annotation that belongs to a single click |

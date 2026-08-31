@@ -6,7 +6,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path'
 export interface DrawnAnnotationLabelGeometry { x: number, y: number, width?: number }
 export interface DrawnAnnotationGeometryPatch {
   label?: DrawnAnnotationLabelGeometry | null
-  connector?: { start: { x: number, y: number }, end: { x: number, y: number } } | null
+  connector?: { start: { x: number, y: number }, control?: { x: number, y: number }, end: { x: number, y: number } } | null
 }
 export interface DrawnAnnotationEditorOptions {}
 
@@ -53,8 +53,9 @@ export function validateGeometryPatch(value: unknown): DrawnAnnotationGeometryPa
     if (input.connector === null) result.connector = null
     else {
       const connector = input.connector as Record<string, unknown>
-      if (Object.keys(connector).some(key => key !== 'start' && key !== 'end')) throw new Error('connector has an unknown property')
-      result.connector = { start: point(connector.start, 'connector.start'), end: point(connector.end, 'connector.end') }
+      if (Object.keys(connector).some(key => key !== 'start' && key !== 'control' && key !== 'end')) throw new Error('connector has an unknown property')
+      const control = connector.control === undefined ? undefined : point(connector.control, 'connector.control')
+      result.connector = { start: point(connector.start, 'connector.start'), ...(control ? { control } : {}), end: point(connector.end, 'connector.end') }
     }
   }
   return result
@@ -64,7 +65,12 @@ function format(value: number) { return value.toFixed(4) }
 export function serializeGeometry(geometry: DrawnAnnotationGeometryPatch) {
   const parts: string[] = []
   if (geometry.label) parts.push(`label: { x: ${format(geometry.label.x)}, y: ${format(geometry.label.y)}${geometry.label.width === undefined ? '' : `, width: ${format(geometry.label.width)}`} }`)
-  if (geometry.connector) parts.push(`connector: { start: { x: ${format(geometry.connector.start.x)}, y: ${format(geometry.connector.start.y)} }, end: { x: ${format(geometry.connector.end.x)}, y: ${format(geometry.connector.end.y)} } }`)
+  if (geometry.connector) {
+    const { start, control, end } = geometry.connector
+    parts.push(control
+      ? `connector: { type: 'quadratic', start: { x: ${format(start.x)}, y: ${format(start.y)} }, control: { x: ${format(control.x)}, y: ${format(control.y)} }, end: { x: ${format(end.x)}, y: ${format(end.y)} } }`
+      : `connector: { start: { x: ${format(start.x)}, y: ${format(start.y)} }, end: { x: ${format(end.x)}, y: ${format(end.y)} } }`)
+  }
   return `{ ${parts.join(', ')} }`
 }
 

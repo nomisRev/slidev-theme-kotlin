@@ -22,7 +22,7 @@ describe('DrawnAnnotation source geometry', () => {
     })
     expect(validateDrawnAnnotationGeometry({
       connector: { type: 'quadratic', start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } },
-    })).toEqual({ connector: { start: { x: .1, y: .2 }, end: { x: .5, y: .6 } } })
+    })).toEqual({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } })
     expect(validateDrawnAnnotationGeometry({
       connector: { type: 'polyline', points: [{ x: .1, y: .2 }, { x: .3, y: .4 }, { x: .5, y: .6 }] },
     })).toEqual({ connector: { start: { x: .1, y: .2 }, end: { x: .5, y: .6 } } })

@@ -334,12 +334,16 @@ const $clicks = toRef($clicksContext, 'current')
 // otherwise the view-transition snapshot captures the finished mark.
 const isCurrentSlide = computed(() => slideContext.$page.value === $nav.value.currentSlideNo)
 provide(realClicksKey, $clicksContext)
+// An annotation without `at` or `on` belongs to the slide's initial state.
+// It must not render a bare `v-click` marker: Slidev treats that as the next
+// automatic click, adding a reveal the author did not ask for.
+const hasExplicitStartClick = computed(() => props.at !== undefined || props.on !== undefined)
 // Slidev's click ordering runs in the context the markers are rendered in, and
 // that one is shifted here. So these annotations resolve and register their
 // clicks themselves, from the numbers on the props.
 // Slidev deliberately normalizes `v-click="0"` to click 1. Resolve an
 // annotation on click 0 ourselves so it can be present before the first click.
-const startsOnInitialSlide = computed(() => Number(atClick.value) === 0)
+const startsOnInitialSlide = computed(() => hasExplicitStartClick.value && Number(atClick.value) === 0)
 const manualClicks = computed(() => props.insert || !!outerClicksContext || startsOnInitialSlide.value)
 const painted = computed(() => geometryPainted.value || showImmediately.value)
 // True once the animations triggered by the current click have finished.
@@ -1137,9 +1141,19 @@ function paintDestinationInto(
     const overlayBox = overlay.value.getBoundingClientRect()
     start = slideFractionPointToLocal({ x: savedConnector.x1, y: savedConnector.y1 }, slideBox, overlayBox, geometry)
     end = slideFractionPointToLocal({ x: savedConnector.x2, y: savedConnector.y2 }, slideBox, overlayBox, geometry)
-    c2x = start.x
-    c2y = start.y
-    paths.leader = toPaths(generator.line(start.x, start.y, end.x, end.y, roughOptions()))
+    if (savedConnector.cx !== undefined && savedConnector.cy !== undefined) {
+      const control = slideFractionPointToLocal({ x: savedConnector.cx, y: savedConnector.cy }, slideBox, overlayBox, geometry)
+      // The authored control point is a genuine quadratic Bézier control, not
+      // merely legacy metadata. Rough.js retains the curve's hand-drawn look.
+      c2x = control.x
+      c2y = control.y
+      paths.leader = toPaths(generator.path(`M ${start.x} ${start.y} Q ${control.x} ${control.y}, ${end.x} ${end.y}`, roughOptions()))
+    }
+    else {
+      c2x = start.x
+      c2y = start.y
+      paths.leader = toPaths(generator.line(start.x, start.y, end.x, end.y, roughOptions()))
+    }
   }
   else {
     const route = routeLeader(markBox, destination, endPoint)
@@ -1289,7 +1303,12 @@ const sourceGeometry = computed<DrawnAnnotationGeometry | undefined>(() => {
 /** Source geometry is the persisted state; editor drafts remain visible through HMR. */
 function persistedLabelGeometry(): PersistedAnnotationGeometry {
   const value = sourceGeometry.value
-  return { x: value?.label?.x, y: value?.label?.y, width: value?.label?.width, x1: value?.connector?.start.x, y1: value?.connector?.start.y, x2: value?.connector?.end.x, y2: value?.connector?.end.y }
+  return {
+    x: value?.label?.x, y: value?.label?.y, width: value?.label?.width,
+    x1: value?.connector?.start.x, y1: value?.connector?.start.y,
+    x2: value?.connector?.end.x, y2: value?.connector?.end.y,
+    cx: value?.connector?.control?.x, cy: value?.connector?.control?.y,
+  }
 }
 function draftLabelGeometry() { return locator.value ? annotationDrafts.get(locator.value) : undefined }
 function effectiveLabelX() { return draftLabelGeometry()?.x ?? persistedLabelGeometry().x }
@@ -1305,7 +1324,7 @@ function manualConnector() {
   const y2 = draft?.y2 ?? saved.y2
   return x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined
     ? undefined
-    : { x1, y1, x2, y2 }
+    : { x1, y1, x2, y2, cx: draft?.cx ?? saved.cx, cy: draft?.cy ?? saved.cy }
 }
 
 function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
@@ -1468,7 +1487,11 @@ onMounted(async () => {
   }
   // Registered synchronously, while the clicks context still accepts it.
   if (manualClicks.value) {
-    resolvedClick.value = manualClick(atClick.value, props.on !== undefined ? 'on' : 'at')
+    // No start prop means the annotation is already present at click 0, even
+    // when an enclosing annotation makes its click handling manual.
+    resolvedClick.value = hasExplicitStartClick.value
+      ? manualClick(atClick.value, props.on !== undefined ? 'on' : 'at')
+      : 0
     resolvedLabelClick.value = props.labelAt === undefined
       ? resolvedClick.value
       : manualClick(props.labelAt, 'label-at')
@@ -1476,10 +1499,12 @@ onMounted(async () => {
   }
   await nextTick()
   if (!manualClicks.value) {
-    // Slidev resolves automatic click ordering in the directive and stores the
-    // result on the marker. Reading it here keeps the first painted state
-    // unambiguously hidden, unlike styling a v-click element directly.
-    resolvedClick.value = markerClick(clickMarker.value)
+    // An unqualified annotation is initial content, not a bare `v-click`.
+    // Explicit `at`/`on` values deliberately retain Slidev's native v-click
+    // parsing and automatic-ordering semantics.
+    resolvedClick.value = hasExplicitStartClick.value
+      ? markerClick(clickMarker.value)
+      : 0
     // A label without a click of its own follows the mark, rather than taking
     // the next click in the slide's automatic ordering.
     resolvedLabelClick.value = props.labelAt === undefined
@@ -1657,7 +1682,7 @@ let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 const savingDraftSignatures = new Set<string>()
 /** Independent of key order, so a draft compares equal to the same geometry read back from the source. */
 function draftSignature(geometry: PersistedAnnotationGeometry) {
-  return JSON.stringify([geometry.x, geometry.y, geometry.width, geometry.x1, geometry.y1, geometry.x2, geometry.y2].map(value => value ?? null))
+  return JSON.stringify([geometry.x, geometry.y, geometry.width, geometry.x1, geometry.y1, geometry.x2, geometry.y2, geometry.cx, geometry.cy].map(value => value ?? null))
 }
 
 /** Save during a pause in a long drag as well as on pointer release. */
@@ -1811,7 +1836,7 @@ function cancelLabelDrag(event: PointerEvent) {
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
-let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, connector: { x1: number, y1: number, x2: number, y2: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function localConnectorFraction(point: Point) {
   const slide = slideRoot()
@@ -1872,7 +1897,8 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   event.preventDefault()
   event.stopPropagation()
   selectAnnotation(locator.value, kind)
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  const saved = manualConnector()
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
 
@@ -1904,6 +1930,14 @@ function moveConnectorDrag(event: PointerEvent) {
     const translated = translateConnector(next, dx, dy)
     const snapped = snapConnectorPoint({ x: translated.x1, y: translated.y1 }, event.altKey)
     Object.assign(next, translateConnector(translated, snapped.x - translated.x1, snapped.y - translated.y1))
+    // A body drag translates the entire Bézier control polygon, preserving
+    // the authored curve instead of silently straightening or distorting it.
+    if (next.cx !== undefined && next.cy !== undefined) {
+      const movedX = next.x1 - connectorDrag.connector.x1
+      const movedY = next.y1 - connectorDrag.connector.y1
+      next.cx = fraction(connectorDrag.connector.cx! + movedX)
+      next.cy = fraction(connectorDrag.connector.cy! + movedY)
+    }
   }
   setLabelDraft(locator.value, next)
   scheduleDraftSave(connectorDrag)
@@ -2033,7 +2067,7 @@ onBeforeUnmount(() => {
       >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
-    <span ref="clickMarker" v-click="manualClicks ? false : atClick" class="click-marker annotation-ignore" />
+    <span ref="clickMarker" v-click="manualClicks || !hasExplicitStartClick ? false : atClick" class="click-marker annotation-ignore" />
     <span v-if="props.labelAt !== undefined" ref="labelMarker" v-click="manualClicks ? false : props.labelAt" class="click-marker annotation-ignore" />
     <svg
       ref="overlay"

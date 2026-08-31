@@ -1,7 +1,7 @@
 import type { PersistedAnnotationGeometry } from './geometry'
 
 type GeometryReset = 'label' | 'connector'
-interface WriterResponse { geometry?: { label?: { x: number, y: number, width?: number }, connector?: { start: { x: number, y: number }, end: { x: number, y: number } } }, revision?: string, revisions?: Record<string, string>, error?: string, recovery?: string }
+interface WriterResponse { geometry?: { label?: { x: number, y: number, width?: number }, connector?: { start: { x: number, y: number }, control?: { x: number, y: number }, end: { x: number, y: number } } }, revision?: string, revisions?: Record<string, string>, error?: string, recovery?: string }
 /** Source revisions by Markdown file. A locator names a tag, never a revision. */
 const revisions = new Map<string, string>()
 /** What this tab last wrote for a locator, until a conflict proves the source moved on. */
@@ -9,12 +9,16 @@ let cachedGeometry = new Map<string, PersistedAnnotationGeometry>()
 let pendingWrite = Promise.resolve()
 
 function flatten(geometry: WriterResponse['geometry']): PersistedAnnotationGeometry {
-  return { x: geometry?.label?.x, y: geometry?.label?.y, width: geometry?.label?.width, x1: geometry?.connector?.start.x, y1: geometry?.connector?.start.y, x2: geometry?.connector?.end.x, y2: geometry?.connector?.end.y }
+  return { x: geometry?.label?.x, y: geometry?.label?.y, width: geometry?.label?.width, x1: geometry?.connector?.start.x, y1: geometry?.connector?.start.y, x2: geometry?.connector?.end.x, y2: geometry?.connector?.end.y, cx: geometry?.connector?.control?.x, cy: geometry?.connector?.control?.y }
 }
 function documentGeometry(geometry: PersistedAnnotationGeometry | null) {
   if (!geometry) return {}
   const label = geometry.x === undefined || geometry.y === undefined ? undefined : { x: geometry.x, y: geometry.y, ...(geometry.width === undefined ? {} : { width: geometry.width }) }
-  const connector = geometry.x1 === undefined || geometry.y1 === undefined || geometry.x2 === undefined || geometry.y2 === undefined ? undefined : { start: { x: geometry.x1, y: geometry.y1 }, end: { x: geometry.x2, y: geometry.y2 } }
+  const connector = geometry.x1 === undefined || geometry.y1 === undefined || geometry.x2 === undefined || geometry.y2 === undefined
+    ? undefined
+    : geometry.cx !== undefined && geometry.cy !== undefined
+      ? { type: 'quadratic' as const, start: { x: geometry.x1, y: geometry.y1 }, control: { x: geometry.cx, y: geometry.cy }, end: { x: geometry.x2, y: geometry.y2 } }
+      : { start: { x: geometry.x1, y: geometry.y1 }, end: { x: geometry.x2, y: geometry.y2 } }
   return { ...(label ? { label } : {}), ...(connector ? { connector } : {}) }
 }
 /** The Markdown file a locator addresses; the rest of the token stays opaque. */
@@ -56,7 +60,7 @@ export function saveLabelGeometry(locator: string, geometry: PersistedAnnotation
 /** Remove one part from `current`, the geometry the source holds now, and save the rest. */
 export function resetAnnotationGeometry(locator: string, part: GeometryReset, current: PersistedAnnotationGeometry | null) {
   const next = { ...current }
-  if (part === 'label') { delete next.x; delete next.y; delete next.width } else { delete next.x1; delete next.y1; delete next.x2; delete next.y2 }
+  if (part === 'label') { delete next.x; delete next.y; delete next.width } else { delete next.x1; delete next.y1; delete next.x2; delete next.y2; delete next.cx; delete next.cy }
   return enqueue(() => write(locator, next))
 }
 export function restoreAnnotationGeometry(locator: string, geometry: PersistedAnnotationGeometry | null) { return enqueue(() => write(locator, geometry)) }

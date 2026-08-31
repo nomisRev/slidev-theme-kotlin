@@ -28,6 +28,8 @@ export interface DrawnAnnotationGeometry {
   connector?: {
     start: FractionPoint
     end: FractionPoint
+    /** Optional Bézier control point for a curved quadratic connector. */
+    control?: FractionPoint
   }
 }
 
@@ -99,8 +101,11 @@ export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotation
     }
     else if (fields.type === 'quadratic'
       && Object.keys(fields).every(key => key === 'type' || key === 'start' || key === 'control' || key === 'end')) {
-      geometry.connector = { start: point(fields.start, 'start'), end: point(fields.end, 'end') }
-      point(fields.control, 'control')
+      geometry.connector = {
+        start: point(fields.start, 'start'),
+        control: point(fields.control, 'control'),
+        end: point(fields.end, 'end'),
+      }
     }
     else {
       throw new Error('geometry.connector must be `{ start, end }`, a polyline, or a quadratic')
@@ -122,6 +127,9 @@ export interface ManualConnectorGeometry {
   y1?: number
   x2?: number
   y2?: number
+  /** Quadratic Bézier control point, retained independently of its endpoints. */
+  cx?: number
+  cy?: number
 }
 
 export type PersistedAnnotationGeometry = PersistedLabelGeometry & ManualConnectorGeometry

@@ -73,6 +73,10 @@ async function toggleEditor() {
   if (annotationEditMode.value) {
     annotationEditMode.value = false
     clearAnnotationSelection()
+    // The status is also what makes the toolbar render while the editor is
+    // inactive (so writer configuration errors can be shown). Do not leave a
+    // successful editing prompt/status behind after the author is done.
+    annotationEditorStatus.value = undefined
     return
   }
   checkingWriter.value = true

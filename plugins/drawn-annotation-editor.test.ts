@@ -49,6 +49,8 @@ describe('source geometry editor', () => {
 
   it('serializes the Markdown geometry binding at fixed precision', () => {
     expect(serializeGeometry({ label: { x: .1, y: .2, width: .33333 } })).toBe('{ label: { x: 0.1000, y: 0.2000, width: 0.3333 } }')
+    expect(serializeGeometry({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } }))
+      .toBe("{ connector: { type: 'quadratic', start: { x: 0.1000, y: 0.2000 }, control: { x: 0.3000, y: 0.4000 }, end: { x: 0.5000, y: 0.6000 } } }")
   })
 
   it('rejects malformed normalized patches', () => {
