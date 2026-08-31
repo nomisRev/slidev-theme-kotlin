@@ -134,7 +134,7 @@ const props = withDefaults(defineProps<{
    * it" into a single reveal instead of two clicks, without anyone having to
    * time it by hand. Turn off to draw both at once.
    */
-  sequential?: boolean
+  sequential?: boolean | string
   /**
    * Click that takes the annotation away again, so it only belongs to the
    * steps it describes. Exclusive, like the end of a `v-click` range: with
@@ -443,7 +443,10 @@ const outerSequence = injectLocal(sequenceKey, null)
 // annotation sharing the enclosing one's click waits for it: one that has a
 // click of its own is already a step later, and starts straight away.
 const sequenceStart = computed(() => {
-  if (!props.sequential || !outerSequence)
+  // Static HTML attributes are strings, so support both `sequential="false"`
+  // and Vue's `:sequential="false"`.
+  const sequential = props.sequential !== false && props.sequential !== 'false'
+  if (!sequential || !outerSequence)
     return 0
   return outerSequence.click.value === resolvedClick.value ? outerSequence.end.value : 0
 })

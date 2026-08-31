@@ -73,8 +73,6 @@ export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotation
     if (!connector || typeof connector !== 'object' || Array.isArray(connector))
       throw new Error('geometry.connector must be an object')
     const fields = connector as Record<string, unknown>
-    if (Object.keys(fields).some(key => key !== 'start' && key !== 'end'))
-      throw new Error('geometry.connector has an unknown property')
     const point = (input: unknown, name: string): FractionPoint => {
       if (!input || typeof input !== 'object' || Array.isArray(input))
         throw new Error(`geometry.connector.${name} must be an object`)
@@ -84,7 +82,29 @@ export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotation
         throw new Error(`geometry.connector.${name} must contain finite x and y fractions from 0 to 1`)
       return { x: coordinates.x, y: coordinates.y }
     }
-    geometry.connector = { start: point(fields.start, 'start'), end: point(fields.end, 'end') }
+
+    // Keep existing editor output (`start` / `end`) and accept paths written
+    // by the previous editor. The focused editor renders a simple authored
+    // leader, so a polyline or quadratic is reduced to its fixed endpoints
+    // rather than making its label and mark disappear altogether.
+    if (Object.keys(fields).every(key => key === 'start' || key === 'end')) {
+      geometry.connector = { start: point(fields.start, 'start'), end: point(fields.end, 'end') }
+    }
+    else if (fields.type === 'polyline' && Array.isArray(fields.points) && fields.points.length >= 2
+      && Object.keys(fields).every(key => key === 'type' || key === 'points')) {
+      geometry.connector = {
+        start: point(fields.points[0], 'points[0]'),
+        end: point(fields.points[fields.points.length - 1], `points[${fields.points.length - 1}]`),
+      }
+    }
+    else if (fields.type === 'quadratic'
+      && Object.keys(fields).every(key => key === 'type' || key === 'start' || key === 'control' || key === 'end')) {
+      geometry.connector = { start: point(fields.start, 'start'), end: point(fields.end, 'end') }
+      point(fields.control, 'control')
+    }
+    else {
+      throw new Error('geometry.connector must be `{ start, end }`, a polyline, or a quadratic')
+    }
   }
   return geometry
 }

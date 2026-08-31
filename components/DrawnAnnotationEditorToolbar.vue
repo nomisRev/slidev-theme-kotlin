@@ -211,11 +211,9 @@ async function undoSelected() {
   <!-- Global layers are singletons, unlike DrawnAnnotation instances. This
        keeps controls out of nested/clipped annotation canvases. `DEV` is not
        enough here: CLI PNG/PDF export uses a Vite server too. -->
-  <aside v-if="editorAvailable" class="drawn-annotation-toolbar" aria-label="Drawn annotation editor" @pointerdown.stop @click.stop>
-    <button type="button" :disabled="checkingWriter" :aria-pressed="annotationEditMode" @click="toggleEditor">
-      {{ annotationEditMode ? 'Done editing annotations' : 'Edit annotations' }}
-    </button>
+  <aside v-if="editorAvailable && (annotationEditMode || annotationEditorStatus)" class="drawn-annotation-toolbar" aria-label="Drawn annotation editor" @pointerdown.stop @click.stop>
     <template v-if="annotationEditMode">
+      <button type="button" @click="toggleEditor">Done editing annotations</button>
       <span class="drawn-annotation-toolbar__selection">{{ selectedDescription }}</span>
       <button type="button" :disabled="!selected" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" @click="reloadSavedGeometry">Reload saved geometry</button>

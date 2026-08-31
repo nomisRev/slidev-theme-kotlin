@@ -22,6 +22,8 @@ export function registerAnnotationEditorActions(locator: string, value: Annotati
   return () => { for (const [key, current] of actions) if (current === value) { actions.delete(key); annotationEditorRegistryVersion.value++ } }
 }
 export function annotationEditorActionsFor(locator: string | undefined) { return locator ? actions.get(locator) : undefined }
+/** Whether the currently mounted slide has at least one editable annotation. */
+export function hasRegisteredAnnotationEditors() { return actions.size > 0 }
 interface AnnotationUndo { locator: string, geometry: PersistedAnnotationGeometry | null }
 const history: AnnotationUndo[] = []
 /**
