@@ -12,7 +12,7 @@ const props = defineProps<{
   /** Exact rendered code text to underline. When `line` is also given, only that line is searched. */
   text?: string
   /** Which occurrence of `text` to underline, 1-based. */
-  occurrence?: number
+  occurrence?: number | string
   message: string
   /** Slidev click at which to reveal the diagnostic. Supports relative values like "+1". Omit (or pass 0) to show it from the start. */
   at?: number | string
@@ -100,11 +100,11 @@ const visible = computed(() => {
   return fromStart ? $clicks.value < info.end : info.isActive.value
 })
 
-// The diagnostic must not appear while Magic Move is still animating, and a
-// click can reveal it a few frames before the step transition it also
-// triggers begins. `revealed` therefore trails `canReveal` by a beat, so the
-// message never flashes at a stale position.
-const canReveal = computed(() => visible.value && hasTarget.value && !animating.value)
+// A new diagnostic must not appear while Magic Move is still animating: a
+// click can reveal it a few frames before the step transition it also triggers
+// begins. Once it is visible, however, it remains visible through later Magic
+// Move steps. Removing it during each swap makes a diagnostic on a retained
+// token fade out and redraw instead of travelling with that token.
 const revealed = ref(false)
 // Classes Shiki Magic Move keeps on its elements only while a step transition
 // is playing. They are private constants of MagicMoveRenderer (renderer.mjs
@@ -120,6 +120,11 @@ const MAGIC_MOVE_ANIMATING = [
 let sawAnimating = false
 let stepSwaps = 0
 let warnedClassDrift = false
+// CSS transforms do not trigger ResizeObserver. Measure once per animation
+// frame while Magic Move moves retained tokens, so an already-visible
+// diagnostic stays attached to its target rather than waiting for the final
+// mutation at the end of the transition.
+let magicMoveFrame: number | undefined
 
 // The wrapped code block renders in one of two shapes, discovered lazily
 // because Magic Move only renders after mount. The <pre>/<code> element
@@ -371,6 +376,7 @@ function sync() {
     warnedClassDrift = true
     console.warn('[InlineCompilerError] Magic Move steps changed but its animation classes were never observed — the private class names in MAGIC_MOVE_ANIMATING may have been renamed by a @shikijs/magic-move upgrade, which would let the message reveal mid-animation.')
   }
+  trackMagicMove()
 
   const range = targetRange.value
   if (!visible.value || !range)
@@ -442,6 +448,15 @@ function sync() {
 // Coalesce observer bursts into one sync per frame: during a Magic Move
 // transition every token flips classes.
 let pendingSync: number | undefined
+
+function trackMagicMove() {
+  if (!animating.value || magicMoveFrame !== undefined)
+    return
+  magicMoveFrame = requestAnimationFrame(() => {
+    magicMoveFrame = undefined
+    sync()
+  })
+}
 function scheduleSync() {
   pendingSync ??= requestAnimationFrame(() => {
     pendingSync = undefined
@@ -467,6 +482,8 @@ onBeforeUnmount(() => {
   $clicksContext?.unregister(id)
   if (pendingSync !== undefined)
     cancelAnimationFrame(pendingSync)
+  if (magicMoveFrame !== undefined)
+    cancelAnimationFrame(magicMoveFrame)
   clearTimeout(revealTimer)
   clearTimeout(missingTargetWarning)
 })
@@ -474,12 +491,26 @@ watch([() => props.line, () => props.text, () => props.occurrence], sync)
 watch(visible, sync)
 
 let revealTimer: ReturnType<typeof setTimeout> | undefined
-watch(canReveal, (can) => {
+watch([visible, hasTarget, animating], ([isVisible, targetPresent, isAnimating]) => {
   clearTimeout(revealTimer)
-  if (!can) {
+  // A click range always wins: a diagnostic explicitly taken away must not
+  // linger just because the same click also begins a Magic Move transition.
+  if (!isVisible) {
     revealed.value = false
     return
   }
+  // A retained target can be briefly absent while Magic Move replaces its DOM
+  // snapshot. Preserve an already-visible diagnostic over that gap; once the
+  // step has settled, a genuinely absent target hides it as usual.
+  if (!targetPresent) {
+    if (!isAnimating)
+      revealed.value = false
+    return
+  }
+  // Only an initial reveal waits for the transition. Existing ink stays in
+  // place and is continuously remeasured by trackMagicMove().
+  if (isAnimating)
+    return
   const reveal = () => {
     revealed.value = true
     sync()
