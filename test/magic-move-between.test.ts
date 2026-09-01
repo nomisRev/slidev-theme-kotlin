@@ -137,6 +137,12 @@ describe('parseFenceInfo', () => {
     expect(fence.optionsRaw).toBe('{at:2}')
   })
 
+  it('keeps nested braces in an options object out of the meta', () => {
+    const fence = parseFenceInfo("kotlin {at:2, style:{color:'red'}}", 'x')
+    expect(fence.optionsRaw).toBe("{at:2, style:{color:'red'}}")
+    expect(fence.meta).toBe('')
+  })
+
   it('keeps modifiers clean of brace groups for the icon lookup', () => {
     expect(parseFenceInfo('kotlin gradle {1|2}', 'x').meta).toBe('gradle')
   })
@@ -177,6 +183,21 @@ describe('extractTopLevelFences', () => {
     const content = '```kotlin\nclass Person(val name: String) {\n    fun introduce() = println("I am $name")\n}\n```'
     expect(extractTopLevelFences(content)[0].code)
       .toBe('class Person(val name: String) {\n    fun introduce() = println("I am $name")\n}')
+  })
+
+  it('counts indented fences without shifting subsequent fence positions', () => {
+    const content = [
+      '  ```kotlin',
+      '  val a = 1',
+      '  ```',
+      '',
+      '```sql',
+      'SELECT 1;',
+      '```',
+    ].join('\n')
+    const fences = extractTopLevelFences(content)
+    expect(fences.map(fence => fence.lang)).toEqual(['kotlin', 'sql'])
+    expect(fences.map(fence => fence.code)).toEqual(['  val a = 1', 'SELECT 1;'])
   })
 
   it('skips classic magic-move blocks and their inner fences', () => {

@@ -37,7 +37,37 @@ export interface ParsedFence {
 }
 
 const SEPARATOR = /^---+$/
-const FENCE_OPEN = /^(`{3,})\s*([^\r\n`]*)$/
+const FENCE_OPEN = /^ {0,3}(`{3,})\s*([^\r\n`]*)$/
+
+function findBalancedBraceGroup(input: string): { start: number, end: number } | undefined {
+  const start = input.indexOf('{')
+  if (start < 0)
+    return undefined
+
+  let depth = 0
+  let quote: string | undefined
+  let escaped = false
+  for (let index = start; index < input.length; index++) {
+    const char = input[index]
+    if (quote) {
+      if (escaped)
+        escaped = false
+      else if (char === '\\')
+        escaped = true
+      else if (char === quote)
+        quote = undefined
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '{')
+      depth++
+    else if (char === '}' && --depth === 0)
+      return { start, end: index + 1 }
+  }
+}
 
 /** Whether a slide's frontmatter marks it as magic-moved from its predecessor. */
 export function isLinkedToPrevious(frontmatter: unknown): boolean {
@@ -122,10 +152,10 @@ export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
   }
 
   let optionsRaw: string | undefined
-  const optionsMatch = rest.match(/\{[^{}]*\}/)
-  if (optionsMatch) {
-    optionsRaw = optionsMatch[0]
-    rest = rest.slice(0, optionsMatch.index) + rest.slice(optionsMatch.index! + optionsMatch[0].length)
+  const optionsGroup = findBalancedBraceGroup(rest)
+  if (optionsGroup) {
+    optionsRaw = rest.slice(optionsGroup.start, optionsGroup.end)
+    rest = rest.slice(0, optionsGroup.start) + rest.slice(optionsGroup.end)
   }
 
   const meta = rest.split(/\s+/).filter(word => word && word !== 'magic-move').join(' ')
@@ -151,7 +181,7 @@ export function extractTopLevelFences(content: string): ParsedFence[] {
     const backticks = open[1]
     let j = i + 1
     for (; j < lines.length; j++) {
-      if (lines[j].startsWith(backticks))
+      if (!/^ {4}/.test(lines[j]) && lines[j].trimStart().startsWith(backticks))
         break
     }
     if (j === lines.length) {
