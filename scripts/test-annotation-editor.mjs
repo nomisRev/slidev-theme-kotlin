@@ -184,6 +184,24 @@ async function run() {
       fail(`Dragging a connector endpoint should persist both endpoints; the tag holds ${JSON.stringify(afterConnector.geometry)}.`)
     if (!same(afterConnector.geometry.label, afterWidth.geometry.label))
       fail('Dragging a connector endpoint changed the label geometry.')
+    const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
+
+    // 3b. The toolbar's single connector state control (issue 003): switching
+    // back to automatic removes the whole connector object — not individual
+    // fields — while the label geometry stays untouched.
+    const afterAutomatic = await edit('Switching to the automatic connector', () => page.getByRole('button', { name: 'Use automatic connector' }).click())
+    if (afterAutomatic.geometry?.connector !== undefined)
+      fail(`Switching to the automatic connector should remove the whole connector object; the tag holds ${JSON.stringify(afterAutomatic.geometry)}.`)
+    if (!same(afterAutomatic.geometry?.label, afterConnector.geometry.label))
+      fail('Switching to the automatic connector changed the label geometry.')
+    await page.getByRole('button', { name: 'Make connector manual' }).waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+      .catch(() => fail('The connector state control did not offer "Make connector manual" after switching to automatic.'))
+
+    // 3c. The switch is a completed edit like any other: Undo restores the
+    // manual connector it removed.
+    const afterAutomaticUndo = await edit('Cmd/Ctrl+Z after switching to automatic', () => page.keyboard.press(`${undoModifier}+z`))
+    if (!same(afterAutomaticUndo.geometry, afterConnector.geometry))
+      fail(`Undo did not restore the manual connector the automatic switch removed.\nExpected ${JSON.stringify(afterConnector.geometry)}\nReceived ${JSON.stringify(afterAutomaticUndo.geometry)}`)
 
     // 4. Three saves and HMR cycles later the label is still the selection,
     // and a further drag keeps working (issue 002 A).
@@ -192,7 +210,6 @@ async function run() {
       fail('The second label drag did not move the label.')
 
     // 5. Undo restores the geometry from before the last drag (issue 002 B).
-    const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
     const afterUndo = await edit('Cmd/Ctrl+Z', () => page.keyboard.press(`${undoModifier}+z`))
     if (!same(afterUndo.geometry, afterConnector.geometry))
       fail(`Undo did not restore the geometry from before the last drag.\nExpected ${JSON.stringify(afterConnector.geometry)}\nReceived ${JSON.stringify(afterUndo.geometry)}`)

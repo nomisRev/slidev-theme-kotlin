@@ -141,10 +141,13 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', keyboardUndo, true)
 })
 
-async function resetSelected(part: 'label' | 'connector' | 'all') {
+// Restoring an automatic connector is not a reset: that transition belongs
+// exclusively to the manual/automatic toggle above, so every path to the
+// automatic state shares one undo, status and draft-clearing code path.
+async function resetSelected(part: 'label' | 'all') {
   if (!selected.value || !canWrite.value)
     return
-  annotationEditorStatus.value = `Resetting ${part} for ${selected.value}…`
+  annotationEditorStatus.value = `Resetting ${part === 'all' ? 'label and connector' : part} for ${selected.value}…`
   try {
     if (!isDevelopment)
       return
@@ -227,12 +230,11 @@ async function undoSelected() {
       <span class="drawn-annotation-toolbar__selection">{{ selectedDescription }}</span>
       <button type="button" :disabled="!selected" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" @click="reloadSavedGeometry">Reload saved geometry</button>
-      <button type="button" :disabled="!selected" @click="resetSelected('label')">Reset label</button>
-      <button type="button" :disabled="!selected" @click="resetSelected('connector')">Reset connector</button>
       <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorAttachment">
         {{ selectedConnectorManual ? 'Use automatic connector' : 'Make connector manual' }}
       </button>
-      <button type="button" :disabled="!selected" @click="resetSelected('all')">Reset selected</button>
+      <button type="button" :disabled="!selected" @click="resetSelected('label')">Reset label</button>
+      <button type="button" :disabled="!selected" @click="resetSelected('all')">Reset label &amp; connector</button>
     </template>
     <span v-if="annotationEditorStatus" class="drawn-annotation-toolbar__status" role="status">{{ annotationEditorStatus }}</span>
   </aside>

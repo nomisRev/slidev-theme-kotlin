@@ -238,9 +238,12 @@ width handle adjusts maximum width; connector endpoints and its body can
 likewise be dragged. The first connector drag materializes the currently automatic
 route as two manual endpoints. Pointer release saves through the local writer;
 a pause in a long drag saves a draft too, and local saves are serialized so they
-cannot conflict with each other. The toolbar can reset label, connector, or all
-source geometry and explicitly switch a selected connector between its manual
-frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest
+cannot conflict with each other. One toolbar control switches the selected
+connector between its two states: **Make connector manual** materializes the
+automatic route as editable geometry, and **Use automatic connector** removes
+the manual connector geometry from the source so the route follows its target
+and label again. **Reset label** and **Reset label & connector** restore the
+authored source geometry. **Cmd/Ctrl+Z** restores the latest
 completed save for the selected annotation. If another browser changes the
 source revision, the failed save leaves the current draft visible for inspection;
 choose **Reload saved geometry** to intentionally discard drafts and continue

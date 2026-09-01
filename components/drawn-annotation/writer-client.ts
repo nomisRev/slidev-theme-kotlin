@@ -74,8 +74,13 @@ async function write(locator: string, geometry: PersistedAnnotationGeometry | nu
 export function saveLabelGeometry(locator: string, geometry: PersistedAnnotationGeometry | null) { return enqueue(() => write(locator, geometry)) }
 /** Remove one part from `current`, the geometry the source holds now, and save the rest. */
 export function resetAnnotationGeometry(locator: string, part: GeometryReset, current: PersistedAnnotationGeometry | null) {
-  const next = { ...current }
-  if (part === 'label') { delete next.x; delete next.y; delete next.width } else { delete next.x1; delete next.y1; delete next.x2; delete next.y2; delete next.cx; delete next.cy }
+  // Both resets are expressed through the label field set, which is closed
+  // (x, y, width), rather than by deleting connector fields one by one.
+  // Resetting the connector therefore drops the whole connector object —
+  // endpoints and any control-point field the connector may carry — which is
+  // exactly what switching back to the automatic route must remove.
+  const { x, y, width, ...connectorFields } = current ?? {}
+  const next: PersistedAnnotationGeometry = part === 'label' ? connectorFields : { x, y, width }
   return enqueue(() => write(locator, next))
 }
 export function restoreAnnotationGeometry(locator: string, geometry: PersistedAnnotationGeometry | null) { return enqueue(() => write(locator, geometry)) }
