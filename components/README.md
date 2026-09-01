@@ -217,9 +217,7 @@ maximum width. In edit mode, labels,
 the label width handle, and connector endpoint handles are keyboard focusable:
 focus one, then use the arrow keys to nudge it (`Shift` for larger steps). The
 width handle adjusts maximum width; connector endpoints and its body can
-likewise be dragged; endpoints snap to slide edge/centre guides
-and the annotation's source, target, and label ports. Hold `Alt` to temporarily
-disable snapping. The first connector drag materializes the currently automatic
+likewise be dragged. The first connector drag materializes the currently automatic
 route as two manual endpoints. Pointer release saves through the local writer;
 a pause in a long drag saves a draft too, and local saves are serialized so they
 cannot conflict with each other. The toolbar can reset label, connector, or all

@@ -182,29 +182,6 @@ export function localPointToSlideFraction(point: FractionPoint, slide: ViewportB
 }
 
 /**
- * Snap each axis independently. This permits a connector endpoint to align
- * with a vertical guide without forcing its height to an unrelated point.
- * Callers provide only concrete slide fractions, making this independent of
- * nested SVG canvases and presentation scale.
- */
-export function snapFractionPoint(point: FractionPoint, candidates: readonly FractionPoint[], threshold = 0.012): FractionPoint {
-  const nearest = (value: number, axis: 'x' | 'y') => {
-    let result = value
-    let distance = threshold
-    for (const candidate of candidates) {
-      const candidateValue = candidate[axis]
-      const nextDistance = Math.abs(value - candidateValue)
-      if (nextDistance <= distance) {
-        result = candidateValue
-        distance = nextDistance
-      }
-    }
-    return result
-  }
-  return { x: nearest(point.x, 'x'), y: nearest(point.y, 'y') }
-}
-
-/**
  * Translate a connector without ever changing its length or angle. Movement is
  * constrained as a whole at slide edges: independently clamping endpoint two
  * after endpoint one has hit an edge would silently turn a body drag into a
