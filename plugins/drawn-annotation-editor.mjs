@@ -85,33 +85,67 @@ export function serializeGeometry(geometry) {
 
 /**
  * Regions where a tag is only shown, never rendered: fenced code blocks
- * (``` or ~~~, closed by a fence of the same character at least as long) and
- * HTML comments. Injecting there pastes a locator into a code sample, and
- * counting there shifts the ordinals of the real tags after it.
+ * (``` or ~~~, closed by a fence of the same character at least as long),
+ * indented code blocks, inline code spans, and HTML comments. Injecting there
+ * pastes a locator into a code sample, and counting there shifts the ordinals
+ * of the real tags after it.
  */
 function excludedRanges(source) {
   const ranges = []
   const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/
   let open
+  let indented
+  let previousBlank = true
   for (let lineStart = 0; lineStart < source.length;) {
     const lineEnd = source.indexOf('\n', lineStart)
     const next = lineEnd < 0 ? source.length : lineEnd + 1
-    const match = fence.exec(source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd))
-    if (!open) {
-      if (match) open = { marker: match[1], start: lineStart }
+    const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd)
+    const blank = !line.trim()
+    if (open) {
+      const match = fence.exec(line)
+      if (match && match[1][0] === open.marker[0] && match[1].length >= open.marker.length && !match[2].trim()) {
+        ranges.push([open.start, next]); open = undefined
+      }
     }
-    else if (match && match[1][0] === open.marker[0] && match[1].length >= open.marker.length && !match[2].trim()) {
-      ranges.push([open.start, next]); open = undefined
+    else if (indented && (blank || /^ {4}/.test(line))) {
+      // Blank lines join indented chunks into one block; only a code line
+      // extends the excluded range, matching markdown-it's trailing-blank rule.
+      if (!blank) indented.end = next
     }
+    else {
+      if (indented) { ranges.push([indented.start, indented.end]); indented = undefined }
+      const match = fence.exec(line)
+      if (match) { open = { marker: match[1], start: lineStart } }
+      // An indented chunk is code only where it cannot continue a preceding
+      // paragraph or HTML block, both of which markdown-it ends at a blank line.
+      else if (previousBlank && !blank && /^ {4}/.test(line)) { indented = { start: lineStart, end: next } }
+    }
+    previousBlank = blank
     lineStart = next
   }
   if (open) ranges.push([open.start, source.length])
+  if (indented) ranges.push([indented.start, indented.end])
   const inside = offset => ranges.some(([start, end]) => offset >= start && offset < end)
   for (let start = source.indexOf('<!--'); start >= 0; start = source.indexOf('<!--', start + 4)) {
     if (inside(start)) continue
     const close = source.indexOf('-->', start + 4)
     ranges.push([start, close < 0 ? source.length : close + 3])
     if (close < 0) break
+  }
+  // Inline code spans: a backtick run closes at the next run of the same
+  // length. markdown-it parses inline content per paragraph, so a span never
+  // crosses a blank line; an unmatched run stays literal text.
+  const runs = [...source.matchAll(/`+/g)]
+    .filter(match => !inside(match.index))
+    .map(match => [match.index, match.index + match[0].length])
+  for (let index = 0; index < runs.length; index++) {
+    const [start, end] = runs[index]
+    const close = runs.findIndex(([closeStart, closeEnd], at) => at > index
+      && closeEnd - closeStart === end - start
+      && !/\n[ \t]*\r?\n/.test(source.slice(end, closeStart)))
+    if (close < 0) continue
+    ranges.push([start, runs[close][1]])
+    index = close
   }
   return ranges
 }
@@ -130,7 +164,9 @@ export function findDrawnAnnotationTags(source) {
     let quote = ''; let braces = 0; let end = start + component.length; let closed = false
     for (; end < source.length; end++) {
       const char = source[end]
-      if (quote) { if (char === quote && source[end - 1] !== '\\') quote = ''; continue }
+      // Attribute values have no escape character in HTML or Vue templates: a
+      // matching quote always closes the value, even after a backslash.
+      if (quote) { if (char === quote) quote = ''; continue }
       if (char === '"' || char === '\'') { quote = char; continue }
       if (char === '{') braces++; else if (char === '}') braces--; else if (char === '>' && braces === 0) { end++; closed = true; break }
     }
@@ -233,7 +269,13 @@ function geometryBinding(tag) {
   for (let index = value; index < tag.length; index++) {
     const character = tag[index]
     if (quote) {
-      if (character === quote && tag[index - 1] !== '\\') quote = ''
+      // Inside the binding the quotes delimit JavaScript strings, where a
+      // quote is escaped by an odd number of preceding backslashes only.
+      if (character === quote) {
+        let backslashes = 0
+        while (tag[index - 1 - backslashes] === '\\') backslashes++
+        if (backslashes % 2 === 0) quote = ''
+      }
       continue
     }
     if (character === '"' || character === '\'' || character === '`') { quote = character; continue }

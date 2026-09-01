@@ -162,6 +162,55 @@ describe('source geometry editor', () => {
     expect(decode(locatorOf(transformed)!)).toMatchObject({ ordinal: 0, line: 2 })
   })
 
+  it('closes attribute values at their quote even after a backslash', () => {
+    // Vue templates have no escape character in attribute values: a matching
+    // quote always closes, so a value ending in a backslash stays editable.
+    const source = '<DrawnAnnotation text="C:\\Users\\" label="path">'
+    expect(findDrawnAnnotationTags(source).map(tag => tag.text)).toEqual([source])
+  })
+
+  it('edits a geometry binding whose strings end in escaped backslashes', () => {
+    // Inside the binding, quotes delimit JavaScript strings: `"\\"` is a
+    // complete string, not an escaped quote.
+    const tag = '<DrawnAnnotation :geometry=\'{ label: { x: .1, y: .2 }, marker: "\\\\" }\' label="x">'
+    expect(patchDrawnAnnotationTag(tag, {})).toBe('<DrawnAnnotation label="x">')
+  })
+
+  it('ignores sample tags in inline code spans and indented code blocks', () => {
+    const source = [
+      'Use `<DrawnAnnotation text="x" label="y">` to annotate.',
+      '',
+      '    <DrawnAnnotation label="indented code">',
+      '',
+      '<div>',
+      '    <DrawnAnnotation label="html-block child" />',
+      '</div>',
+      '',
+      '<DrawnAnnotation label="real" />',
+    ].join('\n')
+    expect(findDrawnAnnotationTags(source).map(tag => tag.text))
+      .toEqual(['<DrawnAnnotation label="html-block child" />', '<DrawnAnnotation label="real" />'])
+    const transformed = injectDrawnAnnotationLocators(source, 'slides.md')
+    // The inline-code sample renders as visible text; a locator there would too.
+    expect(transformed).toContain('Use `<DrawnAnnotation text="x" label="y">` to annotate.')
+    expect(transformed).toContain('    <DrawnAnnotation label="indented code">')
+    expect(transformed.match(/__drawn-annotation-locator/g)).toHaveLength(2)
+  })
+
+  it('never pairs backtick runs across a CRLF blank line', () => {
+    // The blank-line guard is unanchored: in `\r\n\r\n` its `\n` matches the
+    // first line ending and `\r?\n` the second, so CRLF files behave like LF.
+    const source = [
+      'A stray backtick ` in prose.',
+      '',
+      '<DrawnAnnotation label="real" />',
+      '',
+      'Another stray backtick ` later.',
+    ].join('\r\n')
+    expect(findDrawnAnnotationTags(source).map(tag => tag.text)).toEqual(['<DrawnAnnotation label="real" />'])
+    expect(injectDrawnAnnotationLocators(source, 'slides.md').match(/__drawn-annotation-locator/g)).toHaveLength(1)
+  })
+
   it('never changes a character outside the geometry binding across inject and patch', () => {
     const tags = [
       '<DrawnAnnotation text="a" />',

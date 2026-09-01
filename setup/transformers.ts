@@ -107,6 +107,11 @@ export function takeMagicMoveFenceOrdinal(info: string): { info: string, ordinal
 const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransformContext) => {
   const { code, fence, slide, options } = ctx
   const { info, ordinal } = takeMagicMoveFenceOrdinal(ctx.info)
+  // The marker is private to the theme's two magic-move passes. Slidev's later
+  // fence transformers read `ctx.info` when they run (and the final wrapper
+  // rewrites the token info Shiki sees from it), so strip it even on the paths
+  // below that decline the fence and let the normal pipeline render it.
+  ctx.info = info
   if (fence !== 3 || !slide)
     return
   const slides = options.data.slides

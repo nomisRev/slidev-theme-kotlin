@@ -6,7 +6,7 @@ import {
   parseFenceInfo,
   resolveChain,
 } from '../setup/magic-move-between'
-import { markMagicMoveFenceOrdinals, takeMagicMoveFenceOrdinal } from '../setup/transformers'
+import transformersSetup, { markMagicMoveFenceOrdinals, takeMagicMoveFenceOrdinal } from '../setup/transformers'
 
 describe('normalizeMagicMoveSeparators', () => {
   it('rewrites a bare magic-move separator in place', () => {
@@ -188,6 +188,30 @@ describe('duplicate Magic Move fence identities', () => {
     expect(fences.map(fence => fence.meta)).toEqual(['', ''])
     expect(takeMagicMoveFenceOrdinal('kotlin __slidev_magic_move_ordinal__=1'))
       .toEqual({ info: 'kotlin', ordinal: 1 })
+  })
+
+  it('strips the private ordinal from the context even when declining a fence', async () => {
+    const [magicMoveBetween] = transformersSetup().codeblocks!
+    const slides = [
+      { content: '```kotlin\nval same = true\n```', frontmatter: {} },
+      { content: 'no fence on this chain slide', frontmatter: { magicMove: true } },
+    ]
+    // A single-step chain declines the fence; the marker must not reach the
+    // normal fence pipeline, which reads `ctx.info` after the decline.
+    const ctx: any = {
+      info: 'kotlin __slidev_magic_move_ordinal__=0',
+      code: 'val same = true\n',
+      fence: 3,
+      slide: { index: 0 },
+      options: { data: { slides } },
+    }
+    expect(await magicMoveBetween(ctx)).toBeUndefined()
+    expect(ctx.info).toBe('kotlin')
+
+    // Fences outside any chain decline immediately and are stripped too.
+    const unchained: any = { ...ctx, info: 'kotlin __slidev_magic_move_ordinal__=1', slide: null }
+    expect(await magicMoveBetween(unchained)).toBeUndefined()
+    expect(unchained.info).toBe('kotlin')
   })
 })
 
