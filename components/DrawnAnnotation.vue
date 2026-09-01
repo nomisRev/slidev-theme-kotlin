@@ -2105,14 +2105,6 @@ function moveConnectorDrag(event: PointerEvent) {
     const translated = translateConnector(next, dx, dy)
     const snapped = snapConnectorPoint({ x: translated.x1, y: translated.y1 }, event.altKey)
     Object.assign(next, translateConnector(translated, snapped.x - translated.x1, snapped.y - translated.y1))
-    // A body drag translates the entire Bézier control polygon, preserving
-    // the authored curve instead of silently straightening or distorting it.
-    if (next.cx !== undefined && next.cy !== undefined) {
-      const movedX = next.x1 - connectorDrag.connector.x1
-      const movedY = next.y1 - connectorDrag.connector.y1
-      next.cx = fraction(connectorDrag.connector.cx! + movedX)
-      next.cy = fraction(connectorDrag.connector.cy! + movedY)
-    }
   }
   setLabelDraft(locator.value, next)
   scheduleDraftSave(connectorDrag)
@@ -2201,20 +2193,16 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       return
     // Keep arrow-key body movement identical to dragging the line itself:
     // translation is constrained as one rigid segment at slide edges.
-    const base = { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
-    const translated = nudgeConnector(base, part, dx, dy)
-    const next: PersistedAnnotationGeometry = { ...translated }
-    // A body nudge, like a body drag, translates the entire Bézier control
-    // polygon: leaving the control point behind would distort the curve, and
-    // the debounced save below would persist the distortion.
-    if (part === 'body') {
-      const saved = manualConnector()
-      if (saved?.cx !== undefined && saved.cy !== undefined) {
-        next.cx = fraction(saved.cx + (translated.x1 - base.x1))
-        next.cy = fraction(saved.cy + (translated.y1 - base.y1))
-      }
+    const saved = manualConnector()
+    const base = {
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      ...(saved?.cx !== undefined && saved.cy !== undefined ? { cx: saved.cx, cy: saved.cy } : {}),
     }
-    setLabelDraft(locator.value, next)
+    const translated = nudgeConnector(base, part, dx, dy)
+    setLabelDraft(locator.value, { ...translated } satisfies PersistedAnnotationGeometry)
   }
   else {
     return

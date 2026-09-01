@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeLabelWidth, slideFractionPointToLocal, validateDrawnAnnotationGeometry } from './geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './geometry'
 
 describe('DrawnAnnotation source geometry', () => {
   const slide = { left: 100, top: 50, width: 1600, height: 900 }
@@ -26,6 +26,40 @@ describe('DrawnAnnotation source geometry', () => {
     // pixels. It must not be converted through the narrow overlay.
     const naturalFraction = 100 / slideWidth
     expect(nudgeLabelWidth(naturalFraction, nudge)).toBeCloseTo(.102)
+  })
+
+  it('translates a quadratic connector as a bounded rigid control polygon', () => {
+    const connector = { x1: .1, y1: .2, x2: .3, y2: .4, cx: .95, cy: .7 }
+    const translated = translateConnector(connector, .1, .5)
+
+    // The control point reaches the right edge first, so all points share its
+    // .05 bound rather than allowing the curve to distort at the edge.
+    expect(translated.x1).toBeCloseTo(.15)
+    expect(translated.y1).toBeCloseTo(.5)
+    expect(translated.x2).toBeCloseTo(.35)
+    expect(translated.y2).toBeCloseTo(.7)
+    expect(translated.cx).toBe(1)
+    expect(translated.cy).toBe(1)
+    expect(translated.x2 - translated.x1).toBeCloseTo(connector.x2 - connector.x1)
+    expect(translated.cx! - translated.x1).toBeCloseTo(connector.cx - connector.x1)
+    expect(translated.cy! - translated.y1).toBeCloseTo(connector.cy - connector.y1)
+  })
+
+  it('keeps endpoint-only translations unchanged and retains controls on endpoint nudges', () => {
+    const endpoints = { x1: .1, y1: .2, x2: .3, y2: .4 }
+    const translated = translateConnector(endpoints, -.5, .5)
+    expect(translated.x1).toBe(0)
+    expect(translated.y1).toBeCloseTo(.7)
+    expect(translated.x2).toBeCloseTo(.2)
+    expect(translated.y2).toBeCloseTo(.9)
+
+    const quadratic = { ...endpoints, cx: .2, cy: .3 }
+    expect(nudgeConnector(quadratic, 'start', .1, -.1)).toEqual({ x1: .2, y1: .1, x2: .3, y2: .4, cx: .2, cy: .3 })
+    const bodyNudge = nudgeConnector(quadratic, 'body', .9, 0)
+    expect(bodyNudge.x1).toBeCloseTo(.8)
+    expect(bodyNudge.x2).toBe(1)
+    expect(bodyNudge.cx).toBeCloseTo(.9)
+    expect(bodyNudge.cy).toBe(.3)
   })
 
   it('accepts only the public source-local document shape', () => {

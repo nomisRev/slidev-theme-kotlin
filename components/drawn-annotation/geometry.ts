@@ -149,6 +149,9 @@ export interface ConnectorEndpoints {
   y1: number
   x2: number
   y2: number
+  /** Optional quadratic control point. `cx` and `cy` are always moved together. */
+  cx?: number
+  cy?: number
 }
 
 
@@ -217,17 +220,22 @@ export function snapFractionPoint(point: FractionPoint, candidates: readonly Fra
  * resize.
  */
 export function translateConnector(connector: ConnectorEndpoints, dx: number, dy: number): ConnectorEndpoints {
-  const boundedDelta = (first: number, second: number, delta: number) => Math.max(
-    Math.max(-first, -second),
-    Math.min(Math.min(1 - first, 1 - second), delta),
+  // A quadratic connector's complete control polygon must remain in bounds.
+  // Bounding only its endpoints lets the control point hit an edge first and
+  // then freeze there, silently changing the curve during a body movement.
+  const hasControl = connector.cx !== undefined && connector.cy !== undefined
+  const boundedDelta = (points: readonly number[], delta: number) => Math.max(
+    Math.max(...points.map(point => -point)),
+    Math.min(Math.min(...points.map(point => 1 - point)), delta),
   )
-  const boundedX = boundedDelta(connector.x1, connector.x2, dx)
-  const boundedY = boundedDelta(connector.y1, connector.y2, dy)
+  const boundedX = boundedDelta([connector.x1, connector.x2, ...(hasControl ? [connector.cx!] : [])], dx)
+  const boundedY = boundedDelta([connector.y1, connector.y2, ...(hasControl ? [connector.cy!] : [])], dy)
   return {
     x1: connector.x1 + boundedX,
     y1: connector.y1 + boundedY,
     x2: connector.x2 + boundedX,
     y2: connector.y2 + boundedY,
+    ...(hasControl ? { cx: connector.cx! + boundedX, cy: connector.cy! + boundedY } : {}),
   }
 }
 
