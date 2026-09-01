@@ -47,6 +47,20 @@ describe('source geometry editor', () => {
     expect(source).not.toContain('__drawn')
   })
 
+  it('skips unterminated tags without changing the source', () => {
+    const unfinished = '<DrawnAnnotation text="x"'
+    expect(findDrawnAnnotationTags(unfinished)).toEqual([])
+    expect(injectDrawnAnnotationLocators(unfinished, 'slides.md')).toBe(unfinished)
+
+    const unbalancedQuote = '<DrawnAnnotation text="x>\nrest of file'
+    expect(findDrawnAnnotationTags(unbalancedQuote)).toEqual([])
+    expect(injectDrawnAnnotationLocators(unbalancedQuote, 'slides.md')).toBe(unbalancedQuote)
+
+    const source = '<DrawnAnnotation label="complete">\n<DrawnAnnotation text="x"'
+    expect(findDrawnAnnotationTags(source).map(tag => tag.text)).toEqual(['<DrawnAnnotation label="complete">'])
+    expect(injectDrawnAnnotationLocators(source, 'slides.md')).toMatch(/^<DrawnAnnotation label="complete" __drawn-annotation-locator="[^"]+">\n<DrawnAnnotation text="x"$/)
+  })
+
   it('serializes the Markdown geometry binding at fixed precision', () => {
     expect(serializeGeometry({ label: { x: .1, y: .2, width: .33333 } })).toBe('{ label: { x: 0.1000, y: 0.2000, width: 0.3333 } }')
     expect(serializeGeometry({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } }))

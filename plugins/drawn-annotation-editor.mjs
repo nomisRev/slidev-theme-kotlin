@@ -127,14 +127,16 @@ export function findDrawnAnnotationTags(source) {
   for (let start = source.indexOf(component); start >= 0; start = source.indexOf(component, start + component.length)) {
     if (!/[\s/>]/.test(source[start + component.length] ?? '')) continue
     if (excluded.some(([from, to]) => start >= from && start < to)) continue
-    let quote = ''; let braces = 0; let end = start + component.length
+    let quote = ''; let braces = 0; let end = start + component.length; let closed = false
     for (; end < source.length; end++) {
       const char = source[end]
       if (quote) { if (char === quote && source[end - 1] !== '\\') quote = ''; continue }
       if (char === '"' || char === '\'') { quote = char; continue }
-      if (char === '{') braces++; else if (char === '}') braces--; else if (char === '>' && braces === 0) { end++; break }
+      if (char === '{') braces++; else if (char === '}') braces--; else if (char === '>' && braces === 0) { end++; closed = true; break }
     }
-    if (end <= source.length) tags.push({ start, end, text: source.slice(start, end) })
+    // During an edit the source can end inside a tag or quoted binding. It is
+    // not a tag until its closing `>` arrives on a later HMR pass.
+    if (closed) tags.push({ start, end, text: source.slice(start, end) })
   }
   return tags
 }
