@@ -36,7 +36,10 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Build slides
-        run: npm run build -- --base "${{ steps.pages.outputs.base_path }}/"
+        run: |
+          npm run lint
+          npx slidev build slides.md --base "${{ steps.pages.outputs.base_path }}/"
+          node scripts/assert-production-annotation-editor.mjs
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
