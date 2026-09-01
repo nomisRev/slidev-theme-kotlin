@@ -129,6 +129,16 @@ export interface ManualConnectorGeometry {
 
 export type PersistedAnnotationGeometry = PersistedLabelGeometry & ManualConnectorGeometry
 
+/**
+ * A value-identity for persisted geometry, independent of key order and of
+ * absent-versus-undefined fields, so a local draft compares equal to the same
+ * geometry read back from the source. Used to decide whether a draft is
+ * actually dirty before committing it, and whether a drag changed anything.
+ */
+export function persistedGeometrySignature(geometry: PersistedAnnotationGeometry | undefined) {
+  return JSON.stringify([geometry?.x, geometry?.y, geometry?.width, geometry?.x1, geometry?.y1, geometry?.x2, geometry?.y2, geometry?.cx, geometry?.cy].map(value => value ?? null))
+}
+
 export interface FractionPoint {
   x: number
   y: number

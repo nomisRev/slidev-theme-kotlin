@@ -30,10 +30,9 @@ import rough from 'roughjs'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
-import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
+import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraftFields, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, registerAnnotationEditorActions, releaseAnnotationSelection, replaceLabelDraft, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
@@ -842,6 +841,15 @@ function unsettle(grace = 0) {
   // every frame of the animation.
   labelSizeCache.clear()
   contentObstacleCache = undefined
+  // A frozen edit session never replays entrance or settling behavior:
+  // navigation is locked, so the click state cannot really change, and an
+  // HMR remount from an explicit toolbar write (a reset, say) must render the
+  // already-reached final state instead of waiting on animations again.
+  if (annotationEditMode.value) {
+    settled.value = true
+    updateGeometry()
+    return
+  }
   if (!props.wait || !props.track) {
     settled.value = true
     return
@@ -1812,13 +1820,8 @@ watch(annotationLabelLayoutChange, (change) => {
 const editable = computed(() => isAnnotationEditorDevelopment && !!locator.value && hasLabel.value && labelActive.value && geometry.ready)
 const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!locator.value && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
 const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === locator.value)
-interface DragSaveSession extends AnnotationUndoSession {
-  /** The source geometry before this gesture's first autosave. */
-  persistedCaptured: boolean
-  persistedBefore?: PersistedAnnotationGeometry | null
-}
 
-let labelDrag: ({ pointerId: number, width: boolean, centerX: number, rightOffsetX: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+let labelDrag: ({ pointerId: number, width: boolean, centerX: number, rightOffsetX: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry }) | undefined
 
 function fraction(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -1861,10 +1864,13 @@ function beginLabelDrag(event: PointerEvent, width = false) {
     offsetX: event.clientX - (labelBox.left + labelBox.width / 2),
     offsetY: event.clientY - (labelBox.top + labelBox.height / 2),
     previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined,
-    persistedCaptured: false,
   }
   beginAnnotationDraftGesture(locator.value, 'label')
   ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+  // `preventDefault` above suppresses the browser's native focus-on-pointerdown,
+  // but the grabbed control must own the keyboard: follow-up arrow presses
+  // nudge it rather than being discarded at whatever was focused before.
+  ;(event.currentTarget as HTMLElement).focus?.()
 }
 
 function moveLabelDrag(event: PointerEvent) {
@@ -1888,81 +1894,21 @@ function moveLabelDrag(event: PointerEvent) {
       y: fraction((event.clientY - labelDrag.offsetY - box.top) / box.height),
     })
   }
-  scheduleDraftSave(labelDrag)
 }
 
-/** Source HMR updates `geometry`; drafts intentionally remain until the save response is reconciled. */
-
-let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
-const savingDraftSignatures = new Set<string>()
-/** Independent of key order, so a draft compares equal to the same geometry read back from the source. */
-function draftSignature(geometry: PersistedAnnotationGeometry) {
-  return JSON.stringify([geometry.x, geometry.y, geometry.width, geometry.x1, geometry.y1, geometry.x2, geometry.y2, geometry.cx, geometry.cy].map(value => value ?? null))
-}
-
-/** Save during a pause in a long drag as well as on pointer release. */
-function scheduleDraftSave(session?: DragSaveSession) {
-  clearTimeout(draftSaveTimer)
-  draftSaveTimer = setTimeout(() => {
-    if (locator.value)
-      void saveDraft(locator.value, session)
-  }, 350)
-}
-
-async function saveDraft(id: string, session?: DragSaveSession) {
-  const draft = annotationDrafts.get(id)
-  if (!draft)
+/**
+ * Editing is a frozen session: every gesture only updates the shared local
+ * draft, and nothing is written to the Markdown source (so no HMR, remount,
+ * or entrance replay can interrupt a drag). The toolbar's "Done editing
+ * annotations" commits every dirty draft in one explicit phase.
+ *
+ * A completed gesture records the pre-gesture draft snapshot for Undo, which
+ * restores it locally with `replaceLabelDraft`.
+ */
+function recordGestureUndo(id: string, previous: PersistedAnnotationGeometry | undefined) {
+  if (persistedGeometrySignature(annotationDrafts.get(id)) === persistedGeometrySignature(previous))
     return
-  // This import stays behind a compile-time development guard. Production
-  // decks neither render controls nor include browser write-client code.
-  if (!isAnnotationEditorDevelopment)
-    return
-  const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
-  // Undo must return to what the source holds now: the geometry this tab
-  // last saved (HMR may not have delivered it as a prop yet), otherwise the
-  // authored binding. Store it before replacing it with the new geometry.
-  const previous = cachedAnnotationGeometry(id) ?? persistedLabelGeometry()
-  // The writer replaces the whole binding with what it is sent. A first drag
-  // drafts only the label, so complete it from the source baseline rather than
-  // letting a label move erase the connector or width the source holds.
-  const savedDraft = { ...previous, ...draft }
-  const signature = draftSignature(savedDraft)
-  // There is nothing to write when the source already holds this geometry:
-  // after a completed save, or when a drag ends where it started. Comparing
-  // with the source rather than with the last request keeps a position that
-  // Undo or Reset removed from the source saveable again.
-  if (signature === draftSignature(previous) || savingDraftSignatures.has(signature))
-    return
-  savingDraftSignatures.add(signature)
-  annotationEditorStatus.value = 'Saving annotation…'
-  try {
-    // A long drag may autosave before the pointer is released. Remember the
-    // pre-drag rule before that first request, so Escape can truly cancel the
-    // whole gesture instead of merely hiding a value that HMR has saved.
-    if (session && !session.persistedCaptured) {
-      session.persistedBefore = previous
-      session.persistedCaptured = true
-    }
-    const saved = await saveLabelGeometry(id, savedDraft)
-    // A debounced save and the release save belong to the same pointer
-    // gesture. Record the pre-gesture snapshot once, rather than making Undo
-    // stop at every intermediate autosave position.
-    if (session)
-      recordAnnotationUndoOnce(session, id, session.persistedBefore ?? previous)
-    else
-      recordAnnotationUndo(id, previous)
-    // The writer returns its fixed-four-decimal source snapshot. Keep that
-    // draft visible until Slidev recompiles the rewritten Markdown.
-    const persisted = saved.geometry[id]
-    if (persisted) setLabelDraft(id, persisted)
-    annotationEditorStatus.value = 'Annotation saved'
-  }
-  catch (error) {
-    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to save annotation geometry'
-  }
-  finally {
-    savingDraftSignatures.delete(signature)
-  }
+  recordAnnotationUndo(id, previous ?? null)
 }
 
 /**
@@ -1974,13 +1920,21 @@ async function toggleConnectorAttachment() {
   if (!locator.value || !connectorEditable.value)
     return
   if (manualConnector()) {
+    // Restoring the automatic route removes saved endpoints, which a draft
+    // cannot express (drafts only overlay the source). This one action
+    // therefore writes immediately; the frozen session renders the remount's
+    // final state without replaying entrance animations.
     annotationEditorStatus.value = 'Restoring automatic connector…'
     try {
+      if (!isAnnotationEditorDevelopment)
+        return
       const { cachedAnnotationGeometry, resetAnnotationGeometry } = await loadWriterClient()
       const previous = cachedAnnotationGeometry(locator.value) ?? persistedLabelGeometry()
       await resetAnnotationGeometry(locator.value, 'connector', previous)
       recordAnnotationUndo(locator.value, previous)
-      clearLabelDraft(locator.value)
+      // Only the connector part of the draft is spent; uncommitted label
+      // edits must survive the reset.
+      clearLabelDraftFields(locator.value, 'connector')
       annotationEditorStatus.value = 'Connector now follows its source and label'
     }
     catch (error) {
@@ -1993,51 +1947,32 @@ async function toggleConnectorAttachment() {
   const end = geometry.connectorEnd && localConnectorFraction(geometry.connectorEnd)
   if (!start || !end)
     return
+  // Materializing the automatic route as two manual endpoints is an ordinary
+  // draft edit: visible immediately, committed with the session.
+  const previous = annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined
   setLabelDraft(locator.value, { x1: start.x, y1: start.y, x2: end.x, y2: end.y })
-  await saveDraft(locator.value)
+  recordGestureUndo(locator.value, previous)
+  annotationEditorStatus.value = 'Connector is now manual — commit with "Done editing annotations"'
 }
 
-async function endLabelDrag(event: PointerEvent) {
+function endLabelDrag(event: PointerEvent) {
   if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
-  const session = labelDrag
+  const drag = labelDrag
   labelDrag = undefined
   endAnnotationDraftGesture(locator.value, 'label')
-  clearTimeout(draftSaveTimer)
-  await saveDraft(locator.value, session)
+  recordGestureUndo(locator.value, drag.previous)
 }
 
 // A pointer cancellation means the browser interrupted the gesture (for
-// example, a window focus change), not that the author released it. Never turn
-// that partial movement into a persisted edit.
-function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry | undefined, session: DragSaveSession) {
-  if (previous)
-    setLabelDraft(id, previous)
-  else
-    clearLabelDraft(id)
-  // No request has started, so reverting the local preview is sufficient.
-  if (!session.persistedCaptured) {
-    annotationEditorStatus.value = 'Annotation drag cancelled'
-    return
-  }
-  annotationEditorStatus.value = 'Cancelling annotation drag…'
-  // Keep this dynamic import behind the explicit serve-mode boundary. Slidev's
-  // build renderer can still set DEV, but a published deck must not ship a
-  // browser client capable of reaching the local writer endpoint.
-  if (!isAnnotationEditorDevelopment)
-    return
-  // Writer-client writes are serialized. This restore runs after any autosave
-  // already in flight, preventing source HMR from resurrecting a cancelled drag.
-  void loadWriterClient().then(({ restoreAnnotationGeometry }) =>
-    restoreAnnotationGeometry(id, session.persistedBefore ?? null),
-  ).then(() => {
-    clearLabelDraft(id)
-    annotationEditorStatus.value = 'Annotation drag cancelled'
-  }).catch((error) => {
-    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to cancel saved annotation geometry'
-  })
+// example, a window focus change), not that the author released it. Nothing
+// has been written — drafts are local for the whole session — so restoring
+// the pre-gesture draft snapshot undoes the partial movement completely.
+function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry | undefined) {
+  replaceLabelDraft(id, previous ?? null)
+  annotationEditorStatus.value = 'Annotation drag cancelled'
 }
 
 function cancelLabelDrag(event: PointerEvent) {
@@ -2048,12 +1983,11 @@ function cancelLabelDrag(event: PointerEvent) {
   const drag = labelDrag
   labelDrag = undefined
   endAnnotationDraftGesture(locator.value, 'label')
-  clearTimeout(draftSaveTimer)
-  restoreCancelledDrag(locator.value, drag.previous, drag)
+  restoreCancelledDrag(locator.value, drag.previous)
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
-let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry }) | undefined
 
 function localConnectorFraction(point: Point) {
   const slide = slideRoot()
@@ -2092,9 +2026,11 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   event.stopPropagation()
   selectAnnotation(locator.value, kind)
   const saved = manualConnector()
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined }
   beginAnnotationDraftGesture(locator.value, 'connector')
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
+  // As for labels: the grabbed handle takes the keyboard for arrow nudging.
+  ;(event.currentTarget as SVGElement & { focus?: () => void }).focus?.()
 }
 
 function moveConnectorDrag(event: PointerEvent) {
@@ -2119,19 +2055,17 @@ function moveConnectorDrag(event: PointerEvent) {
     Object.assign(next, translateConnector(next, dx, dy))
   }
   setLabelDraft(locator.value, next)
-  scheduleDraftSave(connectorDrag)
 }
 
-async function endConnectorDrag(event: PointerEvent) {
+function endConnectorDrag(event: PointerEvent) {
   if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
     return
   event.preventDefault()
   event.stopPropagation()
-  const session = connectorDrag
+  const drag = connectorDrag
   connectorDrag = undefined
   endAnnotationDraftGesture(locator.value, 'connector')
-  clearTimeout(draftSaveTimer)
-  await saveDraft(locator.value, session)
+  recordGestureUndo(locator.value, drag.previous)
 }
 
 function cancelConnectorDrag(event: PointerEvent) {
@@ -2142,11 +2076,15 @@ function cancelConnectorDrag(event: PointerEvent) {
   const drag = connectorDrag
   connectorDrag = undefined
   endAnnotationDraftGesture(locator.value, 'connector')
-  clearTimeout(draftSaveTimer)
-  restoreCancelledDrag(locator.value, drag.previous, drag)
+  restoreCancelledDrag(locator.value, drag.previous)
 }
 
-let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
+// A run of arrow presses is one undoable gesture: the pre-nudge snapshot is
+// recorded when a burst starts (a pause, or a different control, starts a new
+// burst), not once per key repeat.
+const NUDGE_UNDO_BURST_MS = 1000
+let nudgeUndoKey = ''
+let nudgeUndoAt = 0
 
 /** Arrow keys nudge the selected label or connector in slide fractions. */
 function nudgeSelectedAnnotation(event: KeyboardEvent) {
@@ -2167,6 +2105,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
   const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
   const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
   const part = selectedAnnotationPart.value
+  const before = annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value)! } : undefined
 
   if ((part === 'label' || part === 'width') && editable.value) {
     if (part === 'width') {
@@ -2224,16 +2163,22 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
 
   event.preventDefault()
   event.stopPropagation()
-  // One debounce is intentional. Reusing the pointer-drag timer here creates
-  // two writes for one key press; after a 409 the second would adopt the
-  // conflict response's revision and overwrite the other author's geometry.
-  clearTimeout(keyboardSaveTimer)
-  keyboardSaveTimer = setTimeout(() => void saveDraft(locator.value!), 250)
+  // The nudge stays a local draft: no write, no HMR, no debounce. The burst
+  // bookkeeping only decides where Undo returns to.
+  const burstKey = `${locator.value}:${part}`
+  const now = performance.now()
+  if (burstKey !== nudgeUndoKey || now - nudgeUndoAt > NUDGE_UNDO_BURST_MS)
+    recordGestureUndo(locator.value, before)
+  nudgeUndoKey = burstKey
+  nudgeUndoAt = now
 }
 
 function cancelActiveDrag(event: KeyboardEvent) {
   if (event.key !== 'Escape' || (!labelDrag && !connectorDrag) || !locator.value)
     return
+  // `preventDefault` also tells the toolbar's session-level Escape handler
+  // that this press was spent on cancelling a drag, whatever the listener
+  // order, so one Escape never cancels both the drag and the session.
   event.preventDefault()
   event.stopPropagation()
   const drag = labelDrag ?? connectorDrag
@@ -2241,8 +2186,7 @@ function cancelActiveDrag(event: KeyboardEvent) {
   labelDrag = undefined
   connectorDrag = undefined
   endAnnotationDraftGesture(locator.value, dragKind)
-  clearTimeout(draftSaveTimer)
-  restoreCancelledDrag(locator.value, drag?.previous, drag!)
+  restoreCancelledDrag(locator.value, drag?.previous)
 }
 
 onMounted(() => {
@@ -2252,8 +2196,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', cancelActiveDrag, true)
   window.removeEventListener('keydown', nudgeSelectedAnnotation, true)
-  clearTimeout(keyboardSaveTimer)
-  clearTimeout(draftSaveTimer)
 })
 </script>
 
@@ -2261,7 +2203,7 @@ onBeforeUnmount(() => {
   <div
     ref="container"
     class="drawn-annotation"
-    :class="{ 'is-fading-out': fadingOut }"
+    :class="{ 'is-fading-out': fadingOut, 'is-edit-frozen': annotationEditMode }"
       >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
@@ -2574,6 +2516,15 @@ onBeforeUnmount(() => {
 }
 @media print {
   .annotation-width-handle { display: none; }
+}
+
+/* A frozen edit session never replays entrance animations: strokes and the
+   label snap straight to their final state, including across an HMR remount
+   caused by an explicit toolbar write (a reset, for example). */
+.is-edit-frozen .annotation-stroke,
+.is-edit-frozen .annotation-label {
+  transition-duration: 1ms !important;
+  transition-delay: 0ms !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './geometry'
 
 describe('DrawnAnnotation source geometry', () => {
   const slide = { left: 100, top: 50, width: 1600, height: 900 }
@@ -60,6 +60,13 @@ describe('DrawnAnnotation source geometry', () => {
     expect(bodyNudge.x2).toBe(1)
     expect(bodyNudge.cx).toBeCloseTo(.9)
     expect(bodyNudge.cy).toBe(.3)
+  })
+
+  it('compares persisted geometry by value, not by key order or presence of undefined', () => {
+    expect(persistedGeometrySignature({ x: .1, y: .2 })).toBe(persistedGeometrySignature({ y: .2, x: .1, width: undefined }))
+    expect(persistedGeometrySignature(undefined)).toBe(persistedGeometrySignature({}))
+    expect(persistedGeometrySignature({ x: .1, y: .2 })).not.toBe(persistedGeometrySignature({ x: .1, y: .2, width: .3 }))
+    expect(persistedGeometrySignature({ x1: 0, y1: 0, x2: 1, y2: 1 })).not.toBe(persistedGeometrySignature({ x1: 0, y1: 0, x2: 1, y2: 1, cx: .5, cy: .5 }))
   })
 
   it('accepts only the public source-local document shape', () => {

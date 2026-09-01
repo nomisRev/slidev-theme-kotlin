@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activeAnnotationGestures,
   annotationDrafts,
   annotationEditorActionsFor,
   annotationEditorRegistryVersion,
@@ -8,11 +9,13 @@ import {
   beginAnnotationDraftGesture,
   claimAnnotationSelection,
   clearAnnotationSelection,
+  clearLabelDraftFields,
   endAnnotationDraftGesture,
   migrateAnnotationLocator,
   recordAnnotationUndo,
   registerAnnotationEditorActions,
   releaseAnnotationSelection,
+  replaceLabelDraft,
   selectAnnotation,
   selectedAnnotationId,
   selectedAnnotationPart,
@@ -92,6 +95,59 @@ describe('annotation editor store', () => {
     // re-place once on grab and once on release.
     expect(annotationGeometryVersion.value).toBe(geometry + 3)
     expect(annotationLabelLayoutVersion.value).toBe(layout + 2)
+    annotationDrafts.clear()
+  })
+
+  it('counts in-flight gestures of every kind for the session-level Escape handler', () => {
+    expect(activeAnnotationGestures.value).toBe(0)
+    beginAnnotationDraftGesture('a', 'label')
+    beginAnnotationDraftGesture('b', 'connector')
+    expect(activeAnnotationGestures.value).toBe(2)
+    endAnnotationDraftGesture('b', 'connector')
+    expect(activeAnnotationGestures.value).toBe(1)
+    endAnnotationDraftGesture('a', 'label')
+    endAnnotationDraftGesture('a', 'label')
+    // A double end never goes negative, so a stray event cannot wedge Escape.
+    expect(activeAnnotationGestures.value).toBe(0)
+    annotationDrafts.clear()
+  })
+
+  it('replaces a draft with an exact snapshot instead of merging, and null clears it', () => {
+    setLabelDraft('tag', { x: .1, y: .2, width: .3 })
+    replaceLabelDraft('tag', { x1: 0, y1: 0, x2: 1, y2: 1 })
+    // No label fields survive the replacement: Undo restores the snapshot as
+    // it was recorded, not a merge of old and new.
+    expect(annotationDrafts.get('tag')).toEqual({ x1: 0, y1: 0, x2: 1, y2: 1 })
+    replaceLabelDraft('tag', null)
+    expect(annotationDrafts.get('tag')).toBeUndefined()
+    annotationDrafts.clear()
+  })
+
+  it('clears one part of a draft while keeping uncommitted edits to the other', () => {
+    setLabelDraft('tag', { x: .1, y: .2, x1: 0, y1: 0, x2: 1, y2: 1, cx: .5, cy: .5 })
+    clearLabelDraftFields('tag', 'connector')
+    expect(annotationDrafts.get('tag')).toEqual({ x: .1, y: .2 })
+    clearLabelDraftFields('tag', 'label')
+    // A draft with nothing left disappears entirely.
+    expect(annotationDrafts.get('tag')).toBeUndefined()
+    clearLabelDraftFields('tag', 'label')
+    expect(annotationDrafts.get('tag')).toBeUndefined()
+    annotationDrafts.clear()
+  })
+
+  it('restores undo snapshots as local drafts', () => {
+    setLabelDraft('tag', { x: .5, y: .5 })
+    recordAnnotationUndo('tag', null)
+    setLabelDraft('tag', { x: .6 })
+    recordAnnotationUndo('tag', { x: .5, y: .5 })
+
+    const last = takeAnnotationUndo('tag')!
+    replaceLabelDraft(last.locator, last.geometry)
+    expect(annotationDrafts.get('tag')).toEqual({ x: .5, y: .5 })
+
+    const first = takeAnnotationUndo('tag')!
+    replaceLabelDraft(first.locator, first.geometry)
+    expect(annotationDrafts.get('tag')).toBeUndefined()
     annotationDrafts.clear()
   })
 
