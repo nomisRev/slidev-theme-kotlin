@@ -229,23 +229,45 @@ No annotation ID or generated stylesheet is used. Enable
 serving it injects a transient source locator and the editor rewrites only this
 opening tag's `:geometry` binding. The locator is not part of authored Markdown
 or production output. With the writer configured, press **Alt+Shift+A** (or use
-the global **Edit annotations** toolbar) in a development deck. Click and drag
-a visible label to move it; select it and drag its right handle to set its
-maximum width. In edit mode, labels,
-the label width handle, and connector endpoint handles are keyboard focusable:
-focus one, then use the arrow keys to nudge it (`Shift` for larger steps). The
-width handle adjusts maximum width; connector endpoints and its body can
-likewise be dragged. The first connector drag materializes the currently automatic
-route as two manual endpoints. Pointer release saves through the local writer;
-a pause in a long drag saves a draft too, and local saves are serialized so they
-cannot conflict with each other. The toolbar can reset label, connector, or all
-source geometry and explicitly switch a selected connector between its manual
-frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest
-completed save for the selected annotation. If another browser changes the
-source revision, the failed save leaves the current draft visible for inspection;
-choose **Reload saved geometry** to intentionally discard drafts and continue
-from the other browser's saved source. A deck without the writer plugin reports
-its configuration error instead of entering an editor that cannot save.
+the global **Edit annotations** toolbar) in a development deck.
+
+Editing is a deliberate frozen session. Entering edit mode locks the deck on
+the current slide and click state: Slidev's keyboard shortcuts are suspended
+through its public shortcut lock, and click-to-navigate, the nav controls, and
+touch swipes are blocked until the session ends, so no input can move the deck
+out from under an edit. Every geometry change made during the session — drags
+and keyboard nudges alike — stays a shared local draft; the Markdown source is
+never written mid-gesture, which means no HMR remount and no replayed
+annotation entrance animation while the author is working.
+
+Click and drag a visible label to move it; select it and drag its right handle
+to set its maximum width. Labels, the label width handle, and connector
+endpoint handles are keyboard focusable: focus one, then use the arrow keys to
+nudge it (`Shift` for larger steps) — arrow keys always edit the selected
+control and never navigate while the session is active. The width handle
+adjusts maximum width; connector endpoints and its body can likewise be
+dragged. The first connector drag (or the **Make connector manual** button)
+materializes the currently automatic route as two manual endpoints, as a draft
+like any other edit.
+
+**Done editing annotations** is the commit boundary: it writes every draft
+that differs from the saved source, one annotation at a time in the order they
+were first edited, and exits the session once all writes finish. A failed
+write — a revision conflict because another author changed the file, say —
+never discards anything: the session stays open, the failing drafts stay
+visible, and the status names the failure and the recovery paths (fix and
+press Done again, or **Reload saved geometry** to deliberately discard the
+drafts and adopt the saved source). **Esc** cancels in stages: an active drag
+first (restoring the pre-drag draft), then the current selection, then — after
+a confirmation whenever unsaved changes exist — the whole session, discarding
+its drafts without writing. **Cmd/Ctrl+Z** undoes the previous gesture for the
+selected annotation locally; the restored state is committed or discarded with
+the rest of the session. The reset buttons are the one exception to
+draft-only editing: removing saved geometry cannot be expressed as a draft, so
+**Reset label / connector / selected** and **Use automatic connector** write
+immediately; Undo restores what they removed as an ordinary draft. A deck
+without the writer plugin reports its configuration error instead of entering
+an editor that cannot save.
 
 ## How it looks
 

@@ -4,11 +4,13 @@
  * server with actual pointer and keyboard gestures.
  *
  * This is intentionally separate from `vitest`: the unit tests cover the tag
- * scanner and the writer, but only a browser can prove that a drag reaches
- * the writer through a working locator, that the rewritten Markdown comes
- * back through HMR without losing the selection, and that Undo and the 409
- * recovery path behave. The server runs against a throwaway copy of
- * `slides.md`, so the checked-in deck is never modified.
+ * scanner, the writer and the draft store, but only a browser can prove the
+ * frozen edit session end to end — that dragging and arrow-key nudging change
+ * only the local draft (no source write, no HMR) while Slidev navigation
+ * stays locked, that "Done editing annotations" commits every change of the
+ * session in one write phase, and that a conflicting commit and an Escape
+ * cancel behave. The server runs against a throwaway copy of `slides.md`, so
+ * the checked-in deck is never modified.
  */
 import { spawn } from 'node:child_process'
 import { randomInt } from 'node:crypto'
@@ -26,6 +28,9 @@ const FIXTURE_SLIDE = 32
 const FIXTURE_LABEL = 'the entry point of every Kotlin program'
 const FIXTURE_TAG_MARKER = 'text="fun main"'
 const STEP_TIMEOUT = 15_000
+// How long to wait before concluding that a gesture wrote nothing. The old
+// editor autosaved after a 350 ms drag pause; well past that proves a draft.
+const NO_WRITE_GRACE = 900
 const port = randomInt(31000, 39000)
 const origin = `http://localhost:${port}`
 
@@ -115,6 +120,7 @@ async function run() {
     // Slidev's, not the editor's.
     page.on('pageerror', (error) => { if (!/wake lock/i.test(error.message)) pageErrors.push(error.message) })
     const status = page.locator('.drawn-annotation-toolbar__status')
+    const doneButton = page.getByRole('button', { name: 'Done editing annotations' })
 
     const label = page.locator('.annotation-label', { hasText: FIXTURE_LABEL })
     // Before its click the label is mounted but transparent, which Playwright
@@ -132,113 +138,198 @@ async function run() {
       // click encoding, which has changed between Slidev releases.
       if (!await activeLabel.count()) await page.keyboard.press('ArrowRight')
       await activeLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+      await enterEditMode()
+    }
+
+    async function enterEditMode() {
       await page.getByRole('button', { name: 'Edit annotations' }).click()
       // Editable means the component received a locator from the Vite
       // transform; a missing or bound attribute leaves it presentation-only.
       await editableLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
         .catch(async () => fail(`The label never became editable after entering edit mode. Toolbar: ${JSON.stringify(await page.locator('.drawn-annotation-toolbar').textContent().catch(() => undefined))}`))
+      await doneButton.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
     }
 
     /**
-     * Perform one edit and wait until it is fully persisted: the fixture tag
-     * in the file changed, Slidev's HMR delivered the rewritten slide, and
-     * the same label is selected again in the remounted component.
+     * Assert that a session gesture stayed a local draft: the fixture tag in
+     * the file did not change and no HMR update reached the browser, well
+     * past the old editor's 350 ms autosave pause.
      */
-    async function edit(description, action) {
+    async function assertNoWrite(description, before, hotBefore) {
+      await sleep(NO_WRITE_GRACE)
+      const now = await fixtureSource()
+      if (now.tag !== before.tag)
+        fail(`${description} wrote the Markdown source during the edit session:\nbefore ${before.tag}\nafter  ${now.tag}`)
+      if (hotUpdates !== hotBefore)
+        fail(`${description} triggered an HMR update during the edit session.`)
+    }
+
+    /** Assert the frozen slide/click state: same route, label still active. */
+    async function assertStateFrozen(description, route) {
+      if (page.url() !== route)
+        fail(`${description} changed the Slidev route from ${route} to ${page.url()}.`)
+      if (!await activeLabel.count())
+        fail(`${description} changed the click state: the fixture label is no longer active.`)
+    }
+
+    /**
+     * Press "Done editing annotations" and wait for the commit phase: the
+     * fixture tag changes, Slidev hot-updates, and the session exits.
+     */
+    async function commitSession(description) {
       const before = await fixtureSource()
       const hotBefore = hotUpdates
-      await action()
+      await doneButton.click()
       const after = await waitFor(async () => { const now = await fixtureSource(); return now.tag === before.tag ? undefined : now })
-      if (!after) fail(`${description} did not change the fixture tag in ${entry}. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+      if (!after) fail(`${description}: Done did not commit the session's drafts to ${entry}. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
       if (!await waitFor(async () => hotUpdates > hotBefore))
-        fail(`${description} rewrote ${entry}, but Slidev never hot-updated the browser.`)
-      // Without this the next gesture would hit a stale, unselected component
-      // (issue 002 A: editor state must follow the locator through a save).
-      await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }).catch(() => fail(`${description}: the label lost its selection after HMR.`))
+        fail(`${description}: the commit rewrote ${entry}, but Slidev never hot-updated the browser.`)
+      await doneButton.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT })
+        .catch(() => fail(`${description}: the editor did not exit after a successful commit.`))
       return after
     }
 
     await openFixture()
     const routeBeforeEditing = page.url()
     if ((await fixtureSource()).geometry !== undefined) fail('The fixture tag already carries a `:geometry` binding; the test expects an authored tag without one.')
+    if (!await page.locator('.drawn-annotation.is-edit-frozen').count())
+      fail('Entering edit mode did not freeze annotation rendering (missing .is-edit-frozen).')
 
-    // 1. Label drag → `label: { x, y }` on this tag only.
-    const afterLabel = await edit('Dragging the label', () => drag(page, label, 48, 24))
-    if (typeof afterLabel.geometry?.label?.x !== 'number' || typeof afterLabel.geometry.label.y !== 'number' || afterLabel.geometry.label.width !== undefined || afterLabel.geometry.connector !== undefined)
-      fail(`Dragging the label should persist only a label position; the tag holds ${JSON.stringify(afterLabel.geometry)}.`)
-    if (!/:geometry="\{ label: \{ x: 0\.\d{4}, y: 0\.\d{4} \} \}"/.test(afterLabel.tag))
-      fail(`The written binding is not the compact four-decimal literal the writer promises:\n${afterLabel.tag}`)
+    const sessionStart = await fixtureSource()
+    const sessionHot = hotUpdates
 
-    // 2. Width handle → `width`. The handle only exists while the label is
-    // selected, so this also proves the selection survived the first save.
-    const afterWidth = await edit('Dragging the width handle', () => drag(page, annotation.locator('.annotation-width-handle'), 36, 0))
-    if (typeof afterWidth.geometry?.label?.width !== 'number' || afterWidth.geometry.connector !== undefined)
-      fail(`Dragging the width handle should add a label width; the tag holds ${JSON.stringify(afterWidth.geometry)}.`)
+    // 1. A label drag updates only the local draft: visible immediately, no
+    // source write, no HMR remount.
+    const labelBoxBefore = await label.boundingBox()
+    await drag(page, label, 48, 24)
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const labelBoxDragged = await waitFor(async () => {
+      const box = await label.boundingBox()
+      return box && Math.abs(box.x - labelBoxBefore.x - 48) < 8 && Math.abs(box.y - labelBoxBefore.y - 24) < 8 ? box : undefined
+    })
+    if (!labelBoxDragged) fail(`Dragging the label did not move the visible draft. Before ${JSON.stringify(labelBoxBefore)}, after ${JSON.stringify(await label.boundingBox())}.`)
+    await assertNoWrite('Dragging the label', sessionStart, sessionHot)
+    await assertStateFrozen('Dragging the label', routeBeforeEditing)
 
-    // 3. Connector endpoint → `connector: { start, end }`.
+    // 2. Arrow keys nudge the selected control and never navigate: previously
+    // Slidev's magicKeys observed the event first and changed click or slide.
+    await page.keyboard.press('ArrowRight')
+    const nudged = await waitFor(async () => {
+      const box = await label.boundingBox()
+      return box && box.x > labelBoxDragged.x + 1 ? box : undefined
+    })
+    if (!nudged) fail('ArrowRight did not nudge the selected label.')
+    if (Math.abs(nudged.y - labelBoxDragged.y) > 1) fail('ArrowRight moved the label vertically.')
+    await page.keyboard.press('Shift+ArrowDown')
+    const shiftNudged = await waitFor(async () => {
+      const box = await label.boundingBox()
+      // Shift is the larger step: 1% of the slide height, several times the
+      // plain 0.2% nudge.
+      return box && box.y > nudged.y + 4 ? box : undefined
+    })
+    if (!shiftNudged) fail('Shift+ArrowDown did not apply the larger nudge to the selected label.')
+    await assertStateFrozen('Arrow-key nudging', routeBeforeEditing)
+    await assertNoWrite('Arrow-key nudging', sessionStart, sessionHot)
+
+    // 3. Click-to-navigate is blocked while editing. This click lands on the
+    // slide container's left half, which outside the session goes back one
+    // click and would hide the label.
+    await page.mouse.click(720, 20)
+    await assertStateFrozen('Clicking the slide canvas', routeBeforeEditing)
+    // The click still clears the selection, which is an editor concern.
+    if (await selectedLabel.count()) fail('Clicking outside the annotation did not clear the selection.')
+
+    // 4. Arrow keys without a selected control must not navigate either.
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('ArrowUp')
+    await sleep(200)
+    await assertStateFrozen('Arrow keys with no selection', routeBeforeEditing)
+
+    // 5. More session edits before the single commit: width and connector.
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await drag(page, annotation.locator('.annotation-width-handle'), 36, 0)
     const handles = annotation.locator('.annotation-connector-handle')
     await handles.first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
-    const afterConnector = await edit('Dragging a connector endpoint', () => drag(page, handles.first(), 18, 12))
-    const connector = afterConnector.geometry?.connector
-    if (!connector || [connector.start?.x, connector.start?.y, connector.end?.x, connector.end?.y].some(value => typeof value !== 'number'))
-      fail(`Dragging a connector endpoint should persist both endpoints; the tag holds ${JSON.stringify(afterConnector.geometry)}.`)
-    if (!same(afterConnector.geometry.label, afterWidth.geometry.label))
-      fail('Dragging a connector endpoint changed the label geometry.')
+    await drag(page, handles.first(), 18, 12)
+    await assertNoWrite('Width and connector drags', sessionStart, sessionHot)
 
-    // 4. Three saves and HMR cycles later the label is still the selection,
-    // and a further drag keeps working (issue 002 A).
-    const afterSecondDrag = await edit('Dragging the label again after HMR', () => drag(page, selectedLabel, -30, 20))
-    if (same(afterSecondDrag.geometry.label, afterConnector.geometry.label))
-      fail('The second label drag did not move the label.')
-
-    // 5. Undo restores the geometry from before the last drag (issue 002 B).
+    // 6. Undo is local too: it restores the pre-gesture draft without a write.
     const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
-    const afterUndo = await edit('Cmd/Ctrl+Z', () => page.keyboard.press(`${undoModifier}+z`))
-    if (!same(afterUndo.geometry, afterConnector.geometry))
-      fail(`Undo did not restore the geometry from before the last drag.\nExpected ${JSON.stringify(afterConnector.geometry)}\nReceived ${JSON.stringify(afterUndo.geometry)}`)
+    await page.keyboard.press(`${undoModifier}+z`)
+    if (!await waitFor(async () => /undone/i.test(await status.textContent() ?? '')))
+      fail(`Cmd/Ctrl+Z did not undo locally. Toolbar status: ${JSON.stringify(await status.textContent())}`)
+    await assertNoWrite('Undo', sessionStart, sessionHot)
+    // Redo the connector edit so the commit below carries every change kind.
+    await drag(page, handles.first(), 18, 12)
 
-    // The same guarantee for a fresh session: with nothing cached from this
-    // tab's own writes, the undo baseline must be the authored binding, not
-    // an empty one.
-    await page.reload({ waitUntil: 'networkidle' })
-    await openFixture()
-    const authored = await fixtureSource()
-    await edit('Dragging the label in a fresh session', () => drag(page, label, 20, -16))
-    const afterFreshUndo = await edit('Cmd/Ctrl+Z in a fresh session', () => page.keyboard.press(`${undoModifier}+z`))
-    if (!same(afterFreshUndo.geometry, authored.geometry))
-      fail(`Undo in a fresh session did not restore the authored geometry.\nExpected ${JSON.stringify(authored.geometry)}\nReceived ${JSON.stringify(afterFreshUndo.geometry)}`)
+    // 7. One commit persists the whole session: label position, width and
+    // connector endpoints land in a single write phase on this tag only.
+    const committed = await commitSession('Committing the session')
+    if (typeof committed.geometry?.label?.x !== 'number' || typeof committed.geometry.label.y !== 'number' || typeof committed.geometry.label.width !== 'number')
+      fail(`The commit should persist the dragged and nudged label with its width; the tag holds ${JSON.stringify(committed.geometry)}.`)
+    const connector = committed.geometry?.connector
+    if (!connector || [connector.start?.x, connector.start?.y, connector.end?.x, connector.end?.y].some(value => typeof value !== 'number'))
+      fail(`The commit should persist both connector endpoints; the tag holds ${JSON.stringify(committed.geometry)}.`)
+    if (!/:geometry="\{ label: \{ x: 0\.\d{4}, y: 0\.\d{4}, width: 0\.\d{4} \}, connector: \{ start: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, end: \{ x: 0\.\d{4}, y: 0\.\d{4} \} \} \}"/.test(committed.tag))
+      fail(`The written binding is not the compact four-decimal literal the writer promises:\n${committed.tag}`)
 
-    // 6. An external edit makes this tab's revision stale: the next save must
-    // be refused with the recovery hint, and reloading must unblock editing.
-    const beforeConflict = await fixtureSource()
+    // 8. A conflicting commit fails without losing drafts: the session stays
+    // open, the file keeps the other author's revision, and "Reload saved
+    // geometry" is the documented recovery.
+    await enterEditMode()
+    await drag(page, label, 24, 10)
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const draggedBeforeConflict = await label.boundingBox()
     await writeFile(copy, `${await readFile(copy, 'utf8')}\n<!-- edited outside the annotation editor -->\n`)
-    await drag(page, selectedLabel, 24, 10)
+    await doneButton.click()
     if (!await waitFor(async () => /reload before saving/i.test(await status.textContent() ?? '')))
-      fail(`A stale save was not reported as a conflict. Toolbar status: ${JSON.stringify(await status.textContent())}`)
-    if ((await fixtureSource()).tag !== beforeConflict.tag)
-      fail('A stale save overwrote the source another author had changed.')
+      fail(`A conflicting commit was not reported with its recovery path. Toolbar status: ${JSON.stringify(await status.textContent())}`)
+    if ((await fixtureSource()).tag !== committed.tag)
+      fail('A conflicting commit overwrote the source another author had changed.')
+    if (!await doneButton.count())
+      fail('A failed commit exited the edit session instead of keeping the drafts editable.')
+    const boxAfterConflict = await label.boundingBox()
+    if (Math.abs(boxAfterConflict.x - draggedBeforeConflict.x) > 1 || Math.abs(boxAfterConflict.y - draggedBeforeConflict.y) > 1)
+      fail('A failed commit moved the drafted label; drafts must stay intact for inspection.')
     page.once('dialog', dialog => dialog.accept())
     await page.getByRole('button', { name: 'Reload saved geometry' }).click()
     await status.filter({ hasText: 'Saved annotation geometry reloaded' }).waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
-    const afterRecovery = await edit('Dragging the label after reloading saved geometry', () => drag(page, selectedLabel, 24, 10))
-    if (same(afterRecovery.geometry.label, beforeConflict.geometry.label))
-      fail('The drag after conflict recovery did not move the label.')
+    await drag(page, label, 24, 10)
+    const afterRecovery = await commitSession('Committing after conflict recovery')
+    if (same(afterRecovery.geometry.label, committed.geometry.label))
+      fail('The commit after conflict recovery did not move the label.')
 
-    // 7. Keyboard path: reach the label with Tab, nudge it with ArrowRight.
-    await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur())
-    let focused = false
-    for (let presses = 0; presses < 40 && !focused; presses++) {
-      await page.keyboard.press('Tab')
-      focused = await label.evaluate(element => element === document.activeElement)
-    }
-    if (!focused) fail('Tab never reached the annotation label.')
-    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT }).catch(() => fail('Focusing the label with the keyboard did not select it.'))
-    const afterNudge = await edit('ArrowRight on the focused label', () => page.keyboard.press('ArrowRight'))
-    if (!(afterNudge.geometry.label.x > afterRecovery.geometry.label.x) || afterNudge.geometry.label.y !== afterRecovery.geometry.label.y)
-      fail(`ArrowRight should move the label right only. Before ${JSON.stringify(afterRecovery.geometry.label)}, after ${JSON.stringify(afterNudge.geometry.label)}.`)
+    // 9. Escape cancels the session: the first press clears the selection,
+    // the second asks for confirmation and discards the session's drafts.
+    await enterEditMode()
+    await drag(page, label, 40, 0)
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await page.keyboard.press('Escape')
+    if (await waitFor(async () => !(await selectedLabel.count())) === undefined)
+      fail('The first Escape did not clear the selection.')
+    page.once('dialog', dialog => dialog.accept())
+    await page.keyboard.press('Escape')
+    await doneButton.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT })
+      .catch(() => fail('Escape did not cancel the edit session.'))
+    if ((await fixtureSource()).tag !== afterRecovery.tag)
+      fail('Cancelling with Escape wrote the discarded drafts to the source.')
+    const cancelled = await waitFor(async () => {
+      const box = await label.boundingBox()
+      // The discarded drag snaps the label back to its committed position,
+      // which is where the re-applied (24, 10) drag left it before Done.
+      return box && Math.abs(box.x - draggedBeforeConflict.x) < 8 ? box : undefined
+    })
+    if (!cancelled) fail('Escape did not discard the session drafts; the label kept its cancelled position.')
 
-    if (page.url() !== routeBeforeEditing)
-      fail(`Editing changed the active Slidev route from ${routeBeforeEditing} to ${page.url()}.`)
+    // 10. Navigation works again once the session is over.
+    await page.keyboard.press('ArrowLeft')
+    if (await waitFor(async () => !(await activeLabel.count())) === undefined)
+      fail('Arrow-key navigation did not come back after leaving the edit session.')
+    await page.keyboard.press('ArrowRight')
+    await activeLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+
     const renderWarnings = vueWarnings.filter(warning => /was accessed during render but is not defined/.test(warning))
     if (renderWarnings.length)
       fail(`Vue reported undefined template references:\n${renderWarnings.join('\n')}`)

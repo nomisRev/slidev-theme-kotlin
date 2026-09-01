@@ -45,14 +45,22 @@ export default defineConfig({
 })
 ```
 
-Open Slidev's annotation editor (or press **Alt+Shift+A**) and drag a visible
-label, its width handle, or a connector control. The editor persists normalized
-`:geometry` on exactly that `DrawnAnnotation` tag. **Cmd/Ctrl+Z** undoes a
-saved edit; reset controls restore label, connector, or all geometry. Source
-revisions are checked, so a conflict preserves the local draft until **Reload
-saved geometry** is chosen. The locator, toolbar, and write endpoint exist only
-while Vite serves the deck; builds and exports render saved geometry without
-editor code.
+Open Slidev's annotation editor (or press **Alt+Shift+A**) to start a frozen
+edit session on the current slide and click state: Slidev navigation — arrow
+keys, space, page keys, click-to-navigate, swipes — is paused until you leave
+the editor. Drag a visible label, its width handle, or a connector control, or
+nudge the selected control with the arrow keys (**Shift** for larger steps);
+every change stays a local draft, so nothing is written mid-gesture. **Done
+editing annotations** commits all changed drafts as normalized `:geometry`
+bindings on exactly the edited `DrawnAnnotation` tags, then exits. **Esc**
+cancels in stages — an active drag, then the selection, then (after a
+confirmation) the whole session, discarding its drafts. **Cmd/Ctrl+Z** undoes
+the last gesture locally; reset controls restore label, connector, or all
+geometry. Source revisions are checked, so a conflicting commit fails without
+overwriting anyone: the drafts stay visible, and you either fix and press Done
+again or choose **Reload saved geometry** to discard them. The locator,
+toolbar, and write endpoint exist only while Vite serves the deck; builds and
+exports render saved geometry without editor code.
 
 ### Basic Setup
 

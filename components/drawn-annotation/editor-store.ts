@@ -1,7 +1,14 @@
 import { reactive, ref } from 'vue'
 import type { PersistedAnnotationGeometry } from './geometry'
 
-/** Shared development-only state, keyed by opaque source locators. */
+/**
+ * Shared development-only state, keyed by opaque source locators.
+ *
+ * `annotationEditMode` is the frozen edit session: while it is on, Slidev
+ * navigation is locked by the toolbar, every geometry change stays a local
+ * draft, and nothing is written to the Markdown source until the author
+ * commits the session with "Done editing annotations".
+ */
 export const annotationEditMode = ref(false)
 export const selectedAnnotationId = ref<string>()
 export const selectedAnnotationPart = ref<'label' | 'width' | 'start' | 'end' | 'body'>()
@@ -54,9 +61,14 @@ export function migrateAnnotationLocator(previous: string, next: string) {
   const registered = actions.get(previous)
   if (registered) { actions.delete(previous); actions.set(next, registered); annotationEditorRegistryVersion.value++ }
 }
+/**
+ * Undo entries are *draft snapshots*: the local draft state (or `null` for "no
+ * draft, fall back to the saved source") from before a completed gesture.
+ * Undoing restores that snapshot locally with `replaceLabelDraft`; it never
+ * writes the Markdown file. A restored draft is committed — or discarded —
+ * with the rest of the session.
+ */
 export function recordAnnotationUndo(locator: string, geometry: PersistedAnnotationGeometry | null) { history.push({ locator, geometry: geometry ? { ...geometry } : null }); if (history.length > 100) history.shift() }
-export interface AnnotationUndoSession { undoRecorded?: boolean }
-export function recordAnnotationUndoOnce(session: AnnotationUndoSession | undefined, locator: string, geometry: PersistedAnnotationGeometry | null) { if (session?.undoRecorded) return; recordAnnotationUndo(locator, geometry); if (session) session.undoRecorded = true }
 export function takeAnnotationUndo(locator: string) { for (let index = history.length - 1; index >= 0; index--) if (history[index].locator === locator) return history.splice(index, 1)[0] }
 let shortcutInstalled = false
 // Matched by physical key (`event.code`): on macOS, Option+Shift+A composes
@@ -87,8 +99,14 @@ export function claimAnnotationSelection(locator: string) {
 function draftKind(geometry: PersistedAnnotationGeometry) {
   return geometry.x !== undefined || geometry.y !== undefined || geometry.width !== undefined ? 'label' as const : 'connector' as const
 }
+/**
+ * In-flight pointer gestures, counted so the session-level Escape handler can
+ * tell "cancel this drag" apart from "cancel the whole edit session".
+ */
+export const activeAnnotationGestures = ref(0)
 /** Coalesce dependent-label placement work for the lifetime of a pointer gesture. */
 export function beginAnnotationDraftGesture(locator: string, kind: 'connector' | 'label') {
+  activeAnnotationGestures.value++
   if (kind !== 'label') return
   activeLabelLayoutGestures.set(locator, false)
   // Publish once at gesture start so labels that route around this one do not
@@ -97,6 +115,7 @@ export function beginAnnotationDraftGesture(locator: string, kind: 'connector' |
   annotationLabelLayoutChange.value = { locator }
 }
 export function endAnnotationDraftGesture(locator: string, kind: 'connector' | 'label') {
+  activeAnnotationGestures.value = Math.max(0, activeAnnotationGestures.value - 1)
   if (kind !== 'label') return
   const changed = activeLabelLayoutGestures.get(locator)
   activeLabelLayoutGestures.delete(locator)
@@ -117,6 +136,32 @@ export function setLabelDraft(locator: string, geometry: PersistedAnnotationGeom
   }
   annotationDraftChange.value = { locator, kind }
   annotationGeometryVersion.value++
+}
+/**
+ * Replace a draft with an exact snapshot instead of merging into it. This is
+ * what Undo and a cancelled drag use: the snapshot they recorded is the whole
+ * pre-gesture draft state, and `null` means "no draft existed".
+ */
+export function replaceLabelDraft(locator: string, geometry: PersistedAnnotationGeometry | null) {
+  if (geometry) annotationDrafts.set(locator, { ...geometry })
+  else annotationDrafts.delete(locator)
+  annotationDraftChange.value = { locator, kind: 'clear' }
+  annotationLabelLayoutVersion.value++
+  annotationLabelLayoutChange.value = { locator }
+  annotationGeometryVersion.value++
+}
+/**
+ * Drop one part of a draft, keeping the author's uncommitted edits to the
+ * other part. Used when a reset writes the source without that part: clearing
+ * the whole draft there would silently discard unrelated pending changes.
+ */
+export function clearLabelDraftFields(locator: string, part: 'label' | 'connector') {
+  const draft = annotationDrafts.get(locator)
+  if (!draft) return
+  const next = { ...draft }
+  if (part === 'label') { delete next.x; delete next.y; delete next.width }
+  else { delete next.x1; delete next.y1; delete next.x2; delete next.y2; delete next.cx; delete next.cy }
+  replaceLabelDraft(locator, Object.keys(next).length ? next : null)
 }
 export function clearLabelDraft(locator: string) {
   annotationDrafts.delete(locator)
