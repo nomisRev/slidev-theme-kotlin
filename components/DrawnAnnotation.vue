@@ -28,7 +28,7 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
 
@@ -887,6 +887,14 @@ function scheduleUpdate() {
   // Discrete events land here (per-frame tracking calls updateGeometry
   // directly): the slide may have reflowed, so re-scan content obstacles.
   contentObstacleCache = undefined
+  cancelAnimationFrame(frame)
+  frame = requestAnimationFrame(updateGeometry)
+}
+
+/** Repaint one editing annotation without invalidating the slide obstacle scan. */
+function scheduleDraftUpdate() {
+  if (!mounted)
+    return
   cancelAnimationFrame(frame)
   frame = requestAnimationFrame(updateGeometry)
 }
@@ -1755,7 +1763,25 @@ watch(props, () => {
 })
 
 // A draft is applied immediately instead of waiting for source HMR after save.
-watch(annotationGeometryVersion, () => {
+// Connector drags affect only their owning SVG. Label drags also affect labels
+// that avoid one another, but their shared placement is published only at the
+// start and end of the gesture rather than once per pointer frame.
+watch(annotationDraftChange, (change) => {
+  if (change?.locator !== locator.value)
+    return
+  if (change.kind === 'clear') {
+    labelSizeCache.clear()
+    lastMarkKey = ''
+  }
+  scheduleDraftUpdate()
+})
+watch(annotationLabelLayoutChange, (change) => {
+  // The dragged label already has its exact on-screen geometry. Re-measuring it
+  // on release would briefly reset it; only dependent labels need a full pass.
+  if (change?.locator === locator.value) {
+    scheduleDraftUpdate()
+    return
+  }
   labelSizeCache.clear()
   lastMarkKey = ''
   scheduleUpdate()
@@ -1811,6 +1837,7 @@ function beginLabelDrag(event: PointerEvent, width = false) {
     previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined,
     persistedCaptured: false,
   }
+  beginAnnotationDraftGesture(locator.value, 'label')
   ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
 }
 
@@ -1948,6 +1975,7 @@ async function endLabelDrag(event: PointerEvent) {
   event.stopPropagation()
   const session = labelDrag
   labelDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'label')
   clearTimeout(draftSaveTimer)
   await saveDraft(locator.value, session)
 }
@@ -1990,6 +2018,7 @@ function cancelLabelDrag(event: PointerEvent) {
   event.stopPropagation()
   const drag = labelDrag
   labelDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'label')
   clearTimeout(draftSaveTimer)
   restoreCancelledDrag(locator.value, drag.previous, drag)
 }
@@ -2074,6 +2103,7 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   selectAnnotation(locator.value, kind)
   const saved = manualConnector()
   connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  beginAnnotationDraftGesture(locator.value, 'connector')
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
 
@@ -2117,6 +2147,7 @@ async function endConnectorDrag(event: PointerEvent) {
   event.stopPropagation()
   const session = connectorDrag
   connectorDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'connector')
   clearTimeout(draftSaveTimer)
   await saveDraft(locator.value, session)
 }
@@ -2128,6 +2159,7 @@ function cancelConnectorDrag(event: PointerEvent) {
   event.stopPropagation()
   const drag = connectorDrag
   connectorDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'connector')
   clearTimeout(draftSaveTimer)
   restoreCancelledDrag(locator.value, drag.previous, drag)
 }
@@ -2223,8 +2255,10 @@ function cancelActiveDrag(event: KeyboardEvent) {
   event.preventDefault()
   event.stopPropagation()
   const drag = labelDrag ?? connectorDrag
+  const dragKind = labelDrag ? 'label' as const : 'connector' as const
   labelDrag = undefined
   connectorDrag = undefined
+  endAnnotationDraftGesture(locator.value, dragKind)
   clearTimeout(draftSaveTimer)
   restoreCancelledDrag(locator.value, drag?.previous, drag!)
 }

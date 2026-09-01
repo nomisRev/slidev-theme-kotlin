@@ -7,6 +7,13 @@ export const selectedAnnotationId = ref<string>()
 export const selectedAnnotationPart = ref<'label' | 'width' | 'start' | 'end' | 'body'>()
 export const annotationDrafts = reactive(new Map<string, PersistedAnnotationGeometry>())
 export const annotationGeometryVersion = ref(0)
+/** The draft most recently changed; lets its owner repaint without waking every annotation. */
+export const annotationDraftChange = ref<{ locator: string, kind: 'connector' | 'label' | 'clear' }>()
+/** Bumped only when all labels must re-place around a changed label layout. */
+export const annotationLabelLayoutVersion = ref(0)
+/** Identifies the label whose layout publication caused the version bump. */
+export const annotationLabelLayoutChange = ref<{ locator: string }>()
+const activeLabelLayoutGestures = new Map<string, boolean>()
 export const annotationEditorStatus = ref<string>()
 export interface AnnotationEditorActions {
   isManualConnector: () => boolean
@@ -36,7 +43,13 @@ export function migrateAnnotationLocator(previous: string, next: string) {
   if (previous === next) return
   if (selectedAnnotationId.value === previous) selectedAnnotationId.value = next
   const draft = annotationDrafts.get(previous)
-  if (draft) { annotationDrafts.delete(previous); annotationDrafts.set(next, draft); annotationGeometryVersion.value++ }
+  if (draft) {
+    annotationDrafts.delete(previous); annotationDrafts.set(next, draft)
+    annotationDraftChange.value = { locator: next, kind: 'clear' }
+    annotationLabelLayoutVersion.value++
+    annotationLabelLayoutChange.value = { locator: next }
+    annotationGeometryVersion.value++
+  }
   for (const entry of history) if (entry.locator === previous) entry.locator = next
   const registered = actions.get(previous)
   if (registered) { actions.delete(previous); actions.set(next, registered); annotationEditorRegistryVersion.value++ }
@@ -71,6 +84,54 @@ export function claimAnnotationSelection(locator: string) {
   if (released?.locator !== locator || selectedAnnotationId.value !== undefined) return
   selectAnnotation(locator, released.part)
 }
-export function setLabelDraft(locator: string, geometry: PersistedAnnotationGeometry) { annotationDrafts.set(locator, { ...annotationDrafts.get(locator), ...geometry }); annotationGeometryVersion.value++ }
-export function clearLabelDraft(locator: string) { annotationDrafts.delete(locator); annotationGeometryVersion.value++ }
-export function clearAllAnnotationDrafts() { if (annotationDrafts.size) { annotationDrafts.clear(); annotationGeometryVersion.value++ } }
+function draftKind(geometry: PersistedAnnotationGeometry) {
+  return geometry.x !== undefined || geometry.y !== undefined || geometry.width !== undefined ? 'label' as const : 'connector' as const
+}
+/** Coalesce dependent-label placement work for the lifetime of a pointer gesture. */
+export function beginAnnotationDraftGesture(locator: string, kind: 'connector' | 'label') {
+  if (kind !== 'label') return
+  activeLabelLayoutGestures.set(locator, false)
+  // Publish once at gesture start so labels that route around this one do not
+  // remain permanently stale if the gesture is held for a long time.
+  annotationLabelLayoutVersion.value++
+  annotationLabelLayoutChange.value = { locator }
+}
+export function endAnnotationDraftGesture(locator: string, kind: 'connector' | 'label') {
+  if (kind !== 'label') return
+  const changed = activeLabelLayoutGestures.get(locator)
+  activeLabelLayoutGestures.delete(locator)
+  if (changed) {
+    annotationLabelLayoutVersion.value++
+    annotationLabelLayoutChange.value = { locator }
+  }
+}
+export function setLabelDraft(locator: string, geometry: PersistedAnnotationGeometry) {
+  annotationDrafts.set(locator, { ...annotationDrafts.get(locator), ...geometry })
+  const kind = draftKind(geometry)
+  if (kind === 'label') {
+    if (activeLabelLayoutGestures.has(locator)) activeLabelLayoutGestures.set(locator, true)
+    else {
+      annotationLabelLayoutVersion.value++
+      annotationLabelLayoutChange.value = { locator }
+    }
+  }
+  annotationDraftChange.value = { locator, kind }
+  annotationGeometryVersion.value++
+}
+export function clearLabelDraft(locator: string) {
+  annotationDrafts.delete(locator)
+  activeLabelLayoutGestures.delete(locator)
+  annotationDraftChange.value = { locator, kind: 'clear' }
+  annotationLabelLayoutVersion.value++
+  annotationLabelLayoutChange.value = { locator }
+  annotationGeometryVersion.value++
+}
+export function clearAllAnnotationDrafts() {
+  if (!annotationDrafts.size) return
+  annotationDrafts.clear()
+  activeLabelLayoutGestures.clear()
+  annotationDraftChange.value = undefined
+  annotationLabelLayoutVersion.value++
+  annotationLabelLayoutChange.value = undefined
+  annotationGeometryVersion.value++
+}

@@ -4,8 +4,11 @@ import {
   annotationEditorActionsFor,
   annotationEditorRegistryVersion,
   annotationGeometryVersion,
+  annotationLabelLayoutVersion,
+  beginAnnotationDraftGesture,
   claimAnnotationSelection,
   clearAnnotationSelection,
+  endAnnotationDraftGesture,
   migrateAnnotationLocator,
   recordAnnotationUndo,
   registerAnnotationEditorActions,
@@ -72,6 +75,23 @@ describe('annotation editor store', () => {
     expect(annotationGeometryVersion.value).toBe(drafts)
     expect(annotationEditorRegistryVersion.value).toBe(registry)
     clearAnnotationSelection()
+    annotationDrafts.clear()
+  })
+
+  it('coalesces dependent label-layout invalidation during a gesture while retaining per-draft updates', () => {
+    const geometry = annotationGeometryVersion.value
+    const layout = annotationLabelLayoutVersion.value
+
+    beginAnnotationDraftGesture('dragged', 'label')
+    setLabelDraft('dragged', { x: .1, y: .2 })
+    setLabelDraft('dragged', { x: .2, y: .3 })
+    setLabelDraft('dragged', { x: .3, y: .4 })
+    endAnnotationDraftGesture('dragged', 'label')
+
+    // The owner can observe all three geometry changes, but other labels only
+    // re-place once on grab and once on release.
+    expect(annotationGeometryVersion.value).toBe(geometry + 3)
+    expect(annotationLabelLayoutVersion.value).toBe(layout + 2)
     annotationDrafts.clear()
   })
 
