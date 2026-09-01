@@ -29,8 +29,8 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
-import type { DrawnAnnotationGeometry, FractionPoint, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
@@ -559,9 +559,6 @@ const geometry = reactive({
   /** Resolved leader endpoints, used to materialize automatic lines on first edit. */
   connectorStart: undefined as Point | undefined,
   connectorEnd: undefined as Point | undefined,
-  /** Source ports and target point are editor snap targets in local SVG coordinates. */
-  sourcePorts: [] as Point[],
-  targetPoint: undefined as Point | undefined,
   ready: false,
 })
 
@@ -991,11 +988,6 @@ function updateGeometry() {
   const rawBoxes = rects.map(toLocal)
   const boxes = match?.range ? mergeVisualLineBoxes(rawBoxes) : rawBoxes
   const marked = unionBox(boxes)
-  geometry.sourcePorts = [
-    { x: marked.cx, y: marked.cy },
-    { x: marked.cx, y: marked.top }, { x: marked.cx, y: marked.bottom },
-    { x: marked.left, y: marked.cy }, { x: marked.right, y: marked.cy },
-  ]
   const multiline = props.multiline ?? (sourceMarkType.value === 'underline' || sourceMarkType.value === 'strike-through')
   const shapeBoxes = multiline ? boxes : [marked]
 
@@ -1074,7 +1066,6 @@ function paintDestination(
 ) {
   geometry.connectorStart = undefined
   geometry.connectorEnd = undefined
-  geometry.targetPoint = undefined
   // Computed into locals first: the stable rough.js seed makes an unchanged
   // layout produce identical path strings, which assignPaths then drops
   // instead of re-patching the SVG.
@@ -1106,7 +1097,6 @@ function paintDestinationInto(
     const radius = Math.max(6, targetBox.width * props.targetRadius / 100)
     destination = makeBox(x - radius, y - radius, x + radius, y + radius)
     endPoint = { x, y }
-    geometry.targetPoint = endPoint
     // The target is its own stage after the connection. A zero padding keeps
     // target-radius the exact outer size authors position over screenshots.
     paths.targetMark = markPaths(destination, targetMarkType.value, 0)
@@ -2060,7 +2050,7 @@ function cancelLabelDrag(event: PointerEvent) {
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
-let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, snapCandidates: FractionPoint[], connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function localConnectorFraction(point: Point) {
   const slide = slideRoot()
@@ -2087,46 +2077,6 @@ function labelPositionSeed(): PersistedAnnotationGeometry {
   return current ? { x: current.x, y: current.y } : {}
 }
 
-/** Slide-centre/edge guides plus the live source, target and label ports. */
-function connectorSnapCandidates() {
-  const candidates = [
-    { x: 0, y: 0 }, { x: .5, y: .5 }, { x: 1, y: 1 },
-    ...geometry.sourcePorts.map(localConnectorFraction),
-    geometry.targetPoint && localConnectorFraction(geometry.targetPoint),
-  ].filter((point): point is { x: number, y: number } => !!point)
-  const slide = slideRoot()
-  const label = labelEl.value
-  if (slide && label) {
-    const slideBox = slide.getBoundingClientRect()
-    const box = label.getBoundingClientRect()
-    // Centre and edge-midpoints make a connector meet the label cleanly.
-    for (const [x, y] of [[box.left + box.width / 2, box.top + box.height / 2], [box.left, box.top + box.height / 2], [box.right, box.top + box.height / 2], [box.left + box.width / 2, box.top], [box.left + box.width / 2, box.bottom]])
-      candidates.push({ x: fraction((x - slideBox.left) / slideBox.width), y: fraction((y - slideBox.top) / slideBox.height) })
-  }
-  return candidates
-}
-
-function snapConnectorPoint(point: { x: number, y: number }, disabled: boolean) {
-  return disabled || !connectorDrag ? point : snapFractionPoint(point, connectorDrag.snapCandidates)
-}
-
-/**
- * Render the same concrete-slide snap ports used by dragging. Keeping this
- * conversion beside the drag conversion prevents a nested annotation canvas
- * from displaying guides at a different origin than the endpoint receives.
- */
-const connectorGuidePoints = computed(() => {
-  if (!connectorEditable.value || !annotationEditMode.value || selectedAnnotationId.value !== locator.value)
-    return []
-  const slide = slideRoot()
-  const svg = overlay.value
-  if (!slide || !svg || !geometry.width || !geometry.height)
-    return []
-  const slideBox = slide.getBoundingClientRect()
-  const overlayBox = svg.getBoundingClientRect()
-  return connectorSnapCandidates().map(point => slideFractionPointToLocal(point, slideBox, overlayBox, geometry))
-})
-
 function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   if (!connectorEditable.value || !annotationEditMode.value || !locator.value || !geometry.connectorStart || !geometry.connectorEnd)
     return
@@ -2139,10 +2089,7 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   event.stopPropagation()
   selectAnnotation(locator.value, kind)
   const saved = manualConnector()
-  // The slide, label, and ports stay put while a connector is dragged, so the
-  // snap candidates and slide box are measured once per gesture instead of
-  // re-reading a dozen client rects on every pointer move.
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), snapCandidates: connectorSnapCandidates(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
   beginAnnotationDraftGesture(locator.value, 'connector')
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
@@ -2157,21 +2104,16 @@ function moveConnectorDrag(event: PointerEvent) {
   const dy = (event.clientY - connectorDrag.startY) / box.height
   const next = { ...connectorDrag.connector }
   if (connectorDrag.kind === 'start') {
-    const snapped = snapConnectorPoint({ x: fraction(next.x1 + dx), y: fraction(next.y1 + dy) }, event.altKey)
-    next.x1 = snapped.x; next.y1 = snapped.y
+    next.x1 = fraction(next.x1 + dx); next.y1 = fraction(next.y1 + dy)
   }
   else if (connectorDrag.kind === 'end') {
-    const snapped = snapConnectorPoint({ x: fraction(next.x2 + dx), y: fraction(next.y2 + dy) }, event.altKey)
-    next.x2 = snapped.x; next.y2 = snapped.y
+    next.x2 = fraction(next.x2 + dx); next.y2 = fraction(next.y2 + dy)
   }
   else {
-    // Translate as one rigid line. Constrain the *delta* rather than its two
+    // Translate as one rigid line. Constrain the delta rather than its two
     // endpoints, otherwise a line against a slide edge would shrink as the
-    // pointer kept moving. Snap the start port, then constrain that correction
-    // as one more rigid translation for the same reason.
-    const translated = translateConnector(next, dx, dy)
-    const snapped = snapConnectorPoint({ x: translated.x1, y: translated.y1 }, event.altKey)
-    Object.assign(next, translateConnector(translated, snapped.x - translated.x1, snapped.y - translated.y1))
+    // pointer kept moving.
+    Object.assign(next, translateConnector(next, dx, dy))
   }
   setLabelDraft(locator.value, next)
   scheduleDraftSave(connectorDrag)
@@ -2389,11 +2331,6 @@ onBeforeUnmount(() => {
         class="annotation-connector-editor"
         @click.stop
       >
-        <!-- Visible ports make snapping discoverable; they are decorative,
-             unlike the keyboard-accessible endpoint controls below. -->
-        <g class="annotation-connector-guides" aria-hidden="true">
-          <circle v-for="(point, index) in connectorGuidePoints" :key="`guide-${index}`" :cx="point.x" :cy="point.y" r="4" />
-        </g>
         <line
           class="annotation-connector-hit"
           :x1="geometry.connectorStart.x" :y1="geometry.connectorStart.y"
@@ -2606,13 +2543,6 @@ onBeforeUnmount(() => {
   stroke: transparent;
   stroke-width: 24px;
   cursor: move;
-}
-.annotation-connector-guides circle {
-  fill: color-mix(in srgb, currentColor 22%, transparent);
-  stroke: currentColor;
-  stroke-width: 1px;
-  vector-effect: non-scaling-stroke;
-  pointer-events: none;
 }
 .annotation-connector-handle {
   fill: Canvas;
