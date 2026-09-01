@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localPointToSlideFraction, slideFractionPointToLocal, validateDrawnAnnotationGeometry } from './geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeLabelWidth, slideFractionPointToLocal, validateDrawnAnnotationGeometry } from './geometry'
 
 describe('DrawnAnnotation source geometry', () => {
   const slide = { left: 100, top: 50, width: 1600, height: 900 }
@@ -10,6 +10,22 @@ describe('DrawnAnnotation source geometry', () => {
   it('round-trips normalized points through a nested SVG canvas', () => {
     const point = { x: .625, y: .25 }
     expect(localPointToSlideFraction(slideFractionPointToLocal(point, slide, overlay, canvas), slide, overlay, canvas)).toEqual(point)
+  })
+
+  it('nudges label widths in slide fractions for fitted and natural labels in a nested overlay', () => {
+    const slideWidth = 1000
+    const halfSlideOverlayWidth = 500
+    const nudge = .002
+
+    // Fitted width is local-SVG pixels, so it first becomes slide pixels.
+    const fittedFraction = localLabelWidthToSlideFraction(100, halfSlideOverlayWidth, halfSlideOverlayWidth, slideWidth)
+    expect(fittedFraction).toBe(.1)
+    expect(nudgeLabelWidth(fittedFraction, nudge)).toBeCloseTo(.102)
+
+    // A natural label is already measured in viewport (and therefore slide)
+    // pixels. It must not be converted through the narrow overlay.
+    const naturalFraction = 100 / slideWidth
+    expect(nudgeLabelWidth(naturalFraction, nudge)).toBeCloseTo(.102)
   })
 
   it('accepts only the public source-local document shape', () => {

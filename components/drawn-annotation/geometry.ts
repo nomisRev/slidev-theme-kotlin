@@ -231,6 +231,11 @@ export function translateConnector(connector: ConnectorEndpoints, dx: number, dy
   }
 }
 
+/** Convert a fitted local-SVG label width to the persisted slide fraction. */
+export function localLabelWidthToSlideFraction(localWidth: number, localCanvasWidth: number, overlayWidth: number, slideWidth: number) {
+  return localWidth / localCanvasWidth * overlayWidth / slideWidth
+}
+
 /** Keep keyboard label-width edits within the same writer contract as drags. */
 export function nudgeLabelWidth(width: number, delta: number) {
   return Math.max(.02, Math.min(1, width + delta))

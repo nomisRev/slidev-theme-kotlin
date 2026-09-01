@@ -26,7 +26,7 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
-import { localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationEditMode, annotationGeometryVersion, annotationEditorStatus, annotationDrafts, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
@@ -2178,8 +2178,14 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       // An unbounded label has no saved maximum yet. Materialize the width it
       // occupies now, so the first key press changes the visible label rather
       // than jumping to an unrelated default cap.
-      const currentWidth = geometry.labelWidth ?? label.getBoundingClientRect().width * geometry.width / slide.getBoundingClientRect().width
-      setLabelDraft(locator.value, { ...labelPositionSeed(), width: nudgeLabelWidth(currentWidth / geometry.width, dx) })
+      const slideWidth = slide.getBoundingClientRect().width
+      const overlayWidth = overlay.value?.getBoundingClientRect().width
+      if (!overlayWidth)
+        return
+      const currentFraction = geometry.labelWidth === undefined
+        ? label.getBoundingClientRect().width / slideWidth
+        : localLabelWidthToSlideFraction(geometry.labelWidth, geometry.width, overlayWidth, slideWidth)
+      setLabelDraft(locator.value, { ...labelPositionSeed(), width: nudgeLabelWidth(currentFraction, dx) })
     }
     else {
       const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
