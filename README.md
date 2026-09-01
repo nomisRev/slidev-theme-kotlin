@@ -18,7 +18,7 @@ This theme provides a professional presentation template tailored for Kotlin dev
 
 ## Requirements
 
-- **Node.js**: >= 18.0.0
+- **Node.js**: >= 20.12.0
 - **Package Manager**: npm (or pnpm with shamefully-hoist=true)
 
 ## Installation
@@ -95,10 +95,11 @@ SELECT * FROM presentations;
 ```
 ````
 
-`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle` modifier
-uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the
-Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
-remain plain code surfaces.
+`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle`, `jdbc`,
+or `r2dbc` modifier uses the Gradle, JDBC, or R2DBC identity respectively.
+`yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the Amper, Java,
+Terminal, Maven, and PostgreSQL icons respectively. All other fences remain plain
+code surfaces.
 
 The identity border colours are exposed as theme variables and can be
 customized from a deck stylesheet. Each variable has a light and dark-mode
@@ -113,6 +114,8 @@ value:
   --code-window-terminal-color: #6c707e;
   --code-window-maven-color: #3574f0;
   --code-window-postgresql-color: #336791;
+  --code-window-jdbc-color: #f59e0b;
+  --code-window-r2dbc-color: #06b6d4;
 }
 
 html.dark {
@@ -479,11 +482,12 @@ layout: cover
 ## Dependencies
 
 ### Runtime Dependencies
-- `@slidev/types` (^52.2.5) - Slidev type definitions
-- `roughjs` (^4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
+- `@shikijs/magic-move` (4.4.3) - Code-token morphing for Magic Move
+- `@slidev/types` (52.19.1) - Slidev type definitions
+- `roughjs` (4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
 
 ### Development Dependencies
-- `@slidev/cli` (^52.2.5) - Slidev command-line interface
+- `@slidev/cli` (52.19.1) - Slidev command-line interface
 
 ## Contributing
 
