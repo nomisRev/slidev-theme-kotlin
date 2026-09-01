@@ -57,6 +57,12 @@ const selectedConnectorManual = computed(() => {
   annotationGeometryVersion.value
   return annotationEditorActionsFor(selected.value)?.isManualConnector() ?? false
 })
+const selectedConnectorCurved = computed(() => {
+  // Same dependencies as the manual/attached state: registration and drafts.
+  annotationEditorRegistryVersion.value
+  annotationGeometryVersion.value
+  return annotationEditorActionsFor(selected.value)?.hasConnectorControl() ?? false
+})
 const canToggleConnector = computed(() => {
   // A remounted annotation restores its selection before it registers again.
   annotationEditorRegistryVersion.value
@@ -68,6 +74,16 @@ async function toggleSelectedConnectorAttachment() {
   if (!actions || !canWrite.value)
     return
   await actions.toggleConnectorAttachment()
+}
+
+async function toggleSelectedConnectorCurve() {
+  const actions = annotationEditorActionsFor(selected.value)
+  if (!actions || !canWrite.value)
+    return
+  if (actions.hasConnectorControl())
+    await actions.removeConnectorControl()
+  else
+    await actions.addConnectorControl()
 }
 
 async function toggleEditor() {
@@ -231,6 +247,9 @@ async function undoSelected() {
       <button type="button" :disabled="!selected" @click="resetSelected('connector')">Reset connector</button>
       <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorAttachment">
         {{ selectedConnectorManual ? 'Use automatic connector' : 'Make connector manual' }}
+      </button>
+      <button type="button" :disabled="!canToggleConnector" @click="toggleSelectedConnectorCurve">
+        {{ selectedConnectorCurved ? 'Straighten connector' : 'Curve connector' }}
       </button>
       <button type="button" :disabled="!selected" @click="resetSelected('all')">Reset selected</button>
     </template>

@@ -30,7 +30,7 @@ import rough from 'roughjs'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
@@ -562,6 +562,14 @@ const geometry = reactive({
   /** Resolved leader endpoints, used to materialize automatic lines on first edit. */
   connectorStart: undefined as Point | undefined,
   connectorEnd: undefined as Point | undefined,
+  /** The rendered quadratic control point of a curved manual connector. */
+  connectorControl: undefined as Point | undefined,
+  /**
+   * The quadratic control point that preserves the automatic cubic route's
+   * visible curve, kept so the first edit can materialize the curve rather
+   * than collapsing it to a straight segment.
+   */
+  connectorAutoControl: undefined as Point | undefined,
   ready: false,
 })
 
@@ -1069,6 +1077,8 @@ function paintDestination(
 ) {
   geometry.connectorStart = undefined
   geometry.connectorEnd = undefined
+  geometry.connectorControl = undefined
+  geometry.connectorAutoControl = undefined
   // Computed into locals first: the stable rough.js seed makes an unchanged
   // layout produce identical path strings, which assignPaths then drops
   // instead of re-patching the SVG.
@@ -1154,6 +1164,7 @@ function paintDestinationInto(
       // merely legacy metadata. Rough.js retains the curve's hand-drawn look.
       c2x = control.x
       c2y = control.y
+      geometry.connectorControl = control
       paths.leader = toPaths(generator.path(`M ${start.x} ${start.y} Q ${control.x} ${control.y}, ${end.x} ${end.y}`, roughOptions()))
     }
     else {
@@ -1170,6 +1181,9 @@ function paintDestinationInto(
     end = route.end
     c2x = route.c2x
     c2y = route.c2y
+    // Remember the quadratic stand-in for this cubic route, so a first edit
+    // can persist the curve the author sees instead of a straight segment.
+    geometry.connectorAutoControl = quadraticControlForCubic(start, { x: route.c1x, y: route.c1y }, { x: route.c2x, y: route.c2y }, end)
     paths.leader = toPaths(generator.path(
       `M ${start.x} ${start.y} C ${route.c1x} ${route.c1y}, ${route.c2x} ${route.c2y}, ${end.x} ${end.y}`,
       roughOptions(),
@@ -1624,6 +1638,12 @@ onMounted(async () => {
     unregisterEditorActions = registerAnnotationEditorActions(locator.value, {
       isManualConnector: () => !!manualConnector(),
       toggleConnectorAttachment,
+      hasConnectorControl: () => {
+        const connector = manualConnector()
+        return connector?.cx !== undefined && connector.cy !== undefined
+      },
+      addConnectorControl,
+      removeConnectorControl,
       persistedGeometry: persistedLabelGeometry,
     })
   }
@@ -1812,6 +1832,18 @@ watch(annotationLabelLayoutChange, (change) => {
 const editable = computed(() => isAnnotationEditorDevelopment && !!locator.value && hasLabel.value && labelActive.value && geometry.ready)
 const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!locator.value && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
 const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === locator.value)
+// The body hit target follows the rendered route: on a curved connector the
+// chord can sit far from the visible stroke, which would make it ungrabbable.
+const connectorHitPath = computed(() => {
+  const start = geometry.connectorStart
+  const end = geometry.connectorEnd
+  if (!start || !end)
+    return ''
+  const control = geometry.connectorControl
+  return control
+    ? `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`
+    : `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+})
 interface DragSaveSession extends AnnotationUndoSession {
   /** The source geometry before this gesture's first autosave. */
   persistedCaptured: boolean
@@ -1989,12 +2021,87 @@ async function toggleConnectorAttachment() {
     return
   }
 
+  // Materialize the visible route, curve included: the automatic leader is a
+  // cubic, and freezing only its endpoints would visibly straighten it.
+  const visible = visibleConnectorFractions()
+  if (!visible)
+    return
+  setLabelDraft(locator.value, visible)
+  await saveDraft(locator.value)
+}
+
+/**
+ * The route on screen, in slide fractions: the manual geometry when one
+ * exists, otherwise the automatic route together with the quadratic control
+ * point that preserves the automatic cubic's visible curve (see
+ * `quadraticControlForCubic`).
+ */
+function visibleConnectorFractions(): PersistedAnnotationGeometry | undefined {
+  const manual = manualConnector()
+  if (manual) {
+    return {
+      x1: manual.x1,
+      y1: manual.y1,
+      x2: manual.x2,
+      y2: manual.y2,
+      ...(manual.cx !== undefined && manual.cy !== undefined ? { cx: manual.cx, cy: manual.cy } : {}),
+    }
+  }
   const start = geometry.connectorStart && localConnectorFraction(geometry.connectorStart)
   const end = geometry.connectorEnd && localConnectorFraction(geometry.connectorEnd)
   if (!start || !end)
+    return undefined
+  const control = geometry.connectorAutoControl && localConnectorFraction(geometry.connectorAutoControl)
+  return { x1: start.x, y1: start.y, x2: end.x, y2: end.y, ...(control ? { cx: control.x, cy: control.y } : {}) }
+}
+
+/**
+ * Give the connector a quadratic control point without hand-editing Markdown.
+ * An automatic route is materialized with the control point that preserves
+ * its visible curve; a straight manual connector gains a control on its chord
+ * midpoint, which renders identically until the author moves the handle.
+ */
+async function addConnectorControl() {
+  if (!locator.value || !connectorEditable.value)
     return
-  setLabelDraft(locator.value, { x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+  const visible = visibleConnectorFractions()
+  if (visible?.x1 === undefined || visible.y1 === undefined || visible.x2 === undefined || visible.y2 === undefined)
+    return
+  const control = visible.cx !== undefined && visible.cy !== undefined
+    ? { cx: visible.cx, cy: visible.cy }
+    : { cx: (visible.x1 + visible.x2) / 2, cy: (visible.y1 + visible.y2) / 2 }
+  setLabelDraft(locator.value, { x1: visible.x1, y1: visible.y1, x2: visible.x2, y2: visible.y2, ...control })
   await saveDraft(locator.value)
+}
+
+/** Remove the quadratic control point, returning a straight manual connector. */
+async function removeConnectorControl() {
+  if (!locator.value || !isAnnotationEditorDevelopment)
+    return
+  const connector = manualConnector()
+  if (!connector || connector.cx === undefined || connector.cy === undefined)
+    return
+  annotationEditorStatus.value = 'Straightening connector…'
+  try {
+    const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
+    const previous = cachedAnnotationGeometry(locator.value) ?? persistedLabelGeometry()
+    // Unsaved endpoint drafts survive; only the control point is removed.
+    const next = { ...previous, ...annotationDrafts.get(locator.value) }
+    delete next.cx
+    delete next.cy
+    const saved = await saveLabelGeometry(locator.value, next)
+    recordAnnotationUndo(locator.value, previous)
+    // The merged draft may still carry the control point; replace it with the
+    // writer's snapshot rather than layering the snapshot over it.
+    clearLabelDraft(locator.value)
+    const persisted = saved.geometry[locator.value]
+    if (persisted)
+      setLabelDraft(locator.value, persisted)
+    annotationEditorStatus.value = 'Connector is straight again'
+  }
+  catch (error) {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to straighten connector'
+  }
 }
 
 async function endLabelDrag(event: PointerEvent) {
@@ -2052,7 +2159,7 @@ function cancelLabelDrag(event: PointerEvent) {
   restoreCancelledDrag(locator.value, drag.previous, drag)
 }
 
-type ConnectorDragKind = 'start' | 'end' | 'body'
+type ConnectorDragKind = 'start' | 'end' | 'body' | 'control'
 let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function localConnectorFraction(point: Point) {
@@ -2092,7 +2199,11 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   event.stopPropagation()
   selectAnnotation(locator.value, kind)
   const saved = manualConnector()
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  // Only a still-automatic route seeds the approximated control point: its
+  // first drag must keep the curve the author sees. A manual connector keeps
+  // exactly the control it has — including none, for a straight one.
+  const auto = saved ? undefined : (geometry.connectorAutoControl && localConnectorFraction(geometry.connectorAutoControl))
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx ?? auto?.x, cy: saved?.cy ?? auto?.y }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
   beginAnnotationDraftGesture(locator.value, 'connector')
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
@@ -2111,6 +2222,12 @@ function moveConnectorDrag(event: PointerEvent) {
   }
   else if (connectorDrag.kind === 'end') {
     next.x2 = fraction(next.x2 + dx); next.y2 = fraction(next.y2 + dy)
+  }
+  else if (connectorDrag.kind === 'control') {
+    // The handle only exists while a control point does, so both are present.
+    if (next.cx !== undefined && next.cy !== undefined) {
+      next.cx = fraction(next.cx + dx); next.cy = fraction(next.cy + dy)
+    }
   }
   else {
     // Translate as one rigid line. Constrain the delta rather than its two
@@ -2200,7 +2317,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       setLabelDraft(locator.value, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
     }
   }
-  else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
+  else if ((part === 'start' || part === 'end' || part === 'body' || part === 'control') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
     const start = localConnectorFraction(geometry.connectorStart)
     const end = localConnectorFraction(geometry.connectorEnd)
     if (!start || !end)
@@ -2208,12 +2325,17 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
     // Keep arrow-key body movement identical to dragging the line itself:
     // translation is constrained as one rigid segment at slide edges.
     const saved = manualConnector()
+    // A nudge can be the first edit of an automatic route, so it seeds the
+    // curve-preserving control point exactly as a pointer drag does.
+    const auto = saved ? undefined : (geometry.connectorAutoControl && localConnectorFraction(geometry.connectorAutoControl))
     const base = {
       x1: start.x,
       y1: start.y,
       x2: end.x,
       y2: end.y,
-      ...(saved?.cx !== undefined && saved.cy !== undefined ? { cx: saved.cx, cy: saved.cy } : {}),
+      ...(saved?.cx !== undefined && saved.cy !== undefined
+        ? { cx: saved.cx, cy: saved.cy }
+        : auto ? { cx: auto.x, cy: auto.y } : {}),
     }
     const translated = nudgeConnector(base, part, dx, dy)
     setLabelDraft(locator.value, { ...translated } satisfies PersistedAnnotationGeometry)
@@ -2334,10 +2456,9 @@ onBeforeUnmount(() => {
         class="annotation-connector-editor"
         @click.stop
       >
-        <line
+        <path
           class="annotation-connector-hit"
-          :x1="geometry.connectorStart.x" :y1="geometry.connectorStart.y"
-          :x2="geometry.connectorEnd.x" :y2="geometry.connectorEnd.y"
+          :d="connectorHitPath"
           role="button"
           tabindex="0"
           aria-label="Move connector"
@@ -2346,6 +2467,13 @@ onBeforeUnmount(() => {
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
           @pointercancel="cancelConnectorDrag"
+        />
+        <!-- The quadratic control polygon, so a dragged handle away from the
+             stroke still reads as part of this connector. -->
+        <path
+          v-if="geometry.connectorControl"
+          class="annotation-connector-guide"
+          :d="`M ${geometry.connectorStart.x} ${geometry.connectorStart.y} L ${geometry.connectorControl.x} ${geometry.connectorControl.y} L ${geometry.connectorEnd.x} ${geometry.connectorEnd.y}`"
         />
         <circle
           v-for="(point, index) in [geometry.connectorStart, geometry.connectorEnd]"
@@ -2357,6 +2485,19 @@ onBeforeUnmount(() => {
           tabindex="0"
           @focus="selectAnnotation(locator!, index ? 'end' : 'start')"
           @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
+          @pointermove="moveConnectorDrag"
+          @pointerup="endConnectorDrag"
+          @pointercancel="cancelConnectorDrag"
+        />
+        <circle
+          v-if="geometry.connectorControl"
+          class="annotation-connector-handle annotation-connector-control-handle"
+          :cx="geometry.connectorControl.x" :cy="geometry.connectorControl.y" r="9"
+          aria-label="Move connector curve"
+          role="button"
+          tabindex="0"
+          @focus="selectAnnotation(locator!, 'control')"
+          @pointerdown.stop="beginConnectorDrag($event, 'control')"
           @pointermove="moveConnectorDrag"
           @pointerup="endConnectorDrag"
           @pointercancel="cancelConnectorDrag"
@@ -2558,6 +2699,11 @@ onBeforeUnmount(() => {
 }
 .annotation-connector-editor { pointer-events: auto; }
 .annotation-connector-hit {
+  /* A curved path, unlike the previous line, has a fill area, and SVG's
+     default fill is opaque black. With no fill, the default visiblePainted
+     pointer events keep the wide transparent stroke clickable along the
+     curve, which is the whole point of this element. */
+  fill: none;
   stroke: transparent;
   stroke-width: 24px;
   cursor: move;
@@ -2567,6 +2713,17 @@ onBeforeUnmount(() => {
   stroke: currentColor;
   stroke-width: 2px;
   cursor: crosshair;
+}
+/* Filled, unlike the hollow endpoints: the curve handle is a different kind
+   of point, and often sits away from the stroke it bends. */
+.annotation-connector-control-handle { fill: currentColor; }
+.annotation-connector-guide {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1px;
+  stroke-dasharray: 4 4;
+  opacity: .45;
+  pointer-events: none;
 }
 @media print {
   .annotation-width-handle { display: none; }

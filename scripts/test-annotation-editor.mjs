@@ -175,7 +175,9 @@ async function run() {
     if (typeof afterWidth.geometry?.label?.width !== 'number' || afterWidth.geometry.connector !== undefined)
       fail(`Dragging the width handle should add a label width; the tag holds ${JSON.stringify(afterWidth.geometry)}.`)
 
-    // 3. Connector endpoint → `connector: { start, end }`.
+    // 3. Connector endpoint → a quadratic `connector: { start, control, end }`:
+    // the first edit of the automatic (cubic) route must materialize its
+    // visible curve, not collapse it to a straight segment.
     const handles = annotation.locator('.annotation-connector-handle')
     await handles.first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
     const afterConnector = await edit('Dragging a connector endpoint', () => drag(page, handles.first(), 18, 12))
@@ -184,18 +186,64 @@ async function run() {
       fail(`Dragging a connector endpoint should persist both endpoints; the tag holds ${JSON.stringify(afterConnector.geometry)}.`)
     if (!same(afterConnector.geometry.label, afterWidth.geometry.label))
       fail('Dragging a connector endpoint changed the label geometry.')
+    if ([connector.control?.x, connector.control?.y].some(value => typeof value !== 'number') || !/type: 'quadratic'/.test(afterConnector.tag))
+      fail(`Materializing the automatic route should preserve its curve as a quadratic control point; the tag holds ${afterConnector.tag}.`)
 
-    // 4. Three saves and HMR cycles later the label is still the selection,
+    // 3b. The control handle drags, moving only the control point.
+    const controlHandle = annotation.locator('.annotation-connector-control-handle')
+    await controlHandle.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const afterControlDrag = await edit('Dragging the connector control handle', () => drag(page, controlHandle, 26, -18))
+    if (same(afterControlDrag.geometry.connector.control, connector.control))
+      fail('Dragging the control handle did not move the control point.')
+    if (!same(afterControlDrag.geometry.connector.start, connector.start) || !same(afterControlDrag.geometry.connector.end, connector.end))
+      fail('Dragging the control handle moved a connector endpoint.')
+
+    // 3c. The control handle is keyboard-editable: focus, then ArrowRight.
+    await controlHandle.evaluate(element => element.focus())
+    const afterControlNudge = await edit('ArrowRight on the focused control handle', () => page.keyboard.press('ArrowRight'))
+    const nudgedConnector = afterControlNudge.geometry.connector
+    if (!(nudgedConnector.control.x > afterControlDrag.geometry.connector.control.x) || nudgedConnector.control.y !== afterControlDrag.geometry.connector.control.y)
+      fail(`ArrowRight should move the control point right only. Before ${JSON.stringify(afterControlDrag.geometry.connector.control)}, after ${JSON.stringify(nudgedConnector.control)}.`)
+
+    // 3d. A body nudge translates start, control and end as one rigid polygon.
+    await annotation.locator('.annotation-connector-hit').evaluate(element => element.focus())
+    const afterBodyNudge = await edit('Shift+ArrowDown on the focused connector body', () => page.keyboard.press('Shift+ArrowDown'))
+    const translated = afterBodyNudge.geometry.connector
+    for (const key of ['start', 'control', 'end']) {
+      const dx = translated[key].x - nudgedConnector[key].x
+      const dy = translated[key].y - nudgedConnector[key].y
+      // Rendered-coordinate round-trips quantize at the writer's 4 decimals.
+      if (Math.abs(dx) > 5e-3 || Math.abs(dy - .01) > 5e-3)
+        fail(`A body nudge must translate the whole control polygon by (0, .01); ${key} moved by (${dx}, ${dy}).`)
+    }
+
+    // 3e. The toolbar removes the control point again.
+    const afterStraighten = await edit('Straighten connector', () => page.getByRole('button', { name: 'Straighten connector' }).click())
+    if (afterStraighten.geometry.connector.control !== undefined || /quadratic/.test(afterStraighten.tag))
+      fail(`Straightening should remove the control point; the tag holds ${afterStraighten.tag}.`)
+    if (!same(afterStraighten.geometry.connector.start, translated.start) || !same(afterStraighten.geometry.connector.end, translated.end))
+      fail('Straightening moved the connector endpoints.')
+
+    // 3f. And adds one back: a straight connector gains a chord-midpoint
+    // control, so the rendered route does not jump when the handle appears.
+    const afterCurve = await edit('Curve connector', () => page.getByRole('button', { name: 'Curve connector' }).click())
+    const curved = afterCurve.geometry.connector
+    if (typeof curved.control?.x !== 'number' || typeof curved.control?.y !== 'number')
+      fail(`Curving should add a control point; the tag holds ${JSON.stringify(afterCurve.geometry)}.`)
+    if (Math.abs(curved.control.x - (curved.start.x + curved.end.x) / 2) > 5e-3 || Math.abs(curved.control.y - (curved.start.y + curved.end.y) / 2) > 5e-3)
+      fail(`A straightened connector's new control point should sit on its chord midpoint; the tag holds ${JSON.stringify(curved)}.`)
+
+    // 4. Many saves and HMR cycles later the label is still the selection,
     // and a further drag keeps working (issue 002 A).
     const afterSecondDrag = await edit('Dragging the label again after HMR', () => drag(page, selectedLabel, -30, 20))
-    if (same(afterSecondDrag.geometry.label, afterConnector.geometry.label))
+    if (same(afterSecondDrag.geometry.label, afterCurve.geometry.label))
       fail('The second label drag did not move the label.')
 
     // 5. Undo restores the geometry from before the last drag (issue 002 B).
     const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
     const afterUndo = await edit('Cmd/Ctrl+Z', () => page.keyboard.press(`${undoModifier}+z`))
-    if (!same(afterUndo.geometry, afterConnector.geometry))
-      fail(`Undo did not restore the geometry from before the last drag.\nExpected ${JSON.stringify(afterConnector.geometry)}\nReceived ${JSON.stringify(afterUndo.geometry)}`)
+    if (!same(afterUndo.geometry, afterCurve.geometry))
+      fail(`Undo did not restore the geometry from before the last drag.\nExpected ${JSON.stringify(afterCurve.geometry)}\nReceived ${JSON.stringify(afterUndo.geometry)}`)
 
     // The same guarantee for a fresh session: with nothing cached from this
     // tab's own writes, the undo baseline must be the authored binding, not

@@ -22,7 +22,14 @@ import {
 import type { AnnotationEditorActions } from './editor-store'
 
 function actions(): AnnotationEditorActions {
-  return { isManualConnector: () => false, toggleConnectorAttachment: async () => {}, persistedGeometry: () => ({}) }
+  return {
+    isManualConnector: () => false,
+    toggleConnectorAttachment: async () => {},
+    hasConnectorControl: () => false,
+    addConnectorControl: async () => {},
+    removeConnectorControl: async () => {},
+    persistedGeometry: () => ({}),
+  }
 }
 
 describe('annotation editor store', () => {
