@@ -56,7 +56,8 @@ bindings on exactly the edited `DrawnAnnotation` tags, then exits. **Esc**
 cancels in stages — an active drag, then the selection, then (after a
 confirmation) the whole session, discarding its drafts. **Cmd/Ctrl+Z** undoes
 the last gesture locally; one toolbar control switches the connector between
-manual and automatic routing, and reset controls restore the label or the
+manual and automatic routing, another curves or straightens it with a
+draggable quadratic control point, and reset controls restore the label or the
 annotation's whole authored geometry. Source revisions are checked, so a
 conflicting commit fails without overwriting anyone: the drafts stay visible,
 and you either fix and press Done again or choose **Reload saved geometry** to

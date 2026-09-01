@@ -11,7 +11,7 @@ import type { PersistedAnnotationGeometry } from './geometry'
  */
 export const annotationEditMode = ref(false)
 export const selectedAnnotationId = ref<string>()
-export const selectedAnnotationPart = ref<'label' | 'width' | 'start' | 'end' | 'body'>()
+export const selectedAnnotationPart = ref<'label' | 'width' | 'start' | 'end' | 'body' | 'control'>()
 export const annotationDrafts = reactive(new Map<string, PersistedAnnotationGeometry>())
 export const annotationGeometryVersion = ref(0)
 /** The draft most recently changed; lets its owner repaint without waking every annotation. */
@@ -25,6 +25,12 @@ export const annotationEditorStatus = ref<string>()
 export interface AnnotationEditorActions {
   isManualConnector: () => boolean
   toggleConnectorAttachment: () => Promise<void>
+  /** Whether the connector currently carries a quadratic control point (draft or persisted). */
+  hasConnectorControl: () => boolean
+  /** Give the connector a quadratic control point, materializing an automatic route first. A plain draft edit, committed with the session. */
+  addConnectorControl: () => void
+  /** Remove the quadratic control point, returning to a straight manual connector. Removing a saved control point writes immediately. */
+  removeConnectorControl: () => Promise<void>
   /** The geometry authored in the source binding, the baseline an edit must be undone to. */
   persistedGeometry: () => PersistedAnnotationGeometry
 }
@@ -74,7 +80,7 @@ let shortcutInstalled = false
 // Matched by physical key (`event.code`): on macOS, Option+Shift+A composes
 // 'Å', so an `event.key` comparison would never fire there.
 export function installAnnotationEditorShortcut() { if (shortcutInstalled || typeof window === 'undefined') return; shortcutInstalled = true; window.addEventListener('keydown', (event) => { if (event.altKey && event.shiftKey && event.code === 'KeyA') { event.preventDefault(); window.dispatchEvent(new Event('drawn-annotation-editor-toggle')) } }) }
-export function selectAnnotation(locator: string, part: 'label' | 'width' | 'start' | 'end' | 'body' = 'label') { selectedAnnotationId.value = locator; selectedAnnotationPart.value = part; released = undefined }
+export function selectAnnotation(locator: string, part: 'label' | 'width' | 'start' | 'end' | 'body' | 'control' = 'label') { selectedAnnotationId.value = locator; selectedAnnotationPart.value = part; released = undefined }
 export function clearAnnotationSelection(locator?: string) { if (locator !== undefined && selectedAnnotationId.value !== locator) return; selectedAnnotationId.value = undefined; selectedAnnotationPart.value = undefined; released = undefined }
 /**
  * Saving rewrites the Markdown, and Slidev's HMR then unmounts the slide,
@@ -155,12 +161,16 @@ export function replaceLabelDraft(locator: string, geometry: PersistedAnnotation
  * other part. Used when a reset writes the source without that part: clearing
  * the whole draft there would silently discard unrelated pending changes.
  */
-export function clearLabelDraftFields(locator: string, part: 'label' | 'connector') {
+export function clearLabelDraftFields(locator: string, part: 'label' | 'connector' | 'control') {
   const draft = annotationDrafts.get(locator)
   if (!draft) return
   const next = { ...draft }
   if (part === 'label') { delete next.x; delete next.y; delete next.width }
-  else { delete next.x1; delete next.y1; delete next.x2; delete next.y2; delete next.cx; delete next.cy }
+  else if (part === 'connector') { delete next.x1; delete next.y1; delete next.x2; delete next.y2; delete next.cx; delete next.cy }
+  // 'control' is finer-grained than 'connector': straightening a connector
+  // removes only its quadratic control point, so uncommitted endpoint drafts
+  // survive the removal.
+  else { delete next.cx; delete next.cy }
   replaceLabelDraft(locator, Object.keys(next).length ? next : null)
 }
 export function clearLabelDraft(locator: string) {

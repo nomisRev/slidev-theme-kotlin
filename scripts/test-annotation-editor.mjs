@@ -247,6 +247,9 @@ async function run() {
     await assertStateFrozen('Arrow keys with no selection', routeBeforeEditing)
 
     // 5. More session edits before the single commit: width and connector.
+    // The first connector drag materializes the automatic (cubic) route as a
+    // quadratic draft — endpoints plus the curve-preserving control point
+    // (issue 001) — so the control handle appears without any write.
     await label.click()
     await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
     await drag(page, annotation.locator('.annotation-width-handle'), 36, 0)
@@ -254,6 +257,58 @@ async function run() {
     await handles.first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
     await drag(page, handles.first(), 18, 12)
     await assertNoWrite('Width and connector drags', sessionStart, sessionHot)
+
+    // 5b. The control handle exists as a draft and drags, moving only the
+    // control point: the endpoint handles stay where the drag left them.
+    const controlHandle = annotation.locator('.annotation-connector-control-handle')
+    const endpointHandles = annotation.locator('.annotation-connector-handle:not(.annotation-connector-control-handle)')
+    await controlHandle.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+      .catch(() => fail('The first connector drag did not materialize the automatic curve as a draggable control point.'))
+    const endpointBoxesBefore = [await endpointHandles.nth(0).boundingBox(), await endpointHandles.nth(1).boundingBox()]
+    const controlBoxBefore = await controlHandle.boundingBox()
+    await drag(page, controlHandle, 26, -18)
+    const controlBoxDragged = await waitFor(async () => {
+      const box = await controlHandle.boundingBox()
+      return box && Math.abs(box.x - controlBoxBefore.x - 26) < 8 && Math.abs(box.y - controlBoxBefore.y + 18) < 8 ? box : undefined
+    })
+    if (!controlBoxDragged) fail(`Dragging the control handle did not move the control point. Before ${JSON.stringify(controlBoxBefore)}, after ${JSON.stringify(await controlHandle.boundingBox())}.`)
+    for (const [index, before] of endpointBoxesBefore.entries()) {
+      const box = await endpointHandles.nth(index).boundingBox()
+      if (Math.abs(box.x - before.x) > 1 || Math.abs(box.y - before.y) > 1)
+        fail(`Dragging the control handle moved connector endpoint ${index}.`)
+    }
+    await assertNoWrite('Dragging the control handle', sessionStart, sessionHot)
+
+    // 5c. The control handle is keyboard-editable: focus, then ArrowRight
+    // moves the control point right only — still a draft.
+    await controlHandle.evaluate(element => element.focus())
+    await page.keyboard.press('ArrowRight')
+    const controlNudged = await waitFor(async () => {
+      const box = await controlHandle.boundingBox()
+      return box && box.x > controlBoxDragged.x + 1 ? box : undefined
+    })
+    if (!controlNudged) fail('ArrowRight did not nudge the focused control handle.')
+    if (Math.abs(controlNudged.y - controlBoxDragged.y) > 1) fail('ArrowRight moved the control point vertically.')
+    await assertNoWrite('Nudging the control handle', sessionStart, sessionHot)
+
+    // 5d. A body nudge translates start, control and end as one rigid polygon.
+    const rigidBefore = [await endpointHandles.nth(0).boundingBox(), await endpointHandles.nth(1).boundingBox(), await controlHandle.boundingBox()]
+    await annotation.locator('.annotation-connector-hit').evaluate(element => element.focus())
+    await page.keyboard.press('Shift+ArrowDown')
+    const rigidMoved = await waitFor(async () => {
+      const box = await controlHandle.boundingBox()
+      // Shift is the larger step: 1% of the slide height.
+      return box && box.y > rigidBefore[2].y + 4 ? box : undefined
+    })
+    if (!rigidMoved) fail('Shift+ArrowDown on the connector body did not move the control point with it.')
+    const rigidAfter = [await endpointHandles.nth(0).boundingBox(), await endpointHandles.nth(1).boundingBox(), await controlHandle.boundingBox()]
+    for (const [index, before] of rigidBefore.entries()) {
+      const after = rigidAfter[index]
+      const dy = after.y - before.y
+      if (Math.abs(after.x - before.x) > 1 || Math.abs(dy - (rigidAfter[2].y - rigidBefore[2].y)) > 1)
+        fail(`A body nudge must translate the whole control polygon rigidly; handle ${index} moved by (${after.x - before.x}, ${dy}).`)
+    }
+    await assertNoWrite('Body-nudging the curved connector', sessionStart, sessionHot)
 
     // 6. Undo is local too: it restores the pre-gesture draft without a write.
     const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
@@ -264,15 +319,19 @@ async function run() {
     // Redo the connector edit so the commit below carries every change kind.
     await drag(page, handles.first(), 18, 12)
 
-    // 7. One commit persists the whole session: label position, width and
-    // connector endpoints land in a single write phase on this tag only.
+    // 7. One commit persists the whole session: label position, width and the
+    // quadratic connector land in a single write phase on this tag only. The
+    // materialized route keeps its curve: the committed connector carries the
+    // control point, not a collapsed straight segment (issue 001).
     const committed = await commitSession('Committing the session')
     if (typeof committed.geometry?.label?.x !== 'number' || typeof committed.geometry.label.y !== 'number' || typeof committed.geometry.label.width !== 'number')
       fail(`The commit should persist the dragged and nudged label with its width; the tag holds ${JSON.stringify(committed.geometry)}.`)
     const connector = committed.geometry?.connector
     if (!connector || [connector.start?.x, connector.start?.y, connector.end?.x, connector.end?.y].some(value => typeof value !== 'number'))
       fail(`The commit should persist both connector endpoints; the tag holds ${JSON.stringify(committed.geometry)}.`)
-    if (!/:geometry="\{ label: \{ x: 0\.\d{4}, y: 0\.\d{4}, width: 0\.\d{4} \}, connector: \{ start: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, end: \{ x: 0\.\d{4}, y: 0\.\d{4} \} \} \}"/.test(committed.tag))
+    if ([connector.control?.x, connector.control?.y].some(value => typeof value !== 'number') || !/type: 'quadratic'/.test(committed.tag))
+      fail(`Materializing the automatic route should preserve its curve as a quadratic control point; the tag holds ${committed.tag}.`)
+    if (!/:geometry="\{ label: \{ x: 0\.\d{4}, y: 0\.\d{4}, width: 0\.\d{4} \}, connector: \{ type: 'quadratic', start: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, control: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, end: \{ x: 0\.\d{4}, y: 0\.\d{4} \} \} \}"/.test(committed.tag))
       fail(`The written binding is not the compact four-decimal literal the writer promises:\n${committed.tag}`)
 
     // 7b. The toolbar's single connector state control (issue 003): switching
@@ -283,10 +342,14 @@ async function run() {
     await enterEditMode()
     await label.click()
     await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const hotBeforeAutomatic = hotUpdates
     await page.getByRole('button', { name: 'Use automatic connector' }).click()
     const afterAutomatic = await waitFor(async () => { const now = await fixtureSource(); return now.tag === committed.tag ? undefined : now })
     if (!afterAutomatic)
       fail(`Switching to the automatic connector did not write the source. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+    // Let the write's own HMR update land before any later no-write check.
+    if (!await waitFor(async () => hotUpdates > hotBeforeAutomatic))
+      fail('The automatic switch rewrote the source, but Slidev never hot-updated the browser.')
     if (afterAutomatic.geometry?.connector !== undefined)
       fail(`Switching to the automatic connector should remove the whole connector object; the tag holds ${JSON.stringify(afterAutomatic.geometry)}.`)
     if (!same(afterAutomatic.geometry?.label, committed.geometry.label))
@@ -307,6 +370,45 @@ async function run() {
     if (!same(restored.geometry, committed.geometry))
       fail(`Undo did not restore the manual connector the automatic switch removed.\nExpected ${JSON.stringify(committed.geometry)}\nReceived ${JSON.stringify(restored.geometry)}`)
 
+    // 7d. Straightening a saved curve (issue 001): the source's control point
+    // cannot be removed by a draft either, so "Straighten connector" is the
+    // same kind of immediate-write exception. Only the control point goes:
+    // endpoints and label survive it untouched.
+    await enterEditMode()
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const hotBeforeStraighten = hotUpdates
+    await page.getByRole('button', { name: 'Straighten connector' }).click()
+    const afterStraighten = await waitFor(async () => { const now = await fixtureSource(); return now.tag === restored.tag ? undefined : now })
+    if (!afterStraighten)
+      fail(`Straightening the connector did not write the source. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+    // Let the write's own HMR update land before any later no-write check.
+    if (!await waitFor(async () => hotUpdates > hotBeforeStraighten))
+      fail('Straightening rewrote the source, but Slidev never hot-updated the browser.')
+    if (afterStraighten.geometry?.connector?.control !== undefined || /quadratic/.test(afterStraighten.tag))
+      fail(`Straightening should remove the control point; the tag holds ${afterStraighten.tag}.`)
+    if (!same(afterStraighten.geometry?.connector?.start, restored.geometry.connector.start) || !same(afterStraighten.geometry?.connector?.end, restored.geometry.connector.end))
+      fail('Straightening moved the connector endpoints.')
+    if (!same(afterStraighten.geometry?.label, restored.geometry.label))
+      fail('Straightening changed the label geometry.')
+
+    // 7e. "Curve connector" adds a chord-midpoint control point back, so the
+    // rendered route does not jump when the handle appears — an ordinary
+    // draft, committed with the session like any other geometry edit.
+    const hotBeforeCurve = hotUpdates
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await page.getByRole('button', { name: 'Curve connector' }).click()
+    await controlHandle.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+      .catch(() => fail('Curving the connector did not show the control handle.'))
+    await assertNoWrite('Curving the connector', afterStraighten, hotBeforeCurve)
+    const curveCommitted = await commitSession('Committing the curved connector')
+    const curved = curveCommitted.geometry?.connector
+    if (typeof curved?.control?.x !== 'number' || typeof curved.control?.y !== 'number')
+      fail(`Curving should add a control point; the tag holds ${JSON.stringify(curveCommitted.geometry)}.`)
+    if (Math.abs(curved.control.x - (curved.start.x + curved.end.x) / 2) > 5e-3 || Math.abs(curved.control.y - (curved.start.y + curved.end.y) / 2) > 5e-3)
+      fail(`A straightened connector's new control point should sit on its chord midpoint; the tag holds ${JSON.stringify(curved)}.`)
+
     // 8. A conflicting commit fails without losing drafts: the session stays
     // open, the file keeps the other author's revision, and "Reload saved
     // geometry" is the documented recovery.
@@ -318,7 +420,7 @@ async function run() {
     await doneButton.click()
     if (!await waitFor(async () => /reload before saving/i.test(await status.textContent() ?? '')))
       fail(`A conflicting commit was not reported with its recovery path. Toolbar status: ${JSON.stringify(await status.textContent())}`)
-    if ((await fixtureSource()).tag !== committed.tag)
+    if ((await fixtureSource()).tag !== curveCommitted.tag)
       fail('A conflicting commit overwrote the source another author had changed.')
     if (!await doneButton.count())
       fail('A failed commit exited the edit session instead of keeping the drafts editable.')
@@ -330,7 +432,7 @@ async function run() {
     await status.filter({ hasText: 'Saved annotation geometry reloaded' }).waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
     await drag(page, label, 24, 10)
     const afterRecovery = await commitSession('Committing after conflict recovery')
-    if (same(afterRecovery.geometry.label, committed.geometry.label))
+    if (same(afterRecovery.geometry.label, curveCommitted.geometry.label))
       fail('The commit after conflict recovery did not move the label.')
 
     // 9. Escape cancels the session: the first press clears the selection,

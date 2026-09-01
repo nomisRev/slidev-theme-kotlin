@@ -192,6 +192,28 @@ export function localPointToSlideFraction(point: FractionPoint, slide: ViewportB
 }
 
 /**
+ * The quadratic control point that best preserves a cubic Bézier's visible
+ * curve, used when the first edit materializes an automatic leader route.
+ *
+ * The automatic route is a cubic `B₃(P0, C1, C2, P3)`, but persisted manual
+ * curvature is quadratic — one control point. The deterministic midpoint
+ * approximation `Q = (3(C1 + C2) − (P0 + P3)) / 4` is used: it is the unique
+ * control point whose quadratic passes through the cubic's own midpoint
+ * `B₃(½) = (P0 + 3C1 + 3C2 + P3) / 8` (substitute Q into
+ * `B₂(½) = (P0 + 2Q + P3) / 4` to verify), so the bow of the route survives
+ * the conversion instead of collapsing to the chord. The result is exact for
+ * a degree-elevated quadratic and closest at mid-curve otherwise, which is
+ * where a leader's bow is most visible. Coordinates are unit-agnostic; when
+ * persisting slide fractions the caller clamps the result into the slide.
+ */
+export function quadraticControlForCubic(start: FractionPoint, control1: FractionPoint, control2: FractionPoint, end: FractionPoint): FractionPoint {
+  return {
+    x: (3 * (control1.x + control2.x) - (start.x + end.x)) / 4,
+    y: (3 * (control1.y + control2.y) - (start.y + end.y)) / 4,
+  }
+}
+
+/**
  * Translate a connector without ever changing its length or angle. Movement is
  * constrained as a whole at slide edges: independently clamping endpoint two
  * after endpoint one has hit an edge would silently turn a body drag into a
@@ -232,7 +254,7 @@ export function nudgeLabelWidth(width: number, delta: number) {
  * semantics than a pointer drag. In particular, independently clamping both
  * endpoints would shorten a body-selected connector at a slide edge.
  */
-export function nudgeConnector(connector: ConnectorEndpoints, part: 'start' | 'end' | 'body', dx: number, dy: number): ConnectorEndpoints {
+export function nudgeConnector(connector: ConnectorEndpoints, part: 'start' | 'end' | 'body' | 'control', dx: number, dy: number): ConnectorEndpoints {
   if (part === 'body')
     return translateConnector(connector, dx, dy)
 
@@ -241,9 +263,15 @@ export function nudgeConnector(connector: ConnectorEndpoints, part: 'start' | 'e
     next.x1 = Math.max(0, Math.min(1, next.x1 + dx))
     next.y1 = Math.max(0, Math.min(1, next.y1 + dy))
   }
-  else {
+  else if (part === 'end') {
     next.x2 = Math.max(0, Math.min(1, next.x2 + dx))
     next.y2 = Math.max(0, Math.min(1, next.y2 + dy))
+  }
+  // A control nudge on a straight connector has nothing to move; the caller
+  // only offers the control part while a quadratic control point exists.
+  else if (next.cx !== undefined && next.cy !== undefined) {
+    next.cx = Math.max(0, Math.min(1, next.cx + dx))
+    next.cy = Math.max(0, Math.min(1, next.cy + dy))
   }
   return next
 }

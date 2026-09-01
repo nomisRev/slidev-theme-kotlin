@@ -241,16 +241,23 @@ never written mid-gesture, which means no HMR remount and no replayed
 annotation entrance animation while the author is working.
 
 Click and drag a visible label to move it; select it and drag its right handle
-to set its maximum width. Labels, the label width handle, and connector
-endpoint handles are keyboard focusable: focus one, then use the arrow keys to
-nudge it (`Shift` for larger steps) — arrow keys always edit the selected
-control and never navigate while the session is active. The width handle
-adjusts maximum width; connector endpoints and its body can likewise be
-dragged. One toolbar control switches the selected connector between its two
-states: the first connector drag (or the **Make connector manual** button)
-materializes the currently automatic route as two manual endpoints — as a
-draft like any other edit — and **Use automatic connector** removes the manual
-connector geometry so the route follows its target and label again.
+to set its maximum width. Labels, the label width handle, and the connector
+endpoint and curve handles are keyboard focusable: focus one, then use the
+arrow keys to nudge it (`Shift` for larger steps) — arrow keys always edit the
+selected control and never navigate while the session is active. The width
+handle adjusts maximum width; connector endpoints, its quadratic control
+point, and its body can likewise be dragged (a body drag or nudge translates
+endpoints and control point as one rigid polygon). One toolbar control
+switches the selected connector between its two states: the first connector
+drag (or the **Make connector manual** button) materializes the currently
+automatic route — endpoints and the control point that preserves its visible
+curve — as a draft like any other edit, and **Use automatic connector**
+removes the manual connector geometry, control point included, so the route
+follows its target and label again. A second toolbar control curves and
+straightens the manual connector: **Curve connector** gives a straight
+connector a control point on its chord midpoint (a draft — the rendered route
+does not jump when the handle appears), and **Straighten connector** removes
+the control point while the endpoints stay put.
 
 **Done editing annotations** is the commit boundary: it writes every draft
 that differs from the saved source, one annotation at a time in the order they
@@ -264,10 +271,11 @@ first (restoring the pre-drag draft), then the current selection, then — after
 a confirmation whenever unsaved changes exist — the whole session, discarding
 its drafts without writing. **Cmd/Ctrl+Z** undoes the previous gesture for the
 selected annotation locally; the restored state is committed or discarded with
-the rest of the session. The reset buttons are the one exception to
-draft-only editing: removing saved geometry cannot be expressed as a draft, so
-**Reset label**, **Reset label & connector**, and **Use automatic connector**
-write immediately; Undo restores what they removed as an ordinary draft. A deck
+the rest of the session. Removing saved geometry is the one exception to
+draft-only editing — a draft can only overlay the source, not delete from it —
+so **Reset label**, **Reset label & connector**, **Use automatic connector**,
+and **Straighten connector** (when the source holds the control point) write
+immediately; Undo restores what they removed as an ordinary draft. A deck
 without the writer plugin reports its configuration error instead of entering
 an editor that cannot save.
 

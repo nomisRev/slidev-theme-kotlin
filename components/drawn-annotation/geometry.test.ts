@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './geometry'
 
 describe('DrawnAnnotation source geometry', () => {
   const slide = { left: 100, top: 50, width: 1600, height: 900 }
@@ -67,6 +67,37 @@ describe('DrawnAnnotation source geometry', () => {
     expect(persistedGeometrySignature(undefined)).toBe(persistedGeometrySignature({}))
     expect(persistedGeometrySignature({ x: .1, y: .2 })).not.toBe(persistedGeometrySignature({ x: .1, y: .2, width: .3 }))
     expect(persistedGeometrySignature({ x1: 0, y1: 0, x2: 1, y2: 1 })).not.toBe(persistedGeometrySignature({ x1: 0, y1: 0, x2: 1, y2: 1, cx: .5, cy: .5 }))
+  })
+
+  it('approximates a cubic with the quadratic through the cubic midpoint', () => {
+    const start = { x: 0, y: 0 }
+    const c1 = { x: .1, y: .3 }
+    const c2 = { x: .5, y: .4 }
+    const end = { x: .8, y: 0 }
+    const control = quadraticControlForCubic(start, c1, c2, end)
+
+    // Q = (3(C1 + C2) − (P0 + P3)) / 4.
+    expect(control.x).toBeCloseTo((3 * (.1 + .5) - .8) / 4)
+    expect(control.y).toBeCloseTo(3 * (.3 + .4) / 4)
+
+    // The defining property of the midpoint approximation: the quadratic
+    // passes through the cubic's own midpoint B₃(½) = (P0 + 3C1 + 3C2 + P3)/8.
+    const cubicMidY = (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8
+    const quadraticMidY = (start.y + 2 * control.y + end.y) / 4
+    expect(quadraticMidY).toBeCloseTo(cubicMidY)
+
+    // A degree-elevated straight cubic converts back to its chord midpoint,
+    // so materializing a visually straight leader stays visually straight.
+    const straight = quadraticControlForCubic({ x: 0, y: 0 }, { x: 1 / 3, y: 1 / 3 }, { x: 2 / 3, y: 2 / 3 }, { x: 1, y: 1 })
+    expect(straight.x).toBeCloseTo(.5)
+    expect(straight.y).toBeCloseTo(.5)
+  })
+
+  it('nudges the quadratic control point alone, clamped to the slide', () => {
+    const quadratic = { x1: .1, y1: .2, x2: .3, y2: .4, cx: .5, cy: .01 }
+    expect(nudgeConnector(quadratic, 'control', .01, -.05)).toEqual({ x1: .1, y1: .2, x2: .3, y2: .4, cx: .51, cy: 0 })
+    // A control nudge on a straight connector changes nothing.
+    expect(nudgeConnector({ x1: .1, y1: .2, x2: .3, y2: .4 }, 'control', .01, .01)).toEqual({ x1: .1, y1: .2, x2: .3, y2: .4 })
   })
 
   it('accepts only the public source-local document shape', () => {
