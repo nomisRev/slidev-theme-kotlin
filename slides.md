@@ -450,11 +450,11 @@ fun main() {
 
 ---
 
-# Labels find room automatically
+# Labels use simple local placement
 
-<DrawnAnnotation type="underline" selector="[data-pinned]" label="pinned by hand" :label-x="78" :label-y="18" :at="1">
+<DrawnAnnotation type="underline" selector="[data-pinned]" label="placed near its mark" :at="1">
 <DrawnAnnotation type="underline" selector="[data-quiet]" label="named without a line" :connect="false" placement="right" :at="2">
-<DrawnAnnotation type="circle" selector="[data-auto]" label="placed automatically, clear of the other content" :at="3">
+<DrawnAnnotation type="circle" selector="[data-auto]" label="placed by the local fallback" :at="3">
 
 > You can <b data-pinned>put a label</b> where you want it.
 >

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
 import { ShikiMagicMovePrecompiled } from '@shikijs/magic-move/vue'
-import { useNav, useSlideContext } from '@slidev/client'
+import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { CLICKS_MAX } from '@slidev/client/constants.ts'
 import { configs } from '@slidev/client/env.ts'
 import TitleIcon from '@slidev/client/internals/TitleIcon.vue'
@@ -20,6 +20,14 @@ const props = withDefaults(defineProps<{
   stepsLz: string
   /** This slide's position in the chain of code snippets. */
   step: number
+  /**
+   * 1-based page numbers of the chain slides contributing each step, one per
+   * step. A chain slide without a fence at this position contributes no step,
+   * so page adjacency alone would morph from the wrong (non-adjacent) step —
+   * the map is required, and a map that does not match the payload disables
+   * the animation rather than guessing.
+   */
+  stepPages: number[]
   /**
    * Identifier shared by the whole chain. Used as `view-transition-name` so
    * decks with `transition: view-transition` pair the code windows of both
@@ -67,6 +75,11 @@ const { currentSlideNo, isPrintMode } = useNav()
 const container = useTemplateRef<HTMLElement>('container')
 
 const stepIndex = ref(props.step)
+// Keep rendering in bounds even for a transient HMR prop patch where the
+// payload has changed before its synchronizing watcher has run.
+const renderedStep = computed(() =>
+  Math.max(0, Math.min(stepIndex.value, steps.value.length - 1)),
+)
 // The animation duration is 0 until we are deliberately moving between steps,
 // so re-renders (theme switch, HMR) never replay the transition.
 const animated = ref(false)
@@ -75,6 +88,16 @@ const animated = ref(false)
 // a stale continuation resuming after its awaits must not replay the animation
 // or overwrite the step a newer navigation already settled on.
 let navigationEpoch = 0
+
+// HMR patches this existing component instance rather than remounting it. Pin
+// it to the new payload's declared step and invalidate a navigation watcher
+// continuation that may otherwise restore the previous payload's step.
+watch([() => props.stepsLz, () => props.step], () => {
+  navigationEpoch++
+  animated.value = false
+  stepIndex.value = props.step
+  void nextTick(applyHighlight)
+})
 
 watch(currentSlideNo, async (to, from) => {
   if (isPrintMode.value)
@@ -86,12 +109,14 @@ watch(currentSlideNo, async (to, from) => {
     stepIndex.value = props.step
     return
   }
-  const fromStep = from === $page.value - 1
-    ? props.step - 1
-    : from === $page.value + 1
-      ? props.step + 1
-      : null
-  if (fromStep === null || fromStep < 0 || fromStep >= steps.value.length)
+  // The transformer supplies the page-to-step map with every payload it
+  // compiles. A map that does not place this step on this page means payload
+  // and slide are out of sync (mid-HMR, say): skip the animation over guessing.
+  const pages = props.stepPages
+  if (pages.length !== steps.value.length || pages[props.step] !== $page.value)
+    return
+  const fromStep = pages.indexOf(from)
+  if (fromStep < 0 || fromStep === props.step)
     return
   // First render the neighbour's code without animation, wait for the slide
   // to become visible (the renderer measures real token positions), then move
@@ -166,8 +191,9 @@ onMounted(() => {
 
 // Only the visible slide may claim the view-transition name: all slides of
 // the deck stay mounted, and duplicate names would cancel the transition.
+const isSlideActive = useIsSlideActive()
 const viewTransitionName = computed(() =>
-  !isPrintMode.value && currentSlideNo.value === $page.value ? props.navKey : 'none',
+  !isPrintMode.value && isSlideActive.value ? props.navKey : 'none',
 )
 
 // The View Transitions API would cross-fade a snapshot of the old code window
@@ -220,7 +246,7 @@ function copyCode() {
       v-if="steps.length"
       class="slidev-code relative shiki overflow-visible"
       :steps="steps"
-      :step="stepIndex"
+      :step="renderedStep"
       :animate="!isPrintMode"
       :options="{
         globalScale: scale * zoom,

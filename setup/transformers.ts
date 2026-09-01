@@ -6,6 +6,11 @@ import { codeWindowIcon } from './code-window-icon'
 import { extractTopLevelFences, resolveChain } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
 
+// This is deliberately an invalid user-facing fence modifier. It exists only
+// between the markdown and codeblock transformer passes, and is removed before
+// any fence info is parsed or passed to Shiki.
+const FENCE_ORDINAL_MARKER = /(?:^|\s)__slidev_magic_move_ordinal__=(\d+)(?=\s|$)/
+
 // Magic Move serialises Shiki tokens instead of its regular HAST output, so the
 // Shiki transformer cannot put the code-window icon class on it. Add the class
 // as a fallthrough attribute on Slidev's ShikiMagicMove component instead.
@@ -35,6 +40,66 @@ function withIconClass(options: string | undefined, icon: string) {
 }
 
 /**
+ * Escape a value for a double-quoted HTML attribute. Vue's template compiler
+ * decodes entities in attribute values, so quotes inside fence titles or
+ * options (`[Bob's file.kt]`, `{at:"+2"}`) survive instead of terminating the
+ * attribute and breaking the slide's markup.
+ */
+function attributeValue(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
+function magicMoveFenceOrdinalInsertions(source: string): { at: number, text: string }[] {
+  const insertions: { at: number, text: string }[] = []
+  const lines = source.split(/(\r?\n)/)
+  let ordinal = 0
+  let fence: string | undefined
+  let offset = 0
+
+  for (let index = 0; index < lines.length; index += 2) {
+    const line = lines[index]
+    const lineEnd = offset + line.length
+    offset = lineEnd + (lines[index + 1]?.length ?? 0)
+    if (fence) {
+      if (!/^ {4}/.test(line) && line.trimStart().startsWith(fence))
+        fence = undefined
+      continue
+    }
+
+    // Tilde fences are tracked too, so a backtick sample rendered inside one
+    // is never mistaken for a real fence and stamped with a visible marker.
+    const open = line.match(/^ {0,3}(`{3,})\s*([^\r\n`]*)$/) ?? line.match(/^ {0,3}(~{3,})(.*)$/)
+    if (!open)
+      continue
+    fence = open[1]
+    // Keep this aligned with extractTopLevelFences: only three-backtick,
+    // language-bearing fences participate in cross-slide Magic Move.
+    if (fence === '```' && open[2].trim()) {
+      insertions.push({ at: lineEnd, text: ` __slidev_magic_move_ordinal__=${ordinal}` })
+      ordinal++
+    }
+  }
+  return insertions
+}
+
+/** Add stable, per-slide fence positions before markdown is parsed. */
+export function markMagicMoveFenceOrdinals(source: string): string {
+  for (const { at, text } of magicMoveFenceOrdinalInsertions(source).reverse())
+    source = source.slice(0, at) + text + source.slice(at)
+  return source
+}
+
+export function takeMagicMoveFenceOrdinal(info: string): { info: string, ordinal?: number } {
+  const match = info.match(FENCE_ORDINAL_MARKER)
+  if (!match)
+    return { info }
+  return {
+    info: info.slice(0, match.index).trimEnd() + info.slice(match.index! + match[0].length),
+    ordinal: Number(match[1]),
+  }
+}
+
+/**
  * Cross-slide Magic Move: replace every top-level code fence of a slide that
  * belongs to a `magic-move` chain (see `magic-move-between.ts`) with a
  * `<MagicMoveBetween>` component. The component receives every step of the
@@ -42,7 +107,13 @@ function withIconClass(options: string | undefined, icon: string) {
  * when the presentation navigates between the chained slides.
  */
 const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransformContext) => {
-  const { info, code, fence, slide, options } = ctx
+  const { code, fence, slide, options } = ctx
+  const { info, ordinal } = takeMagicMoveFenceOrdinal(ctx.info)
+  // The marker is private to the theme's two magic-move passes. Slidev's later
+  // fence transformers read `ctx.info` when they run (and the final wrapper
+  // rewrites the token info Shiki sees from it), so strip it even on the paths
+  // below that decline the fence and let the normal pipeline render it.
+  ctx.info = info
   if (fence !== 3 || !slide)
     return
   const slides = options.data.slides
@@ -57,14 +128,24 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
   // Locate the fence being rendered among this slide's fences. Its position
   // decides which fences of the neighbouring slides it morphs to and from.
   const own = fencesPerSlide[slide.index - chain.start]
-  const codeKey = code.replace(/\r?\n$/, '')
-  let groupIndex = own.findIndex(f => f.code === codeKey && f.info === info)
-  if (groupIndex < 0)
-    groupIndex = own.findIndex(f => f.code === codeKey)
-  if (groupIndex < 0)
+  // The preparser gives every applicable fence an explicit position. Unlike a
+  // module-global duplicate cursor, it cannot drift when a compile is aborted
+  // or a temporary edit changes the number of identical fences.
+  let groupIndex = ordinal
+  if (groupIndex === undefined) {
+    // Be conservative for callers outside Slidev's markdown-transform path:
+    // unique fences remain supported, but duplicate fences are never guessed.
+    const codeKey = code.replace(/\r?\n$/, '')
+    const matches = own.flatMap((f, index) => f.code === codeKey && f.info === info ? [index] : [])
+    if (matches.length !== 1)
+      return
+    groupIndex = matches[0]
+  }
+  if (!own[groupIndex])
     return
 
   const steps = [] as ParsedFence[]
+  const stepPages = [] as number[]
   let ownStep = -1
   fencesPerSlide.forEach((fences, slideOffset) => {
     const f = fences[groupIndex]
@@ -73,6 +154,10 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
     if (slideOffset === slide.index - chain.start)
       ownStep = steps.length
     steps.push(f)
+    // The 1-based page each step belongs to. A chain slide without a fence at
+    // this position contributes no step, so page adjacency alone cannot tell
+    // the component which step a navigation actually came from.
+    stepPages.push(chain.start + slideOffset + 1)
   })
   if (steps.length < 2 || ownStep < 0)
     return
@@ -102,19 +187,20 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
   const attrs = [
     `steps-lz="${lz.compressToBase64(JSON.stringify(compiled))}"`,
     `:step="${ownStep}"`,
+    `:step-pages="${attributeValue(JSON.stringify(stepPages))}"`,
     // Shared across the chain so the View Transitions API pairs the old and
     // new code windows instead of cross-fading them with the page.
     `nav-key="magic-move-between-${chain.start}-${groupIndex}"`,
-    `:title='${JSON.stringify(ownFence.title ?? '')}'`,
+    `:title="${attributeValue(JSON.stringify(ownFence.title ?? ''))}"`,
   ]
   // `{1|2-3}` highlight ranges step through on clicks within this slide, just
   // like they do for one step of a classic magic-move block.
   if (ownFence.ranges.length)
-    attrs.push(`:step-ranges='${JSON.stringify(ownFence.ranges)}'`)
+    attrs.push(`:step-ranges="${attributeValue(JSON.stringify(ownFence.ranges))}"`)
   // Fence options (`{at:2, duration:500}`) become props, like the options of
   // a classic magic-move block.
   if (ownFence.optionsRaw)
-    attrs.unshift(`v-bind="${ownFence.optionsRaw}"`)
+    attrs.unshift(`v-bind="${attributeValue(ownFence.optionsRaw)}"`)
   if (icon)
     attrs.push(`class="code-window-icon--${icon}"`)
   return `<MagicMoveBetween ${attrs.join(' ')} />`
@@ -122,8 +208,18 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
 
 export default defineTransformersSetup(() => ({
   codeblocks: [magicMoveBetween],
-  pre: [({ s }) => {
+  pre: [({ s, slide, options: transformerOptions }) => {
     const source = s.toString()
+    // `pre` is a MarkdownTransformer and therefore runs before Slidev parses
+    // this slide into codeblock contexts. Only linked slides need markers.
+    // Ordinal markers land on top-level three-backtick fences and icon classes
+    // on four-plus-backtick magic-move headers, so both edit sets can be
+    // applied to disjoint ranges of the same source; targeted edits keep the
+    // per-slide sourcemap intact for Slidev's v-drag position persistence.
+    if (resolveChain(transformerOptions.data.slides, slide.index)) {
+      for (const { at, text } of magicMoveFenceOrdinalInsertions(source))
+        s.appendLeft(at, text)
+    }
     for (const block of source.matchAll(magicMove)) {
       const icon = iconForMagicMove(block.groups?.body ?? '')
       const suffix = block.groups?.suffix ?? ''

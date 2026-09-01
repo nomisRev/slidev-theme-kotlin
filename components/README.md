@@ -59,36 +59,40 @@ the label next to it.
 
 ## Where the label goes
 
-A label is placed out of the slide's normal flow. Automatic placement uses
-hard collision checks against settled click-state snapshots and labels whose
-visibility intervals overlap. It prefers the vertical direction away from the
-slide centre, then tries the opposite vertical direction and the sides. The
-unused body of a code window is available as label space, while its title and
-tab strip remain reserved; labels therefore use a large code window without
-ever reading as part of its chrome. Future click states are collected
-incrementally, so a persistent label can move atomically before a newly
-revealed obstacle is painted.
+A label is placed out of the slide's normal flow. Automatic placement is
+deterministic: `auto` prefers below a mark in the upper half of the slide and
+above one in the lower half, then falls back to the other sides; an explicit
+`placement` is a contract and never drifts to another side. Candidates stay
+clear of the slide's laid-out content (text, images, code blocks — including
+v-click content that is laid out but still hidden, so a label never sits
+where the slide is about to grow), of the annotation's own mark, of labels
+placed by earlier annotations on the slide, and of anything matched by
+`avoid-selector`, each kept at `clearance` distance; when the natural width
+cannot be placed clear, the label wraps into the free space. Nothing is
+guessed: only what the browser has laid out is measured.
 
-An explicit `placement` is a directional contract: `down` remains below the
-mark, for example. If no clear candidate exists on that side, the label is
-hidden with a development warning rather than silently moved elsewhere. A
-manual `label-x` or `label-y` is an author assertion and bypasses collision and
-safe-area checks.
+Use a `:geometry` binding for a fixed authored position, or let the
+development visual editor write the same normalized source geometry. Geometry
+wins over automatic placement and is never moved by obstacles.
 
 | prop | default | meaning |
 | --- | --- | --- |
-| `placement` | `auto` | strict side (`up`, `down`, `left`, `right`), or teaching-oriented automatic side selection |
-| `label-x`, `label-y` | – | label centre as a percentage of the slide; disables the search |
-| `label-width` | – | maximum width in slide pixels before the label wraps; by default a label stays on one line and only wraps when that line cannot fit or stay clear of content |
-| `gap` | `28` | smallest distance between the mark and the label, in slide pixels |
-| `clearance` | `16` | space the label keeps from everything else on the slide |
-| `avoid-selector` | – | extra elements the label must not cover |
+| `placement` | `auto` | preferred side: `up`, `down`, `left`, `right`, or automatic vertical choice with fallbacks |
+| `geometry.label` | – | label centre (`x`, `y`) and optional maximum `width`, each normalized to concrete slide width/height |
+| `geometry.connector` | – | manual `start`/`end` points, optionally with a quadratic `control`, normalized to the concrete slide |
+| `gap` | `28` | distance between the mark and automatically placed label, in slide pixels |
+| `clearance` | `16` | space an automatic label keeps from its obstacles, in slide pixels |
+| `avoid-selector` | – | extra elements an automatic label must not cover |
 
 ## When it is drawn
 
+An annotation with neither `at` nor `on` is part of the initial slide state;
+it does not add a click. Give `at` or `on` to create a reveal, using Slidev's
+native `v-click` click-ordering semantics.
+
 | prop | default | meaning |
 | --- | --- | --- |
-| `at` | next click | click that draws the mark and its leader line; takes part in Slidev's click ordering like `v-click` |
+| `at` | – | click that draws the mark and its leader line; when omitted, the annotation is visible in the initial state. An explicit value takes part in Slidev's click ordering like `v-click` |
 | `label-at` | `at` | click that writes the label |
 | `until` | – | click that takes the annotation away again; exclusive, like the end of a `v-click` range |
 | `on` | – | `at` and `until` in one, for an annotation that belongs to a single click |
@@ -191,10 +195,47 @@ Magic Move fading new tokens in where they already belong. It only delays the
 entrance: an annotation that is already on screen stays on screen through the
 next step. Set `:wait="false"` to draw as soon as the click arrives.
 
+## Visual-editor geometry
+
+`geometry` is the source-local public geometry prop. Its values are fractions
+of the concrete `.slidev-layout`, so it survives presentation scaling and a
+nested annotation canvas:
+
+```html
+<DrawnAnnotation text="String?" label="nullable return type" :on="2"
+  :geometry="{ label: { x: 0.7125, y: 0.1864, width: 0.1944 } }">
+```
+
+No annotation ID or generated stylesheet is used. Enable
+`drawnAnnotationEditor()` in the consuming deck's `vite.config.ts`; while
+serving it injects a transient source locator and the editor rewrites only this
+opening tag's `:geometry` binding. The locator is not part of authored Markdown
+or production output. With the writer configured, press **Alt+Shift+A** (or use
+the global **Edit annotations** toolbar) in a development deck. Click and drag
+a visible label to move it; select it and drag its right handle to set its
+maximum width. In edit mode, labels,
+the label width handle, and connector endpoint handles are keyboard focusable:
+focus one, then use the arrow keys to nudge it (`Shift` for larger steps). The
+width handle adjusts maximum width; connector endpoints and its body can
+likewise be dragged; endpoints snap to slide edge/centre guides
+and the annotation's source, target, and label ports. Hold `Alt` to temporarily
+disable snapping. The first connector drag materializes the currently automatic
+route as two manual endpoints. Pointer release saves through the local writer;
+a pause in a long drag saves a draft too, and local saves are serialized so they
+cannot conflict with each other. The toolbar can reset label, connector, or all
+source geometry and explicitly switch a selected connector between its manual
+frozen route and automatic attached route. **Cmd/Ctrl+Z** restores the latest
+completed save for the selected annotation. If another browser changes the
+source revision, the failed save leaves the current draft visible for inspection;
+choose **Reload saved geometry** to intentionally discard drafts and continue
+from the other browser's saved source. A deck without the writer plugin reports
+its configuration error instead of entering an editor that cannot save.
+
 ## How it looks
 
 | prop | default | meaning |
 | --- | --- | --- |
+| `geometry` | – | optional source-local normalized `{ label, connector }` geometry; the development editor writes this binding into the opening tag |
 | `options` | – | [rough.js options](https://github.com/rough-stuff/rough/wiki#options), passed straight to the library that draws every stroke |
 | `iterations` | `2` | how many times each shape is drawn over itself — the sketchy redraw |
 | `color` | `--drawn-annotation-color` | stroke and label colour, any CSS colour; the variable falls back to the text colour |
@@ -251,11 +292,11 @@ To move it into a theme:
 3. define `--drawn-annotation-color` (and, if wanted, the label variables
    above) in the theme's styles to pick the theme-wide default look.
 
-Nothing in the component reads deck-specific state: every colour, font and
-duration flows in through props or the CSS variables above. The label's
-automatic placement knows about the Kotlin theme's `.card` callouts and its
-`.kodee-character` mascot, keeps clear of code blocks, tables, quotes and
-images on any slide, and `avoid-selector` opts in anything else.
+Nothing in the component reads deck-specific layout state: every colour,
+font and duration flows in through props or CSS variables. Automatic placement
+measures only what the browser has laid out on the slide — content boxes, the
+marked box, earlier labels, the requested side, and concrete slide bounds;
+final composition belongs in explicit props or saved editor geometry.
 
 ## When nothing appears
 

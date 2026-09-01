@@ -2,6 +2,12 @@
   "name": "slidev-theme-kotlin",
   "version": "0.11.0",
   "type": "module",
+  "exports": {
+    "./annotation-editor": {
+      "types": "./annotation-editor.d.ts",
+      "default": "./annotation-editor.mjs"
+    }
+  },
   "keywords": [
     "slidev-theme",
     "slidev"
@@ -12,6 +18,10 @@
   "files": [
     "assets",
     "components",
+    "plugins",
+    "annotation-editor.mjs",
+    "annotation-editor.d.ts",
+    "global-top.vue",
     "layouts",
     "public",
     "setup",
@@ -23,14 +33,15 @@
   ],
   "scripts": {
     "lint": "node scripts/lint-slides.mjs slides.md",
-    "build": "npm run lint && slidev build slides.md",
+    "build": "npm run lint && slidev build slides.md && node scripts/assert-production-annotation-editor.mjs",
     "dev": "slidev slides.md --open",
     "export": "slidev export slides.md",
     "export:slide": "node scripts/export-slide.mjs",
     "screenshot": "slidev export slides.md --format png --with-clicks",
     "visual:review": "node scripts/visual-review.mjs",
     "visual:check": "node scripts/visual-review.mjs --check",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:annotation-editor": "node scripts/test-annotation-editor.mjs"
   },
   "dependencies": {
     "@shikijs/magic-move": "4.4.3",

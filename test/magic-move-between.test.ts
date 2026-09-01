@@ -6,6 +6,7 @@ import {
   parseFenceInfo,
   resolveChain,
 } from '../setup/magic-move-between'
+import transformersSetup, { markMagicMoveFenceOrdinals, takeMagicMoveFenceOrdinal } from '../setup/transformers'
 
 describe('normalizeMagicMoveSeparators', () => {
   it('rewrites a bare magic-move separator in place', () => {
@@ -137,6 +138,12 @@ describe('parseFenceInfo', () => {
     expect(fence.optionsRaw).toBe('{at:2}')
   })
 
+  it('keeps nested braces in an options object out of the meta', () => {
+    const fence = parseFenceInfo("kotlin {at:2, style:{color:'red'}}", 'x')
+    expect(fence.optionsRaw).toBe("{at:2, style:{color:'red'}}")
+    expect(fence.meta).toBe('')
+  })
+
   it('keeps modifiers clean of brace groups for the icon lookup', () => {
     expect(parseFenceInfo('kotlin gradle {1|2}', 'x').meta).toBe('gradle')
   })
@@ -151,6 +158,81 @@ describe('parseFenceInfo', () => {
       lines: true,
       meta: '',
     })
+  })
+})
+
+describe('duplicate Magic Move fence identities', () => {
+  const duplicateFences = [
+    '```kotlin',
+    'val same = true',
+    '```',
+    '',
+    '```kotlin',
+    'val same = true',
+    '```',
+  ].join('\n')
+
+  it('assigns deterministic positions on every transform pass', () => {
+    const firstPass = markMagicMoveFenceOrdinals(duplicateFences)
+    // An aborted codeblock transform never feeds state into the next pass.
+    const cleanPassAfterAbort = markMagicMoveFenceOrdinals(duplicateFences)
+    expect(cleanPassAfterAbort).toBe(firstPass)
+    expect([...cleanPassAfterAbort.matchAll(/__slidev_magic_move_ordinal__=(\d+)/g)].map(match => match[1]))
+      .toEqual(['0', '1'])
+  })
+
+  it('skips backtick samples rendered inside tilde fences', () => {
+    // markdown-it renders a tilde fence's body verbatim, so a backtick sample
+    // inside one must neither become a chain step nor carry a visible marker.
+    const content = [
+      '~~~md',
+      '```kotlin',
+      'val sample = true',
+      '```',
+      '~~~',
+      '',
+      '```kotlin',
+      'val real = true',
+      '```',
+    ].join('\n')
+    expect(extractTopLevelFences(content).map(fence => fence.code)).toEqual(['val real = true'])
+    const marked = markMagicMoveFenceOrdinals(content)
+    expect(marked.split('\n')[1]).toBe('```kotlin')
+    expect(marked).toContain('```kotlin __slidev_magic_move_ordinal__=0')
+    expect([...marked.matchAll(/__slidev_magic_move_ordinal__=/g)]).toHaveLength(1)
+  })
+
+  it('removes private ordinals before fence info is parsed', () => {
+    const marked = markMagicMoveFenceOrdinals(duplicateFences)
+    const fences = extractTopLevelFences(marked)
+    expect(fences.map(fence => fence.info)).toEqual(['kotlin', 'kotlin'])
+    expect(fences.map(fence => fence.meta)).toEqual(['', ''])
+    expect(takeMagicMoveFenceOrdinal('kotlin __slidev_magic_move_ordinal__=1'))
+      .toEqual({ info: 'kotlin', ordinal: 1 })
+  })
+
+  it('strips the private ordinal from the context even when declining a fence', async () => {
+    const [magicMoveBetween] = transformersSetup().codeblocks!
+    const slides = [
+      { content: '```kotlin\nval same = true\n```', frontmatter: {} },
+      { content: 'no fence on this chain slide', frontmatter: { magicMove: true } },
+    ]
+    // A single-step chain declines the fence; the marker must not reach the
+    // normal fence pipeline, which reads `ctx.info` after the decline.
+    const ctx: any = {
+      info: 'kotlin __slidev_magic_move_ordinal__=0',
+      code: 'val same = true\n',
+      fence: 3,
+      slide: { index: 0 },
+      options: { data: { slides } },
+    }
+    expect(await magicMoveBetween(ctx)).toBeUndefined()
+    expect(ctx.info).toBe('kotlin')
+
+    // Fences outside any chain decline immediately and are stripped too.
+    const unchained: any = { ...ctx, info: 'kotlin __slidev_magic_move_ordinal__=1', slide: null }
+    expect(await magicMoveBetween(unchained)).toBeUndefined()
+    expect(unchained.info).toBe('kotlin')
   })
 })
 
@@ -177,6 +259,21 @@ describe('extractTopLevelFences', () => {
     const content = '```kotlin\nclass Person(val name: String) {\n    fun introduce() = println("I am $name")\n}\n```'
     expect(extractTopLevelFences(content)[0].code)
       .toBe('class Person(val name: String) {\n    fun introduce() = println("I am $name")\n}')
+  })
+
+  it('counts indented fences without shifting subsequent fence positions', () => {
+    const content = [
+      '  ```kotlin',
+      '  val a = 1',
+      '  ```',
+      '',
+      '```sql',
+      'SELECT 1;',
+      '```',
+    ].join('\n')
+    const fences = extractTopLevelFences(content)
+    expect(fences.map(fence => fence.lang)).toEqual(['kotlin', 'sql'])
+    expect(fences.map(fence => fence.code)).toEqual(['  val a = 1', 'SELECT 1;'])
   })
 
   it('skips classic magic-move blocks and their inner fences', () => {

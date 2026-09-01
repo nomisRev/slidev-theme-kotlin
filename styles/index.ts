@@ -2,3 +2,4 @@
 import '@slidev/client/styles/layouts-base.css'
 import './fonts.css'
 import './layout.css'
+// Intentionally separate: the development writer rewrites only this file.

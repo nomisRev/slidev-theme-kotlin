@@ -16,6 +16,7 @@
  * with a `<MagicMoveBetween>` component that animates between the fences at
  * the same position on the neighbouring slides.
  */
+import { parseSync } from '@slidev/parser'
 
 export interface ParsedFence {
   /** The Shiki language, i.e. the first word of the fence info. */
@@ -36,8 +37,44 @@ export interface ParsedFence {
   code: string
 }
 
-const SEPARATOR = /^---+$/
-const FENCE_OPEN = /^(`{3,})\s*([^\r\n`]*)$/
+const FENCE_OPEN = /^ {0,3}(`{3,})\s*([^\r\n`]*)$/
+// Tilde fences never yield magic-move steps, but their bodies are skipped so
+// a backtick sample rendered inside one is not mistaken for a real fence.
+const TILDE_FENCE_OPEN = /^ {0,3}(~{3,})(.*)$/
+// Added only by setup/transformers.ts between its markdown and codeblock
+// passes. Keep it out of ParsedFence so it cannot affect titles, options,
+// icon lookup, or Shiki inputs.
+const FENCE_ORDINAL_MARKER = /(?:^|\s)__slidev_magic_move_ordinal__=\d+(?=\s|$)/g
+
+function findBalancedBraceGroup(input: string): { start: number, end: number } | undefined {
+  const start = input.indexOf('{')
+  if (start < 0)
+    return undefined
+
+  let depth = 0
+  let quote: string | undefined
+  let escaped = false
+  for (let index = start; index < input.length; index++) {
+    const char = input[index]
+    if (quote) {
+      if (escaped)
+        escaped = false
+      else if (char === '\\')
+        escaped = true
+      else if (char === quote)
+        quote = undefined
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '{')
+      depth++
+    else if (char === '}' && --depth === 0)
+      return { start, end: index + 1 }
+  }
+}
 
 /** Whether a slide's frontmatter marks it as magic-moved from its predecessor. */
 export function isLinkedToPrevious(frontmatter: unknown): boolean {
@@ -51,30 +88,18 @@ export function isLinkedToPrevious(frontmatter: unknown): boolean {
  * Rewrite bare `magic-move` slide separators into `magicMove: true` in place,
  * so the frontmatter parses as a YAML object. Keeps the line count intact to
  * preserve source locations.
+ *
+ * The slide boundaries come from `@slidev/parser` itself rather than a mirror
+ * of its slicing rules: only a frontmatter block Slidev is actually about to
+ * parse is rewritten, and the two can never drift apart on how a fence, an
+ * HTML comment, or an unusual separator affects slicing.
  */
 export function normalizeMagicMoveSeparators(lines: string[]): void {
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trimEnd()
-    if (line.trimStart().startsWith('```')) {
-      // Skip fenced code, mirroring @slidev/parser's slicing logic.
-      const level = line.match(/^\s*`{3,}/)![0].trimStart()
-      let j = i + 1
-      for (; j < lines.length; j++) {
-        if (lines[j].startsWith(level))
-          break
-      }
-      if (j !== lines.length)
-        i = j
-      continue
-    }
-    if (
-      SEPARATOR.test(line)
-      && lines[i + 1]?.trim() === 'magic-move'
-      && SEPARATOR.test(lines[i + 2]?.trimEnd() ?? '')
-    ) {
-      lines[i + 1] = 'magicMove: true'
-      i += 2
-    }
+  for (const slide of parseSync(lines.join('\n'), '').slides) {
+    if (slide.contentStart - slide.start === 3
+      && lines[slide.start + 1].trim() === 'magic-move'
+      && lines[slide.contentStart - 1]?.trimEnd() === '---')
+      lines[slide.start + 1] = 'magicMove: true'
   }
 }
 
@@ -100,7 +125,7 @@ export function resolveChain(
 
 /** Parse the info line of a fence (```kotlin foo [Main.kt] {1|2-3} {lines:true}). */
 export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
-  const info = rawInfo.trim()
+  const info = rawInfo.replace(FENCE_ORDINAL_MARKER, ' ').trim()
   const spaceIndex = info.search(/\s/)
   const lang = spaceIndex < 0 ? info : info.slice(0, spaceIndex)
   let rest = spaceIndex < 0 ? '' : info.slice(spaceIndex + 1)
@@ -122,10 +147,10 @@ export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
   }
 
   let optionsRaw: string | undefined
-  const optionsMatch = rest.match(/\{[^{}]*\}/)
-  if (optionsMatch) {
-    optionsRaw = optionsMatch[0]
-    rest = rest.slice(0, optionsMatch.index) + rest.slice(optionsMatch.index! + optionsMatch[0].length)
+  const optionsGroup = findBalancedBraceGroup(rest)
+  if (optionsGroup) {
+    optionsRaw = rest.slice(optionsGroup.start, optionsGroup.end)
+    rest = rest.slice(0, optionsGroup.start) + rest.slice(optionsGroup.end)
   }
 
   const meta = rest.split(/\s+/).filter(word => word && word !== 'magic-move').join(' ')
@@ -137,28 +162,28 @@ export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
 
 /**
  * Every top-level three-backtick fence of a slide, in order. Fences opened
- * with four or more backticks (e.g. classic `md magic-move` blocks) are
- * skipped along with their contents.
+ * with four or more backticks (e.g. classic `md magic-move` blocks) and
+ * tilde fences are skipped along with their contents.
  */
 export function extractTopLevelFences(content: string): ParsedFence[] {
   const lines = content.split(/\r?\n/)
   const fences: ParsedFence[] = []
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trimEnd()
-    const open = line.match(FENCE_OPEN)
+    const open = line.match(FENCE_OPEN) ?? line.match(TILDE_FENCE_OPEN)
     if (!open)
       continue
-    const backticks = open[1]
+    const marker = open[1]
     let j = i + 1
     for (; j < lines.length; j++) {
-      if (lines[j].startsWith(backticks))
+      if (!/^ {4}/.test(lines[j]) && lines[j].trimStart().startsWith(marker))
         break
     }
     if (j === lines.length) {
       // Unclosed fence: nothing more to extract.
       break
     }
-    if (backticks.length === 3 && open[2]?.trim())
+    if (marker === '```' && open[2]?.trim())
       fences.push(parseFenceInfo(open[2], lines.slice(i + 1, j).join('\n')))
     i = j
   }

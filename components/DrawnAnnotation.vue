@@ -1,350 +1,52 @@
 <script lang="ts">
-// Module scope, shared by every annotation instance — the pure geometry and
-// text-matching helpers live here so they are allocated once, not once per
-// annotation. Several annotations on one slide all measure the same content
-// on the same animation frame while a Magic Move step or a transition is
-// travelling; scanning the slide once per frame and letting each instance
-// convert the shared viewport rects into its own coordinates removes the most
-// expensive duplicated work.
-import type { ClicksContext } from '@slidev/types'
-import type { ComputedRef, InjectionKey, Ref } from 'vue'
-import type { TextMatch, TextSegment } from './code-text-match'
-import rough from 'roughjs'
-import { findTextInSegments } from './code-text-match'
-
-// Elements considered while measuring obstacles, capped: the collectors run on
-// animation frames while the slide moves, and a slide with more elements than
-// this has no room for an automatic label anyway.
-const OBSTACLE_ELEMENT_CAP = 600
-const MEDIA_TAGS = ['IMG', 'VIDEO', 'CANVAS', 'SVG']
-
 /**
- * Elements whose whole box matters to label placement, not just their rendered
- * text: a label must not land in the padding of a card or in code-window
- * chrome. `.card` and `.kodee-character` are the Kotlin theme's callouts and
- * mascot.
- *
- * Code surfaces deliberately are not in this list. Their rendered code lines
- * are still text obstacles, but their unused body is a useful, readable place
- * for a short explanation. The title/tab strip remains a whole-box obstacle:
- * a label in that chrome looks like a broken window title rather than a note.
+ * Labels already placed on the current slide, in concrete-slide fractions,
+ * shared by every annotation instance. Automatic placement treats the labels
+ * of annotations that registered earlier (mount order, which follows document
+ * order) as obstacles; an earlier label never reacts to a later one, so the
+ * avoidance is deterministic and cannot oscillate.
  */
-const BLOCK_OBSTACLES = '.slidev-code-block-title, .slidev-code-group-tabs, .card, table, blockquote, .kodee-character'
-
-function isMedia(element: HTMLElement) {
-  return MEDIA_TAGS.includes(element.tagName.toUpperCase())
+interface PlacedLabelRecord {
+  order: number
+  click: number
+  root: HTMLElement
+  box: { left: number, top: number, right: number, bottom: number }
+  active: boolean
 }
-
-/**
- * The slide elements obstacle collection looks at. Excludes annotation
- * strokes and labels, content still hidden behind a later click, and the
- * internals of inline SVGs — parts of an illustration do not count on their
- * own; the whole graphic does.
- */
-function obstacleCandidates(slide: HTMLElement): HTMLElement[] {
-  return Array.from(slide.querySelectorAll<HTMLElement>('*'))
-    .slice(0, OBSTACLE_ELEMENT_CAP)
-    .filter(element => !element.closest('.annotation-ignore, .slidev-vclick-hidden')
-      && !element.parentElement?.closest('svg'))
-}
-
-/** One slide scan, in viewport coordinates, valid for the current frame. */
-interface ObstacleScan {
-  /** Whole boxes of images, videos, canvases and inline SVG roots. */
-  media: DOMRect[]
-  /** Whole boxes of BLOCK_OBSTACLES elements, padding included. */
-  blocks: DOMRect[]
-  /** Tight boxes of the rendered text lines. */
-  texts: DOMRect[]
-}
-
-const scanCache = new Map<HTMLElement, ObstacleScan>()
-
-function scanObstacles(slide: HTMLElement): ObstacleScan {
-  const cached = scanCache.get(slide)
-  if (cached)
-    return cached
-
-  const scan: ObstacleScan = { media: [], blocks: [], texts: [] }
-  for (const element of obstacleCandidates(slide)) {
-    if (isMedia(element)) {
-      const rect = element.getBoundingClientRect()
-      if (rect.width >= 6 && rect.height >= 6)
-        scan.media.push(rect)
-      continue
-    }
-    if (element.matches(BLOCK_OBSTACLES)) {
-      const rect = element.getBoundingClientRect()
-      if (rect.width >= 6 && rect.height >= 6)
-        scan.blocks.push(rect)
-    }
-    // Read direct text nodes from every element rather than only using leaf
-    // element boxes. A list item commonly contains both plain text and a <b>
-    // target; its plain text otherwise disappears from the obstacle map.
-    for (const node of Array.from(element.childNodes)) {
-      if (node.nodeType !== Node.TEXT_NODE || !node.nodeValue?.trim())
-        continue
-      const range = document.createRange()
-      range.selectNodeContents(node)
-      for (const rect of Array.from(range.getClientRects())) {
-        if (rect.width >= 4 && rect.height >= 4)
-          scan.texts.push(rect)
-      }
-    }
-  }
-
-  scanCache.set(slide, scan)
-  // The scan stays valid until the next frame paints: annotations measuring in
-  // the same frame reuse it, and nothing they draw is part of it.
-  requestAnimationFrame(() => scanCache.delete(slide))
-  return scan
-}
-
-// Carries the unshifted clicks context past an annotation that inserts a click.
-// Module scope, so every annotation instance shares one Symbol; `<script setup>`
-// runs per component and would mint a new, never-matching Symbol for each.
-const realClicksKey: InjectionKey<ClicksContext> = Symbol('drawn-annotation-clicks')
-/**
- * What an annotation tells the ones nested inside it: the click it is drawn on,
- * and the moment after that click at which it has finished drawing. A nested
- * annotation on the same click starts there, so the two read as one sequence.
- */
-interface SequenceContext {
-  click: ComputedRef<number> | Ref<number>
-  end: ComputedRef<number>
-}
-const sequenceKey: InjectionKey<SequenceContext> = Symbol('drawn-annotation-sequence')
-
-const MARK_TYPES = ['underline', 'circle', 'box', 'strike-through', 'none'] as const
-const PLACEMENTS = ['auto', 'up', 'down', 'left', 'right'] as const
-
-interface Box {
-  left: number
-  top: number
-  right: number
-  bottom: number
-  width: number
-  height: number
-  cx: number
-  cy: number
-}
-
-interface Point { x: number, y: number }
-
-/** The leader's cubic bezier, produced by `leaderCurve` in the instance. */
-interface Curve {
-  start: Point
-  end: Point
-  distance: number
-  c1x: number
-  c1y: number
-  c2x: number
-  c2y: number
-}
-
-const generator = rough.generator()
-
-function toPaths(drawable: ReturnType<typeof generator.line>) {
-  return generator.toPaths(drawable).map(path => path.d)
-}
-
-function hashSeed(value: string) {
-  let hash = 2166136261
-  for (let i = 0; i < value.length; i++)
-    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619)
-  // Never zero: rough.js reads a zero seed as "roll a random one", which would
-  // re-randomise the wobble on every re-measurement.
-  return Math.abs(hash) % 2147483646 + 1
-}
-
-function makeBox(left: number, top: number, right: number, bottom: number): Box {
-  return {
-    left,
-    top,
-    right,
-    bottom,
-    width: right - left,
-    height: bottom - top,
-    cx: (left + right) / 2,
-    cy: (top + bottom) / 2,
-  }
-}
-
-function unionBox(boxes: Box[]) {
-  return makeBox(
-    Math.min(...boxes.map(box => box.left)),
-    Math.min(...boxes.map(box => box.top)),
-    Math.max(...boxes.map(box => box.right)),
-    Math.max(...boxes.map(box => box.bottom)),
-  )
-}
-
-/**
- * A Range reports one client rect for each rendered inline fragment. Shiki
- * makes those fragments syntax-token spans, so one continuous selected line
- * such as `package org.jetbrains.example` commonly has several rects. Combine
- * only fragments from this one range that share a visual line; separate lines
- * stay separate for the `multiline` option.
- */
-function mergeVisualLineBoxes(boxes: Box[]): Box[] {
-  const lines: Box[] = []
-  const sorted = [...boxes].sort((a, b) => a.cy - b.cy || a.left - b.left)
-
-  for (const box of sorted) {
-    const line = lines.find((candidate) => {
-      // Text in one line can have slightly different bounds for, for example,
-      // superscripted or differently-sized inline text. A quarter of the
-      // smaller fragment's height accepts that while keeping adjacent lines
-      // distinct, even when their line boxes touch.
-      const tolerance = Math.max(1, Math.min(candidate.height, box.height) / 4)
-      return Math.abs(candidate.cy - box.cy) <= tolerance
-    })
-    if (line)
-      Object.assign(line, unionBox([line, box]))
-    else
-      lines.push(box)
-  }
-
-  return lines
-}
-
-function padBox(box: Box, padding: number) {
-  return makeBox(box.left - padding, box.top - padding, box.right + padding, box.bottom + padding)
-}
-
-/**
- * Finds the requested occurrence of `needle` across the slot's text nodes.
- * Text inside a code block is split over one span per token, so the match
- * regularly starts and ends in different nodes; `findTextInSegments` maps the
- * match's string offsets back onto Range boundaries. The number of matches is
- * reported either way, so a miss can be explained rather than silently
- * swallowed.
- */
-function textRange(root: HTMLElement, needle: string, occurrence: number): TextMatch {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-    acceptNode(node) {
-      const parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement
-      // Skip our own overlay, and the snapshot Magic Move is animating out, so
-      // a match is never made against text that is on its way off the slide.
-      if (!parent || parent.closest('svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'))
-        return NodeFilter.FILTER_REJECT
-      if (node.nodeType === Node.ELEMENT_NODE)
-        return (node as HTMLElement).tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-      return NodeFilter.FILTER_ACCEPT
-    },
-  })
-
-  // Magic Move renders line breaks as <br> instead of newline characters, so
-  // they are folded back into the searched text to keep line-aware matches
-  // working in both kinds of code block.
-  const segments: TextSegment[] = []
-  let node: Node | null
-  // eslint-disable-next-line no-cond-assign
-  while ((node = walker.nextNode())) {
-    segments.push(node.nodeType === Node.TEXT_NODE
-      ? { node: node as Text, text: (node as Text).data }
-      : { text: '\n' })
-  }
-
-  return findTextInSegments(segments, needle, occurrence)
-}
-
-function nextFrame() {
-  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-}
-
-function unitVector(x: number, y: number): Point | undefined {
-  const length = Math.hypot(x, y)
-  return length > 0.001 ? { x: x / length, y: y / length } : undefined
-}
-
-// The bow of a leader is capped in slide pixels: proportional to length alone,
-// a long leader turns into a swooping gesture instead of a connection.
-const LEADER_MAX_BOW = 40
-
-/**
- * How much of the curve runs through the given boxes, and how much ink it
- * spends overall, both in slide pixels and both sampled from the same points.
- * The arc length is what prices a detour: a route that dodges text is only
- * worth taking when it saves more crossing than the extra line it draws.
- */
-function measureCurve(curve: Curve, obstacles: Box[]) {
-  const samples = 24
-  let inside = 0
-  let length = 0
-  let px = 0
-  let py = 0
-  for (let i = 0; i <= samples; i++) {
-    const t = i / samples
-    const u = 1 - t
-    const x = u ** 3 * curve.start.x + 3 * u ** 2 * t * curve.c1x + 3 * u * t ** 2 * curve.c2x + t ** 3 * curve.end.x
-    const y = u ** 3 * curve.start.y + 3 * u ** 2 * t * curve.c1y + 3 * u * t ** 2 * curve.c2y + t ** 3 * curve.end.y
-    if (obstacles.some(box => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom))
-      inside++
-    if (i)
-      length += Math.hypot(x - px, y - py)
-    px = x
-    py = y
-  }
-  return { crossing: inside / (samples + 1) * curve.distance, length }
-}
-
-// Stands in for a label that cannot be measured yet, so placement still has a
-// plausible box to work with on the very first frame.
-const FALLBACK_LABEL_HEIGHT = 40
-
-// The label never sits closer to a slide edge than this, in slide pixels.
-const SLIDE_MARGIN = 24
-
-// Sideways nudges tried for each gap while placing the label, nearest first.
-const LATERAL_OFFSETS = (() => {
-  const offsets = [0]
-  for (let step = 40; step <= 400; step += 40)
-    offsets.push(step, -step)
-  return offsets
-})()
-
-function overlapArea(a: Box, b: Box) {
-  const w = Math.min(a.right, b.right) - Math.max(a.left, b.left)
-  const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-  return w > 0 && h > 0 ? w * h : 0
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
-}
-
-/** Where a ray leaving the centre of `box` towards a point crosses its border. */
-function edgePoint(box: Box, towardX: number, towardY: number, extra = 0) {
-  const dx = towardX - box.cx
-  const dy = towardY - box.cy
-  if (!dx && !dy)
-    return { x: box.cx, y: box.cy }
-  const scale = Math.min(
-    dx ? (box.width / 2) / Math.abs(dx) : Number.POSITIVE_INFINITY,
-    dy ? (box.height / 2) / Math.abs(dy) : Number.POSITIVE_INFINITY,
-  )
-  const length = Math.hypot(dx, dy)
-  const reach = scale + extra / length
-  return { x: box.cx + dx * reach, y: box.cy + dy * reach }
-}
-
-function backOff(point: { x: number, y: number }, from: { x: number, y: number }, distance: number) {
-  const dx = point.x - from.x
-  const dy = point.y - from.y
-  const length = Math.hypot(dx, dy) || 1
-  return { x: point.x - dx / length * distance, y: point.y - dy / length * distance }
-}
+const placedLabelRegistry = new Map<symbol, PlacedLabelRecord>()
+let nextPlacementOrder = 0
 </script>
 
 <script setup lang="ts">
 import type { Options as RoughOptions } from 'roughjs/bin/core'
+import type { ClicksContext } from '@slidev/types'
+import type { ComputedRef, InjectionKey, Ref } from 'vue'
 import { injectLocal } from '@vueuse/core'
 import { useIsSlideActive, useSlideContext } from '@slidev/client'
 // The explicit `.ts` extension is required: Slidev's client ships bare TypeScript
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useTemplateRef, watch, watchEffect } from 'vue'
+import rough from 'roughjs'
+import { findTextInSegments } from './code-text-match'
+import type { TextSegment } from './code-text-match'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import type { DrawnAnnotationGeometry, FractionPoint, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
+import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
+
+// Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
+// development-only editing to Vite's explicit serve mode so published decks
+// never carry interactive controls or a browser write client.
+const isAnnotationEditorDevelopment = import.meta.env.MODE === 'development'
+
+// Do not let the optional browser writer become a production chunk. Vite
+// serves this explicit TypeScript module during development; production cannot
+// reach it because every caller is guarded by `isAnnotationEditorDevelopment`.
+const writerClientModule = './drawn-annotation/writer-client.ts'
+function loadWriterClient() {
+  return import(/* @vite-ignore */ writerClientModule)
+}
 
 /**
  * Hand-drawn annotation for anything on a slide.
@@ -355,10 +57,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
  * to a second element on the slide or to a text label.
  *
  * A label is placed out of the slide's normal flow: its position is searched at
- * runtime so it never overlaps other content — nor the labels other annotations
- * wrote on earlier clicks — preferring downwards for marks in the upper half of
- * the slide and upwards for marks in the lower half. Pass
- * `label-x` / `label-y` (percentages of the slide) to place it by hand instead.
+ * runtime near its source — preferring downwards for marks in the upper half
+ * of the slide and upwards for marks in the lower half — while staying clear
+ * of the slide's laid-out content, of its own mark, of labels placed by
+ * earlier annotations on the slide, and of anything matched by
+ * `avoid-selector`, kept at `clearance` distance. Laid-out but still-hidden
+ * v-click content counts too, so a label never sits where the slide is about
+ * to grow; nothing is guessed, so placement stays deterministic.
+ * Source-authored `geometry.label` gives authors the final say and is never
+ * moved by obstacles.
  *
  * Annotations nest, and two that share a click draw one after the other: the
  * inner one starts when the one around it has finished, so "point at it, then
@@ -377,6 +84,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
 type MarkType = 'circle' | 'underline' | 'box' | 'strike-through' | 'none'
 
 const props = withDefaults(defineProps<{
+  /** Source-authored normalized label and connector geometry. */
+  geometry?: DrawnAnnotationGeometry
+  /** Opaque, serve-only locator injected by the Vite source transform. */
+  __drawnAnnotationLocator?: string
   /** Shape drawn on the source. Kept as the short form of `sourceType`. */
   type?: MarkType
   /** Shape drawn on the source. Overrides `type` when supplied. */
@@ -385,8 +96,8 @@ const props = withDefaults(defineProps<{
   selector?: string
   /** Exact text to annotate inside the slot. Works inside Shiki and Magic Move. */
   text?: string
-  /** Which occurrence of `text` to annotate, 1-based. */
-  occurrence?: number
+  /** Which occurrence of `text` to annotate, 1-based. Markdown attributes arrive as strings. */
+  occurrence?: number | string
   /** Mark every visual line of a wrapped or multi-line match. */
   multiline?: boolean
   /** Extra space between the annotated box and the mark, in slide pixels. */
@@ -402,20 +113,15 @@ const props = withDefaults(defineProps<{
   targetType?: MarkType
   /** Show the default target circle when `targetType` is omitted. */
   targetMark?: boolean
-  /** Text label. Placed automatically unless `labelX` / `labelY` are given. */
+  /** Text label. Placed automatically unless geometry supplies a position. */
   label?: string
-  /** Label centre, as a percentage of the slide. Disables automatic placement. */
-  labelX?: number
-  labelY?: number
-  /** Optional maximum label width in slide pixels, before it wraps. */
-  labelWidth?: number
   /** Preferred side for automatic placement. `auto` picks by vertical position. */
   placement?: 'auto' | 'up' | 'down' | 'left' | 'right'
   /** Smallest distance between the mark and the label, in slide pixels. */
   gap?: number
-  /** Space the label keeps from everything else on the slide. */
+  /** Space an automatically placed label keeps from its obstacles, in slide pixels. */
   clearance?: number
-  /** Extra elements the label must not cover. */
+  /** Extra elements an automatically placed label must not cover. */
   avoidSelector?: string
   /** Draw the leader line between the mark and the label or target. */
   connect?: boolean
@@ -451,7 +157,7 @@ const props = withDefaults(defineProps<{
    * it" into a single reveal instead of two clicks, without anyone having to
    * time it by hand. Turn off to draw both at once.
    */
-  sequential?: boolean
+  sequential?: boolean | string
   /**
    * Click that takes the annotation away again, so it only belongs to the
    * steps it describes. Exclusive, like the end of a `v-click` range: with
@@ -486,6 +192,8 @@ const props = withDefaults(defineProps<{
   /** Follow the annotated element while Magic Move or a transition animates it. */
   track?: boolean
 }>(), {
+  geometry: undefined,
+  __drawnAnnotationLocator: undefined,
   type: 'underline',
   sourceType: undefined,
   selector: '[data-annotate]',
@@ -500,9 +208,6 @@ const props = withDefaults(defineProps<{
   targetType: undefined,
   targetMark: true,
   label: undefined,
-  labelX: undefined,
-  labelY: undefined,
-  labelWidth: undefined,
   placement: 'auto',
   gap: 28,
   clearance: 16,
@@ -528,6 +233,32 @@ const props = withDefaults(defineProps<{
   track: true,
 })
 
+// Carries the unshifted clicks context past an annotation that inserts a click.
+// A string key, because `<script setup>` runs per component: a Symbol created
+// here would be a different one in every annotation, and never match.
+const realClicksKey = '$$drawn-annotation-clicks' as unknown as InjectionKey<ClicksContext>
+/**
+ * What an annotation tells the ones nested inside it: the click it is drawn on,
+ * and the moment after that click at which it has finished drawing. A nested
+ * annotation on the same click starts there, so the two read as one sequence.
+ */
+interface SequenceContext {
+  click: ComputedRef<number> | Ref<number>
+  end: ComputedRef<number>
+}
+const sequenceKey = '$$drawn-annotation-sequence' as unknown as InjectionKey<SequenceContext>
+
+interface Box {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+  cx: number
+  cy: number
+}
+
 // `on` is `at` and `until` in one, so everything that resolves a click reads it
 // through here rather than the raw prop. Named apart from the `at` prop so the
 // two can never be confused, in the script or in the template.
@@ -545,6 +276,7 @@ function warn(message: string) {
 }
 
 // The types arrive from Markdown, so a typo is a string TypeScript never saw.
+const MARK_TYPES = ['underline', 'circle', 'box', 'strike-through', 'none'] as const
 function resolveMarkType(value: unknown, prop: string, fallback: MarkType): MarkType {
   if ((MARK_TYPES as readonly unknown[]).includes(value))
     return value as MarkType
@@ -563,6 +295,7 @@ const targetMarkType = computed(() => props.targetType === undefined
   ? (props.targetMark ? 'circle' : 'none')
   : resolveMarkType(props.targetType, 'target-type', 'circle'))
 
+const PLACEMENTS = ['auto', 'up', 'down', 'left', 'right'] as const
 const resolvedPlacement = computed(() => {
   if ((PLACEMENTS as readonly string[]).includes(props.placement))
     return props.placement
@@ -574,17 +307,41 @@ const resolvedPlacement = computed(() => {
 // decided once, and an empty string counts as absent everywhere.
 const hasLabel = computed(() => !!props.label)
 const hasTarget = computed(() => !!props.target)
+// A source-only mark exposes no visual-editor operation. It remains valid:
+// only labels and connectors have geometry that an editor can manipulate.
+const editorRelevant = computed(() => hasLabel.value || (props.connect && hasTarget.value))
 
 if (props.on !== undefined && (props.at !== undefined || props.until !== undefined))
   warn('`on` is `at` and `until` in one, so the separate `at` / `until` given here are ignored. Use either `on` alone, or `at` and `until`.')
 if (props.labelAt !== undefined && props.label === undefined)
   warn('`label-at` names the click that writes the label, but no `label` was given.')
 
-const container = useTemplateRef<HTMLElement>('container')
-const clickMarker = useTemplateRef<HTMLElement>('clickMarker')
-const labelMarker = useTemplateRef<HTMLElement>('labelMarker')
-const overlay = useTemplateRef<SVGSVGElement>('overlay')
-const labelEl = useTemplateRef<HTMLElement>('labelEl')
+const container = ref<HTMLElement>()
+const clickMarker = ref<HTMLElement>()
+const labelMarker = ref<HTMLElement>()
+const overlay = ref<SVGSVGElement>()
+const labelEl = ref<HTMLElement>()
+
+// Wrapped annotations only search their own slot. A self-closing annotation
+// intentionally searches the remaining slide so it can point at following
+// Markdown without adding a wrapper around it.
+const slots = useSlots()
+function searchRoot() {
+  const root = container.value
+  if (slots.default || !root)
+    return root
+  return root.closest<HTMLElement>('.slidev-layout') ?? root.parentElement ?? root
+}
+const searchScope = () => slots.default ? 'the slot' : 'the content below this annotation on the slide'
+// The self-closing search root is the whole layout, so occurrence counting and
+// selector matches are narrowed here to what actually follows the tag —
+// content above it (a slide title, say) is outside the promised scope.
+function followsAnnotation(node: Node) {
+  const anchor = container.value
+  if (slots.default || !anchor)
+    return true
+  return !!(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) && !anchor.contains(node)
+}
 
 // The mark and the label can share one click or be spread over two, which is
 // what makes "mark it, then name it" possible from Markdown.
@@ -608,12 +365,16 @@ const $clicks = toRef($clicksContext, 'current')
 // otherwise the view-transition snapshot captures the finished mark.
 const isCurrentSlide = useIsSlideActive()
 provide(realClicksKey, $clicksContext)
+// An annotation without `at` or `on` belongs to the slide's initial state.
+// It must not render a bare `v-click` marker: Slidev treats that as the next
+// automatic click, adding a reveal the author did not ask for.
+const hasExplicitStartClick = computed(() => props.at !== undefined || props.on !== undefined)
 // Slidev's click ordering runs in the context the markers are rendered in, and
 // that one is shifted here. So these annotations resolve and register their
 // clicks themselves, from the numbers on the props.
 // Slidev deliberately normalizes `v-click="0"` to click 1. Resolve an
 // annotation on click 0 ourselves so it can be present before the first click.
-const startsOnInitialSlide = computed(() => Number(atClick.value) === 0)
+const startsOnInitialSlide = computed(() => hasExplicitStartClick.value && Number(atClick.value) === 0)
 const manualClicks = computed(() => props.insert || !!outerClicksContext || startsOnInitialSlide.value)
 const painted = computed(() => geometryPainted.value || showImmediately.value)
 // True once the animations triggered by the current click have finished.
@@ -717,7 +478,10 @@ const outerSequence = injectLocal(sequenceKey, null)
 // annotation sharing the enclosing one's click waits for it: one that has a
 // click of its own is already a step later, and starts straight away.
 const sequenceStart = computed(() => {
-  if (!props.sequential || !outerSequence)
+  // Static HTML attributes are strings, so support both `sequential="false"`
+  // and Vue's `:sequential="false"`.
+  const sequential = props.sequential !== false && props.sequential !== 'false'
+  if (!sequential || !outerSequence)
     return 0
   return outerSequence.click.value === resolvedClick.value ? outerSequence.end.value : 0
 })
@@ -792,6 +556,12 @@ const geometry = reactive({
   // assigned only when fitting it on the slide requires wrapping.
   labelWidth: undefined as number | undefined,
   labelPlaced: false,
+  /** Resolved leader endpoints, used to materialize automatic lines on first edit. */
+  connectorStart: undefined as Point | undefined,
+  connectorEnd: undefined as Point | undefined,
+  /** Source ports and target point are editor snap targets in local SVG coordinates. */
+  sourcePorts: [] as Point[],
+  targetPoint: undefined as Point | undefined,
   ready: false,
 })
 
@@ -830,9 +600,20 @@ function markerClick(marker: HTMLElement | undefined) {
   return Number.POSITIVE_INFINITY
 }
 
+const generator = rough.generator()
+
 // A stable seed keeps the wobble identical across re-measurements, so the mark
 // glides with a Magic Move transition instead of re-drawing itself every frame.
 const seed = computed(() => hashSeed(`${sourceMarkType.value}:${targetMarkType.value}:${props.text ?? props.selector}:${props.label ?? props.target ?? ''}`))
+
+function hashSeed(value: string) {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i++)
+    hash = Math.imul(hash ^ value.charCodeAt(i), 16777619)
+  // Never zero: rough.js reads a zero seed as "roll a random one", which would
+  // re-randomise the wobble on every re-measurement.
+  return Math.abs(hash) % 2147483646 + 1
+}
 
 // Rough Notation's exact stroke recipe, so a mark looks like Slidev's own
 // `v-mark` out of the box: roughness 1.5, single strokes redrawn `iterations`
@@ -851,6 +632,105 @@ function roughOptions(variant: 'single' | 'double' = 'single'): RoughOptions {
   }
 }
 
+function toPaths(drawable: ReturnType<typeof generator.line>) {
+  return generator.toPaths(drawable).map(path => path.d)
+}
+
+function makeBox(left: number, top: number, right: number, bottom: number): Box {
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    cx: (left + right) / 2,
+    cy: (top + bottom) / 2,
+  }
+}
+
+function unionBox(boxes: Box[]) {
+  return makeBox(
+    Math.min(...boxes.map(box => box.left)),
+    Math.min(...boxes.map(box => box.top)),
+    Math.max(...boxes.map(box => box.right)),
+    Math.max(...boxes.map(box => box.bottom)),
+  )
+}
+
+/**
+ * A Range reports one client rect for each rendered inline fragment. Shiki
+ * makes those fragments syntax-token spans, so one continuous selected line
+ * such as `package org.jetbrains.example` commonly has several rects. Combine
+ * only fragments from this one range that share a visual line; separate lines
+ * stay separate for the `multiline` option.
+ */
+function mergeVisualLineBoxes(boxes: Box[]): Box[] {
+  const lines: Box[] = []
+  const sorted = [...boxes].sort((a, b) => a.cy - b.cy || a.left - b.left)
+
+  for (const box of sorted) {
+    const line = lines.find((candidate) => {
+      // Text in one line can have slightly different bounds for, for example,
+      // superscripted or differently-sized inline text. A quarter of the
+      // smaller fragment's height accepts that while keeping adjacent lines
+      // distinct, even when their line boxes touch.
+      const tolerance = Math.max(1, Math.min(candidate.height, box.height) / 4)
+      return Math.abs(candidate.cy - box.cy) <= tolerance
+    })
+    if (line)
+      Object.assign(line, unionBox([line, box]))
+    else
+      lines.push(box)
+  }
+
+  return lines
+}
+
+function padBox(box: Box, padding: number) {
+  return makeBox(box.left - padding, box.top - padding, box.right + padding, box.bottom + padding)
+}
+
+/**
+ * Finds the requested occurrence of `needle` across the slot's text nodes. Text
+ * inside a code block is split over one span per token, so the match regularly
+ * starts and ends in different nodes. The number of matches is reported either
+ * way, so a miss can be explained rather than silently swallowed.
+ */
+function textRange(root: HTMLElement, needle: string, occurrence: number | string): { range?: Range, matches: number } {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      const parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement
+      // Skip our own overlay, and the snapshot Magic Move is animating out, so
+      // a match is never made against text that is on its way off the slide.
+      if (!parent || parent.closest('svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'))
+        return NodeFilter.FILTER_REJECT
+      // Only leaves are position-filtered: an element that merely precedes or
+      // contains the annotation must still be descended into (FILTER_SKIP),
+      // because content following the tag can live inside it.
+      if (node.nodeType === Node.ELEMENT_NODE)
+        return (node as HTMLElement).tagName === 'BR' && followsAnnotation(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      return followsAnnotation(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+    },
+  })
+
+  // Magic Move renders line breaks as <br> instead of newline characters, so
+  // they are folded back into the searched text to keep line-aware matches
+  // working in both kinds of code block.
+  const segments: TextSegment[] = []
+  let node: Node | null
+  // eslint-disable-next-line no-cond-assign
+  while ((node = walker.nextNode())) {
+    segments.push(node.nodeType === Node.TEXT_NODE
+      ? { node: node as Text, text: (node as Text).data }
+      : { text: '\n' })
+  }
+
+  const requestedOccurrence = Number(occurrence)
+  const match = findTextInSegments(segments, needle, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1)
+  return { range: match.range ?? undefined, matches: match.matches }
+}
+
 function slideRoot() {
   return overlay.value?.closest<HTMLElement>('.slidev-layout') ?? overlay.value?.parentElement ?? undefined
 }
@@ -862,9 +742,15 @@ let paintFrame = 0
 let trackFrame = 0
 let trackUntil = 0
 let mounted = false
+let unregisterEditorActions: (() => void) | undefined
 // Fingerprint of the mark's last measured boxes. While the slide animates, a
 // frame in which the mark has not moved recomputes nothing.
 let lastMarkKey = ''
+// Content boxes an automatic label avoids, in local SVG coordinates. The DOM
+// scan is refreshed on discrete re-measures (click settles, resizes, prop or
+// draft changes) and reused by the per-frame tracking passes, which must not
+// re-walk and re-measure the whole slide.
+let contentObstacleCache: Box[] | undefined
 // The images whose load re-measures geometry, kept so unmount removes exactly
 // the listeners that were added.
 const watchedImages: HTMLImageElement[] = []
@@ -904,6 +790,10 @@ function relevantAnimations() {
     return (belongsToPageTransition || belongsToSlot)
       && Number.isFinite(animation.effect?.getComputedTiming().endTime)
   })
+}
+
+function nextFrame() {
+  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
 }
 
 /**
@@ -947,9 +837,11 @@ async function settleAfterAnimations(run: number, grace = 0) {
  */
 function unsettle(grace = 0) {
   const run = ++settleRun
-  // A click can restyle the slide, so measured label sizes go stale here —
-  // once per click, which leaves them shared by every frame of the animation.
+  // A click can restyle the slide, so measured label sizes and content
+  // obstacles go stale here — once per click, which leaves them shared by
+  // every frame of the animation.
   labelSizeCache.clear()
+  contentObstacleCache = undefined
   if (!props.wait || !props.track) {
     settled.value = true
     return
@@ -962,6 +854,17 @@ function unsettle(grace = 0) {
 function scheduleUpdate() {
   // Late asynchronous callers — a font that finishes loading, an image that
   // decodes — must not schedule work on an annotation that is already gone.
+  if (!mounted)
+    return
+  // Discrete events land here (per-frame tracking calls updateGeometry
+  // directly): the slide may have reflowed, so re-scan content obstacles.
+  contentObstacleCache = undefined
+  cancelAnimationFrame(frame)
+  frame = requestAnimationFrame(updateGeometry)
+}
+
+/** Repaint one editing annotation without invalidating the slide obstacle scan. */
+function scheduleDraftUpdate() {
   if (!mounted)
     return
   cancelAnimationFrame(frame)
@@ -1015,21 +918,21 @@ const missingIsAnError = computed(() =>
   isCurrentSlide.value && settled.value && $clicks.value >= resolvedClick.value && withinRange.value)
 
 /** Explains why nothing was drawn, once something should have been. */
-function explainMissing(match?: TextMatch) {
+function explainMissing(match?: { range?: Range, matches: number }) {
   if (everFound || !missingIsAnError.value)
     return
   if (!props.text)
-    warn(`Selector "${props.selector}" matched nothing inside the slot. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
+    warn(`Selector "${props.selector}" matched nothing inside ${searchScope()}. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
   else if (!match || match.matches === 0)
-    warn(`Text "${props.text}" was not found in the slot. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
-  else if (match.matches < Math.max(1, props.occurrence))
+    warn(`Text "${props.text}" was not found in ${searchScope()}. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
+  else if (match.matches < Math.max(1, Number(props.occurrence)))
     warn(`Text "${props.text}" ${match.matches === 1 ? 'matches only once' : `matches only ${match.matches} times`}, but \`occurrence\` asks for match ${props.occurrence}.`)
   else
     warn(`Text "${props.text}" was found, but has no size on screen right now, so there is nothing to draw around.`)
 }
 
 function updateGeometry() {
-  const root = container.value
+  const root = searchRoot()
   const svg = overlay.value
   if (!root || !svg)
     return
@@ -1059,7 +962,9 @@ function updateGeometry() {
   )
 
   const match = props.text ? textRange(root, props.text, props.occurrence) : undefined
-  const source = props.text ? undefined : root.querySelector<HTMLElement>(props.selector)
+  const source = props.text
+    ? undefined
+    : Array.from(root.querySelectorAll<HTMLElement>(props.selector)).find(followsAnnotation) ?? null
   const rects = match?.range
     ? Array.from(match.range.getClientRects()).filter(rect => rect.width > 0.5 && rect.height > 0.5)
     : source
@@ -1086,6 +991,11 @@ function updateGeometry() {
   const rawBoxes = rects.map(toLocal)
   const boxes = match?.range ? mergeVisualLineBoxes(rawBoxes) : rawBoxes
   const marked = unionBox(boxes)
+  geometry.sourcePorts = [
+    { x: marked.cx, y: marked.cy },
+    { x: marked.cx, y: marked.top }, { x: marked.cx, y: marked.bottom },
+    { x: marked.left, y: marked.cy }, { x: marked.right, y: marked.cy },
+  ]
   const multiline = props.multiline ?? (sourceMarkType.value === 'underline' || sourceMarkType.value === 'strike-through')
   const shapeBoxes = multiline ? boxes : [marked]
 
@@ -1162,6 +1072,9 @@ function paintDestination(
   toLocal: (rect: DOMRect) => Box,
   marked: Box,
 ) {
+  geometry.connectorStart = undefined
+  geometry.connectorEnd = undefined
+  geometry.targetPoint = undefined
   // Computed into locals first: the stable rough.js seed makes an unchanged
   // layout produce identical path strings, which assignPaths then drops
   // instead of re-patching the SVG.
@@ -1193,6 +1106,7 @@ function paintDestinationInto(
     const radius = Math.max(6, targetBox.width * props.targetRadius / 100)
     destination = makeBox(x - radius, y - radius, x + radius, y + radius)
     endPoint = { x, y }
+    geometry.targetPoint = endPoint
     // The target is its own stage after the connection. A zero padding keeps
     // target-radius the exact outer size authors position over screenshots.
     paths.targetMark = markPaths(destination, targetMarkType.value, 0)
@@ -1212,6 +1126,7 @@ function paintDestinationInto(
     geometry.labelTop = label.box.cy
     geometry.labelWidth = label.width
     geometry.labelPlaced = true
+    publishPlacedLabel(label.box)
     if (!destination) {
       destination = label.box
       endPoint = undefined
@@ -1219,19 +1134,56 @@ function paintDestinationInto(
   }
   else {
     geometry.labelPlaced = false
+    placedLabelRegistry.delete(placementToken)
   }
 
   if (!destination || !props.connect)
     return
 
-  const route = routeLeader(root, toLocal, markBox, destination, endPoint)
-  if (!route)
-    return
-  const { start, end, c1x, c1y, c2x, c2y } = route
-  paths.leader = toPaths(generator.path(
-    `M ${start.x} ${start.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${end.x} ${end.y}`,
-    roughOptions(),
-  ))
+  const savedConnector = manualConnector()
+  let start: Point
+  let end: Point
+  let c2x: number
+  let c2y: number
+  if (savedConnector && overlay.value) {
+    // Saved fractions always use the concrete slide root, even if this SVG is
+    // nested in a positioned component.
+    const slide = slideRoot()
+    if (!slide)
+      return
+    const slideBox = slide.getBoundingClientRect()
+    const overlayBox = overlay.value.getBoundingClientRect()
+    start = slideFractionPointToLocal({ x: savedConnector.x1, y: savedConnector.y1 }, slideBox, overlayBox, geometry)
+    end = slideFractionPointToLocal({ x: savedConnector.x2, y: savedConnector.y2 }, slideBox, overlayBox, geometry)
+    if (savedConnector.cx !== undefined && savedConnector.cy !== undefined) {
+      const control = slideFractionPointToLocal({ x: savedConnector.cx, y: savedConnector.cy }, slideBox, overlayBox, geometry)
+      // The authored control point is a genuine quadratic Bézier control, not
+      // merely legacy metadata. Rough.js retains the curve's hand-drawn look.
+      c2x = control.x
+      c2y = control.y
+      paths.leader = toPaths(generator.path(`M ${start.x} ${start.y} Q ${control.x} ${control.y}, ${end.x} ${end.y}`, roughOptions()))
+    }
+    else {
+      c2x = start.x
+      c2y = start.y
+      paths.leader = toPaths(generator.line(start.x, start.y, end.x, end.y, roughOptions()))
+    }
+  }
+  else {
+    const route = routeLeader(markBox, destination, endPoint)
+    if (!route)
+      return
+    start = route.start
+    end = route.end
+    c2x = route.c2x
+    c2y = route.c2y
+    paths.leader = toPaths(generator.path(
+      `M ${start.x} ${start.y} C ${route.c1x} ${route.c1y}, ${route.c2x} ${route.c2y}, ${end.x} ${end.y}`,
+      roughOptions(),
+    ))
+  }
+  geometry.connectorStart = start
+  geometry.connectorEnd = end
 
   if (props.arrow) {
     // Aim the head along the tangent of the curve, not along the chord.
@@ -1248,6 +1200,17 @@ function paintDestinationInto(
   }
 }
 
+interface Point { x: number, y: number }
+
+function unitVector(x: number, y: number): Point | undefined {
+  const length = Math.hypot(x, y)
+  return length > 0.001 ? { x: x / length, y: y / length } : undefined
+}
+
+// The bow of a leader is capped in slide pixels: proportional to length alone,
+// a long leader turns into a swooping gesture instead of a connection.
+const LEADER_MAX_BOW = 40
+
 /**
  * The leader's bezier between two points. `out` is the direction the line
  * leaves the mark and `into` the direction it arrives at its destination; the
@@ -1256,7 +1219,7 @@ function paintDestinationInto(
  * line read as pointing at the label rather than curling flat and sweeping
  * past it.
  */
-function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?: Point): Curve {
+function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?: Point) {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const distance = Math.hypot(dx, dy)
@@ -1280,132 +1243,35 @@ function leaderCurve(start: Point, end: Point, side: 1 | -1, out?: Point, into?:
   }
 }
 
-/**
- * Chooses where the leader leaves the mark and which way it bows. The obvious
- * straight exit towards the destination regularly runs through the rest of the
- * sentence the mark sits in, which reads as a strike-through of text the
- * annotation has nothing to do with. So candidate exits along the mark's
- * border are tried, bowing to either side, against the rendered text of the
- * slide — with the extra ink of a detour priced in, so a route that dodges
- * text is only chosen when it saves more crossing than the line it adds. The
- * straight exit is also only given up when another exit saves a substantial
- * amount of crossing: brushing past a neighbouring line is part of the
- * hand-drawn look, and a leader that trades it for a wide swing reads as
- * starting from the wrong place.
- */
-function routeLeader(root: HTMLElement, toLocal: (rect: DOMRect) => Box, markBox: Box, destination: Box, endPoint?: Point): Curve | undefined {
-  const contains = (box: Box, x: number, y: number) => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
-  // Only text near the line's own neighbourhood matters, and never the words
-  // being marked or the destination itself.
-  const region = padBox(unionBox([markBox, destination]), 120)
-  const obstacles = collectTextObstacles(root, toLocal).filter(box =>
-    overlapArea(box, region) > 0
-    && !contains(markBox, box.cx, box.cy)
-    && !contains(destination, box.cx, box.cy))
-
-  const defaultStart = edgePoint(markBox, destination.cx, destination.cy)
-  const exits: Point[] = [
-    { x: markBox.cx, y: markBox.top },
-    { x: markBox.cx, y: markBox.bottom },
-    { x: markBox.left, y: markBox.cy },
-    { x: markBox.right, y: markBox.cy },
-    { x: markBox.left, y: markBox.top },
-    { x: markBox.right, y: markBox.top },
-    { x: markBox.left, y: markBox.bottom },
-    { x: markBox.right, y: markBox.bottom },
-  ].sort((a, b) =>
-    Math.hypot(a.x - defaultStart.x, a.y - defaultStart.y)
-    - Math.hypot(b.x - defaultStart.x, b.y - defaultStart.y))
-
-  // Where a route from `start` ends, and the direction it arrives in. A target
-  // is met at the given point; a label is met at its nearest edge — a drawn
-  // leader stops at the edge of the words it points at, it does not travel on
-  // towards their centre.
-  const endFor = (start: Point) => {
-    if (endPoint) {
-      const end = backOff(endPoint, start, targetMarkType.value !== 'none' ? destination.width / 2 : 6)
-      return { end, into: unitVector(endPoint.x - end.x, endPoint.y - end.y) }
-    }
-    const nearest = {
-      x: clamp(start.x, destination.left, destination.right),
-      y: clamp(start.y, destination.top, destination.bottom),
-    }
-    const into = unitVector(nearest.x - start.x, nearest.y - start.y)
-    const end = into ? { x: nearest.x - into.x * 6, y: nearest.y - into.y * 6 } : nearest
-    return { end, into }
-  }
-
-  let straight: { curve: Curve, crossing: number, cost: number } | undefined
-  let best: { curve: Curve, crossing: number, cost: number } | undefined
-  // What the shortest reasonable route spends; anything beyond it is detour.
-  const defaultEnd = endFor(defaultStart).end
-  const directLength = Math.hypot(defaultEnd.x - defaultStart.x, defaultEnd.y - defaultStart.y)
-  for (const [index, start] of [defaultStart, ...exits].entries()) {
-    const { end, into: arrival } = endFor(start)
-    const chord = unitVector(end.x - start.x, end.y - start.y)
-    if (!chord)
-      continue
-    // Leave the mark outward through the chosen exit, leaning toward the
-    // destination so the curve can never double back around the mark, and
-    // arrive pointing into the destination.
-    const outward = unitVector(start.x - markBox.cx, start.y - markBox.cy) ?? chord
-    const out = unitVector(outward.x + chord.x, outward.y + chord.y) ?? chord
-    const into = arrival ?? chord
-    for (const side of [1, -1] as const) {
-      const curve = leaderCurve(start, end, side, out, into)
-      if (curve.distance < 4)
-        continue
-      // Crossing text costs its length, a detour costs part of the extra ink
-      // it spends; the small terms only break ties.
-      const { crossing, length } = measureCurve(curve, obstacles)
-      const detour = Math.max(0, length - directLength)
-      const cost = crossing + detour * 0.4 + index * 2 + (side < 0 ? 1 : 0)
-      if (index === 0 && (!straight || cost < straight.cost))
-        straight = { curve, crossing, cost }
-      if (!best || cost < best.cost)
-        best = { curve, crossing, cost }
-    }
-  }
-  if (!straight)
-    return best?.curve
-  if (best && best.crossing < straight.crossing * 0.5 && straight.crossing - best.crossing > 24)
-    return best.curve
-  return straight.curve
-}
+type Curve = ReturnType<typeof leaderCurve>
 
 /**
- * The slide's text and media, as the tight boxes of the rendered lines rather
- * than the elements around them. This is what a leader line must not strike
- * through: crossing a card's padding looks deliberate, crossing its words
- * reads as marking text the annotation has nothing to do with.
+ * Uses the shortest direct leader as the stable automatic fallback. Complex
+ * routing is intentionally an editor operation: inspecting arbitrary future
+ * slide content made an automatic line change as clicks progressed.
  */
-function collectTextObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
-  const slide = slideRoot() ?? root
-  const scan = scanObstacles(slide)
-  const boxes: Box[] = [...scan.media, ...scan.texts].map(toLocal)
-  // The marks and labels of the other annotations on the slide. A leader that
-  // dives through a circled word or a written label reads as marking it. Their
-  // paths are in the DOM from the first measurement — merely hidden until
-  // their click — so routing around them is stable rather than a jump on the
-  // click that reveals them.
-  for (const svg of Array.from(slide.querySelectorAll<SVGSVGElement>('svg.annotation-overlay'))) {
-    if (svg === overlay.value)
-      continue
-    for (const path of Array.from(svg.querySelectorAll<SVGPathElement>('.annotation-mark, .annotation-target'))) {
-      const rect = path.getBoundingClientRect()
-      if (rect.width >= 4 || rect.height >= 4)
-        boxes.push(toLocal(rect))
-    }
-  }
-  for (const label of Array.from(slide.querySelectorAll<HTMLElement>('.annotation-label.is-placed'))) {
-    if (label === labelEl.value)
-      continue
-    const rect = label.getBoundingClientRect()
-    if (rect.width >= 6 && rect.height >= 6)
-      boxes.push(toLocal(rect))
-  }
-  return boxes
+function routeLeader(markBox: Box, destination: Box, endPoint?: Point): Curve | undefined {
+  const start = edgePoint(markBox, destination.cx, destination.cy)
+  const end = endPoint
+    ? backOff(endPoint, start, targetMarkType.value !== 'none' ? destination.width / 2 : 6)
+    : {
+        x: clamp(start.x, destination.left, destination.right),
+        y: clamp(start.y, destination.top, destination.bottom),
+      }
+  const chord = unitVector(end.x - start.x, end.y - start.y)
+  if (!chord)
+    return undefined
+  const outward = unitVector(start.x - markBox.cx, start.y - markBox.cy) ?? chord
+  const into = endPoint ? unitVector(endPoint.x - end.x, endPoint.y - end.y) ?? chord : chord
+  return leaderCurve(start, end, 1, unitVector(outward.x + chord.x, outward.y + chord.y) ?? chord, into)
 }
+
+// Stands in for a label that cannot be measured yet, so placement still has a
+// plausible box to work with on the very first frame.
+const FALLBACK_LABEL_HEIGHT = 40
+
+// The label never sits closer to a slide edge than this, in slide pixels.
+const SLIDE_MARGIN = 24
 
 // Measured label sizes per width cap. Writing a candidate max-width and
 // reading the resulting box back forces a synchronous layout, and the answer
@@ -1413,6 +1279,72 @@ function collectTextObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box
 // the slide animates. Sizes are in slide coordinates, so they survive window
 // resizes too. Cleared on every click and whenever the props or fonts change.
 const labelSizeCache = new Map<number | 'natural', { width: number, height: number }>()
+
+// This instance's slot in the shared placed-label registry (module scope, see
+// the plain `<script>` block above). Mount order approximates document order.
+const placementToken = Symbol('drawn-annotation-label')
+const placementOrder = nextPlacementOrder++
+
+const locator = computed(() => props.__drawnAnnotationLocator)
+if (isAnnotationEditorDevelopment) {
+  // A save remounts the slide. The locator survives the writer's own edits,
+  // so this instance can take over the selection the unmounting one released.
+  if (locator.value)
+    claimAnnotationSelection(locator.value)
+  // A write elsewhere in the file can still move this tag to another line.
+  // Should Vue patch the prop in place, the editor state keyed by the old
+  // locator has to follow it.
+  watch(locator, (next, previous) => {
+    if (!previous)
+      return
+    if (next)
+      migrateAnnotationLocator(previous, next)
+    else
+      clearAnnotationSelection(previous)
+  })
+}
+/**
+ * The `geometry` binding, checked once per change. A hand-edited binding in
+ * the wrong unit (`{ x: 70, y: 18 }` in percent) would otherwise place the
+ * label off the slide without a word; it is ignored with a warning instead.
+ */
+const sourceGeometry = computed<DrawnAnnotationGeometry | undefined>(() => {
+  if (props.geometry === undefined)
+    return undefined
+  try {
+    return validateDrawnAnnotationGeometry(props.geometry)
+  }
+  catch (error) {
+    warn(`Ignoring \`geometry\`: ${error instanceof Error ? error.message : String(error)}. Every value is a fraction of the slide from 0 to 1, for example \`:geometry="{ label: { x: 0.7, y: 0.18 } }"\`.`)
+    return undefined
+  }
+})
+/** Source geometry is the persisted state; editor drafts remain visible through HMR. */
+function persistedLabelGeometry(): PersistedAnnotationGeometry {
+  const value = sourceGeometry.value
+  return {
+    x: value?.label?.x, y: value?.label?.y, width: value?.label?.width,
+    x1: value?.connector?.start.x, y1: value?.connector?.start.y,
+    x2: value?.connector?.end.x, y2: value?.connector?.end.y,
+    cx: value?.connector?.control?.x, cy: value?.connector?.control?.y,
+  }
+}
+function draftLabelGeometry() { return locator.value ? annotationDrafts.get(locator.value) : undefined }
+function effectiveLabelX() { return draftLabelGeometry()?.x ?? persistedLabelGeometry().x }
+function effectiveLabelY() { return draftLabelGeometry()?.y ?? persistedLabelGeometry().y }
+function effectiveLabelWidth(bounds: Box) { const width = draftLabelGeometry()?.width ?? persistedLabelGeometry().width; return width === undefined ? undefined : bounds.width * width }
+/** A connector becomes manual only once all four endpoints are present. */
+function manualConnector() {
+  const draft = draftLabelGeometry()
+  const saved = persistedLabelGeometry()
+  const x1 = draft?.x1 ?? saved.x1
+  const y1 = draft?.y1 ?? saved.y1
+  const x2 = draft?.x2 ?? saved.x2
+  const y2 = draft?.y2 ?? saved.y2
+  return x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined
+    ? undefined
+    : { x1, y1, x2, y2, cx: draft?.cx ?? saved.cx, cy: draft?.cy ?? saved.cy }
+}
 
 function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
   const cached = labelSizeCache.get(maxWidth ?? 'natural')
@@ -1444,10 +1376,11 @@ function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
 }
 
 /**
- * Finds the widest label that can stay inside the slide and clear its
- * obstacles. The unbounded measurement is always tried first, so ordinary
- * labels remain a single, readable line instead of inheriting an arbitrary
- * short line length.
+ * Finds a bounded default label position. The unbounded measurement is always
+ * tried first, so ordinary labels remain a single, readable line instead of
+ * inheriting an arbitrary short line length. When the natural width cannot be
+ * placed clear of the obstacles, narrower candidates let the label wrap into
+ * the free space instead.
  */
 function fitLabel(
   root: HTMLElement,
@@ -1456,25 +1389,23 @@ function fitLabel(
   bounds: Box,
 ): { box: Box, width: number | undefined } {
   // Collected once for every width candidate tried below: the obstacles do not
-  // depend on how the label wraps. Inflated so the label breathes — a label
-  // that ends up flush against the bottom of a code block reads as part of it.
-  // An explicitly positioned label ignores obstacles entirely.
-  const obstacles = props.labelX !== undefined || props.labelY !== undefined
-    ? []
-    : collectObstacles(root, toLocal)
-        .map(box => padBox(box, props.clearance))
-        .concat(padBox(anchor, 8))
+  // depend on how the label wraps. An explicitly positioned label ignores
+  // obstacles entirely — authored geometry is the final say.
+  const explicitX = effectiveLabelX()
+  const explicitY = effectiveLabelY()
+  const maximumWidth = effectiveLabelWidth(bounds)
+  const obstacles = explicitX !== undefined || explicitY !== undefined ? [] : collectLabelObstacles(toLocal)
   const natural = measureLabel(toLocal)
   const unwrapped = placeLabel(anchor, natural, bounds, obstacles)
   const fitsSlide = natural.width <= bounds.width - SLIDE_MARGIN * 2 && natural.height <= bounds.height - SLIDE_MARGIN * 2
-  const respectsExplicitMaximum = props.labelWidth === undefined || natural.width <= props.labelWidth
+  const respectsExplicitMaximum = maximumWidth === undefined || natural.width <= maximumWidth
 
   if (fitsSlide && unwrapped.overlap === 0 && respectsExplicitMaximum)
     return { box: unwrapped.box, width: undefined }
 
-  // An explicit `label-width` remains a useful author override. Without one,
-  // the slide edges are the only width limit.
-  const maximum = Math.min(natural.width, props.labelWidth ?? natural.width, bounds.width - SLIDE_MARGIN * 2)
+  // An explicit normalized geometry width remains a useful author override.
+  // Without one, the slide edges are the only width limit.
+  const maximum = Math.min(natural.width, maximumWidth ?? natural.width, bounds.width - SLIDE_MARGIN * 2)
   const minimum = Math.min(maximum, 160)
   let best: { box: Box, width: number, overlap: number } | undefined
 
@@ -1507,104 +1438,244 @@ function placeLabel(
   anchor: Box,
   size: { width: number, height: number },
   bounds: Box,
-  obstacles: Box[],
+  obstacles: Box[] = [],
 ): { box: Box, overlap: number } {
   const halfW = size.width / 2
   const halfH = size.height / 2
   const centred = (cx: number, cy: number) => makeBox(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
-
-  if (props.labelX !== undefined || props.labelY !== undefined) {
-    return {
-      box: centred(
-        props.labelX !== undefined ? bounds.left + bounds.width * props.labelX / 100 : anchor.cx,
-        props.labelY !== undefined ? bounds.top + bounds.height * props.labelY / 100 : anchor.cy,
-      ),
-      overlap: 0,
-    }
+  const explicitX = effectiveLabelX()
+  const explicitY = effectiveLabelY()
+  if (explicitX !== undefined || explicitY !== undefined) {
+    // Authored geometry is the final say; it is never moved by obstacles.
+    return { box: centred(
+      explicitX !== undefined ? bounds.left + bounds.width * explicitX : anchor.cx,
+      explicitY !== undefined ? bounds.top + bounds.height * explicitY : anchor.cy,
+    ), overlap: 0 }
   }
 
-  const placement = resolvedPlacement.value
-  const preferred = placement === 'auto'
+  type Direction = 'up' | 'down' | 'left' | 'right'
+  const preferred: Direction = resolvedPlacement.value === 'auto'
     ? (anchor.cy < bounds.cy ? 'down' : 'up')
-    : placement
-  const directions = placement === 'auto'
-    ? [preferred, preferred === 'down' ? 'up' : 'down', 'right', 'left'] as const
-    : [preferred] as const
+    : resolvedPlacement.value
+  // `auto` may fall back to the other sides. An explicit side is a contract:
+  // the label wraps or stays put rather than drifting to another side.
+  const directions: Direction[] = resolvedPlacement.value === 'auto'
+    ? [preferred, preferred === 'down' ? 'up' : 'down', 'right', 'left']
+    : [preferred]
 
-  let best: { box: Box, overlap: number, score: number } | undefined
+  const candidate = (direction: Direction, shift: number, extra: number) => {
+    const cx = direction === 'left' ? anchor.left - props.gap - extra - halfW
+      : direction === 'right' ? anchor.right + props.gap + extra + halfW : anchor.cx + shift
+    const cy = direction === 'up' ? anchor.top - props.gap - extra - halfH
+      : direction === 'down' ? anchor.bottom + props.gap + extra + halfH : anchor.cy + shift
+    const box = centred(
+      clamp(cx, bounds.left + SLIDE_MARGIN + halfW, bounds.right - SLIDE_MARGIN - halfW),
+      clamp(cy, bounds.top + SLIDE_MARGIN + halfH, bounds.bottom - SLIDE_MARGIN - halfH),
+    )
+    // The clearance keeps the label breathing: a label flush against the
+    // bottom of a code block reads as part of it. The anchor is an obstacle
+    // too, so a clamped candidate never covers its own mark unnoticed.
+    const inflated = padBox(box, props.clearance)
+    let overlap = overlapArea(inflated, anchor)
+    for (const obstacle of obstacles)
+      overlap += overlapArea(inflated, obstacle)
+    return { box, overlap }
+  }
 
-  for (const [order, direction] of directions.entries()) {
-    for (let gap = props.gap; gap <= props.gap + 260; gap += 20) {
-      for (const lateral of LATERAL_OFFSETS) {
-        const vertical = direction === 'up' || direction === 'down'
-        const cx = vertical
-          ? anchor.cx + lateral
-          : direction === 'right' ? anchor.right + gap + halfW : anchor.left - gap - halfW
-        const cy = vertical
-          ? (direction === 'down' ? anchor.bottom + gap + halfH : anchor.top - gap - halfH)
-          : anchor.cy + lateral
-
-        const box = centred(
-          clamp(cx, bounds.left + SLIDE_MARGIN + halfW, bounds.right - SLIDE_MARGIN - halfW),
-          clamp(cy, bounds.top + SLIDE_MARGIN + halfH, bounds.bottom - SLIDE_MARGIN - halfH),
-        )
-        const overlap = obstacles.reduce((total, obstacle) => total + overlapArea(box, obstacle), 0)
-        const score = overlap * 6 + gap + Math.abs(lateral) * 0.6 + order * 400
-        // A clear spot always beats an overlapping one, and among clear spots
-        // the best-scoring one wins: taking the first found would let a small
-        // gap with a long drift along the mark beat a slightly larger gap that
-        // stays level with it, which reads as belonging to something else.
-        const better = !best
-          || (overlap === 0 && best.overlap > 0)
-          || ((overlap === 0) === (best.overlap === 0) && score < best.score)
-        if (better)
-          best = { box, overlap, score }
+  let best: { box: Box, overlap: number } | undefined
+  for (const direction of directions) {
+    // Nearest first: step further out along the side to clear an occupied
+    // row, and slide along it to step out from under an obstacle — both
+    // without leaving the requested side.
+    const lateral = direction === 'up' || direction === 'down' ? halfW + props.gap : halfH + props.gap
+    for (const extra of [0, 70, 150]) {
+      for (const shift of [0, -lateral, lateral]) {
+        const placed = candidate(direction, shift, extra)
+        if (placed.overlap === 0)
+          return placed
+        if (!best || placed.overlap < best.overlap)
+          best = placed
       }
     }
   }
+  return best!
+}
 
-  // The loops above always run at least once, so `best` is always set; the
-  // fallback only satisfies the types.
-  return best ?? { box: centred(anchor.cx, anchor.cy), overlap: Number.POSITIVE_INFINITY }
+/** The intersection area of two boxes, 0 when they do not touch. */
+function overlapArea(a: Box, b: Box) {
+  const width = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+  const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+  return width > 0 && height > 0 ? width * height : 0
 }
 
 /**
- * Everything the label has to stay clear of: every rendered text fragment and
- * image on the slide, plus whole boxes for content whose padding also matters
- * and anything the slide opted in through `avoid-selector`. Cards and similar
- * blocks remain solid obstacles, but a code block's body is intentionally not:
- * its blank area is a good label surface. Its title/tab strip is a block
- * obstacle, so annotations can never be placed in window chrome.
+ * Everything an automatically placed label must stay clear of, in local SVG
+ * coordinates: the slide's laid-out content (text lines, images, code blocks
+ * — including v-click content that is laid out but still hidden, so a label
+ * never sits where the slide is about to grow), elements matched by
+ * `avoid-selector`, and the labels that annotations on an earlier click (or
+ * the same click and earlier in mount order) have placed on this slide. Only
+ * what the browser has laid out is measured — deterministic by construction,
+ * never guessed.
  */
-function collectObstacles(root: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
-  const slide = slideRoot() ?? root
-  const scan = scanObstacles(slide)
-  const boxes: Box[] = [...scan.blocks, ...scan.media, ...scan.texts].map(toLocal)
+function collectLabelObstacles(toLocal: (rect: DOMRect) => Box): Box[] {
+  const obstacles: Box[] = []
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg)
+    return obstacles
+  obstacles.push(...contentObstacles(slide, toLocal))
   if (props.avoidSelector) {
-    for (const element of Array.from(slide.querySelectorAll<HTMLElement>(props.avoidSelector)))
-      boxes.push(toLocal(element.getBoundingClientRect()))
+    for (const element of Array.from(slide.querySelectorAll<HTMLElement>(props.avoidSelector))) {
+      if (element.closest('.annotation-ignore'))
+        continue
+      const rect = element.getBoundingClientRect()
+      if (rect.width && rect.height)
+        obstacles.push(toLocal(rect))
+    }
   }
-  // The labels other annotations have already written. Only the ones from an
-  // earlier click count — a later label avoids an earlier one, never the other
-  // way round — so two labels can never chase each other across the slide.
-  const ourLabel = labelEl.value
-  for (const other of Array.from(slide.querySelectorAll<HTMLElement>('.annotation-label.is-placed'))) {
-    if (other === ourLabel)
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  const ourClick = resolvedLabelClick.value
+  for (const record of placedLabelRegistry.values()) {
+    if (record.root !== slide || !record.active)
       continue
-    const click = Number(other.dataset.click ?? Number.NaN)
-    if (!Number.isFinite(click))
+    // A later label avoids an earlier one, never the other way round, so two
+    // labels can never chase each other. Earlier means an earlier click first
+    // — a click-1 label is already on screen when a click-3 label is placed,
+    // whatever their markup order — with mount order breaking the tie.
+    if (!(record.click < ourClick || (record.click === ourClick && record.order < placementOrder)))
       continue
-    const ours = resolvedLabelClick.value
-    const earlier = click < ours
-      || (click === ours && !!ourLabel && !!(other.compareDocumentPosition(ourLabel) & Node.DOCUMENT_POSITION_FOLLOWING))
-    if (!earlier)
-      continue
-    const rect = other.getBoundingClientRect()
-    if (rect.width >= 6 && rect.height >= 6)
-      boxes.push(toLocal(rect))
+    const topLeft = slideFractionPointToLocal({ x: record.box.left, y: record.box.top }, slideBox, overlayBox, geometry)
+    const bottomRight = slideFractionPointToLocal({ x: record.box.right, y: record.box.bottom }, slideBox, overlayBox, geometry)
+    obstacles.push(makeBox(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y))
   }
+  return obstacles
+}
+
+/** The slide's own laid-out content, scanned once per discrete re-measure. */
+function contentObstacles(slide: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
+  if (contentObstacleCache)
+    return contentObstacleCache
+  const boxes: Box[] = []
+  for (const element of Array.from(slide.querySelectorAll<HTMLElement>('*'))) {
+    if (element.closest('.annotation-ignore'))
+      continue
+    // A code block or an SVG drawing counts as one opaque box.
+    const aggregate = element.closest('pre, svg')
+    if (aggregate && aggregate !== element)
+      continue
+    const tag = element.tagName.toLowerCase()
+    const isMedia = tag === 'img' || tag === 'video' || tag === 'canvas' || tag === 'svg' || tag === 'pre'
+    // Only leaf-ish boxes obstruct: an element with text of its own keeps its
+    // line, while pure layout containers leave their free space usable.
+    if (!isMedia && !Array.from(element.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()))
+      continue
+    const rect = element.getBoundingClientRect()
+    if (rect.width < 2 || rect.height < 2)
+      continue
+    boxes.push(toLocal(rect))
+  }
+  contentObstacleCache = boxes
   return boxes
 }
+
+/** Record this label's placed box for later annotations on the same slide. */
+function publishPlacedLabel(box: Box) {
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg)
+    return
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  const topLeft = localPointToSlideFraction({ x: box.left, y: box.top }, slideBox, overlayBox, geometry)
+  const bottomRight = localPointToSlideFraction({ x: box.right, y: box.bottom }, slideBox, overlayBox, geometry)
+  placedLabelRegistry.set(placementToken, {
+    order: placementOrder,
+    click: resolvedLabelClick.value,
+    root: slide,
+    box: { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y },
+    active: withinRange.value,
+  })
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+/** Where a ray leaving the centre of `box` towards a point crosses its border. */
+function edgePoint(box: Box, towardX: number, towardY: number, extra = 0) {
+  const dx = towardX - box.cx
+  const dy = towardY - box.cy
+  if (!dx && !dy)
+    return { x: box.cx, y: box.cy }
+  const scale = Math.min(
+    dx ? (box.width / 2) / Math.abs(dx) : Number.POSITIVE_INFINITY,
+    dy ? (box.height / 2) / Math.abs(dy) : Number.POSITIVE_INFINITY,
+  )
+  const length = Math.hypot(dx, dy)
+  const reach = scale + extra / length
+  return { x: box.cx + dx * reach, y: box.cy + dy * reach }
+}
+
+function backOff(point: { x: number, y: number }, from: { x: number, y: number }, distance: number) {
+  const dx = point.x - from.x
+  const dy = point.y - from.y
+  const length = Math.hypot(dx, dy) || 1
+  return { x: point.x - dx / length * distance, y: point.y - dy / length * distance }
+}
+
+onMounted(async () => {
+  mounted = true
+  if (isAnnotationEditorDevelopment && editorRelevant.value && locator.value) {
+    unregisterEditorActions = registerAnnotationEditorActions(locator.value, {
+      isManualConnector: () => !!manualConnector(),
+      toggleConnectorAttachment,
+      persistedGeometry: persistedLabelGeometry,
+    })
+  }
+  // Registered synchronously, while the clicks context still accepts it.
+  if (manualClicks.value) {
+    // No start prop means the annotation is already present at click 0, even
+    // when an enclosing annotation makes its click handling manual.
+    resolvedClick.value = hasExplicitStartClick.value
+      ? manualClick(atClick.value, props.on !== undefined ? 'on' : 'at')
+      : 0
+    resolvedLabelClick.value = props.labelAt === undefined
+      ? resolvedClick.value
+      : manualClick(props.labelAt, 'label-at')
+    $clicksContext.register(ownClicks, { delta: 0, max: Math.max(resolvedClick.value, resolvedLabelClick.value) })
+  }
+  await nextTick()
+  if (!manualClicks.value) {
+    // An unqualified annotation is initial content, not a bare `v-click`.
+    // Explicit `at`/`on` values deliberately retain Slidev's native v-click
+    // parsing and automatic-ordering semantics.
+    resolvedClick.value = hasExplicitStartClick.value
+      ? markerClick(clickMarker.value)
+      : 0
+    // A label without a click of its own follows the mark, rather than taking
+    // the next click in the slide's automatic ordering.
+    resolvedLabelClick.value = props.labelAt === undefined
+      ? resolvedClick.value
+      : markerClick(labelMarker.value)
+  }
+  // Navigating backwards remounts the slide. If this click was already reached,
+  // render the final state instead of replaying the entrance animation.
+  showImmediately.value = isCurrentSlide.value
+    && $clicks.value >= resolvedClick.value
+    && withinRange.value
+  unsettle()
+  scheduleUpdate()
+
+  if (isCurrentSlide.value)
+    connectObservers()
+
+  document.fonts?.ready.then(() => {
+    labelSizeCache.clear()
+    scheduleUpdate()
+  })
+})
 
 /**
  * The observers only run while this annotation's slide is current. Every
@@ -1658,47 +1729,13 @@ function disconnectObservers() {
   window.removeEventListener('resize', scheduleUpdate)
 }
 
-onMounted(async () => {
-  mounted = true
-  // Registered synchronously, while the clicks context still accepts it.
-  if (manualClicks.value) {
-    resolvedClick.value = manualClick(atClick.value, props.on !== undefined ? 'on' : 'at')
-    resolvedLabelClick.value = props.labelAt === undefined
-      ? resolvedClick.value
-      : manualClick(props.labelAt, 'label-at')
-    $clicksContext.register(ownClicks, { delta: 0, max: Math.max(resolvedClick.value, resolvedLabelClick.value) })
-  }
-  await nextTick()
-  if (!manualClicks.value) {
-    // Slidev resolves automatic click ordering in the directive and stores the
-    // result on the marker. Reading it here keeps the first painted state
-    // unambiguously hidden, unlike styling a v-click element directly.
-    resolvedClick.value = markerClick(clickMarker.value)
-    // A label without a click of its own follows the mark, rather than taking
-    // the next click in the slide's automatic ordering.
-    resolvedLabelClick.value = props.labelAt === undefined
-      ? resolvedClick.value
-      : markerClick(labelMarker.value)
-  }
-  // Navigating backwards remounts the slide. If this click was already reached,
-  // render the final state instead of replaying the entrance animation.
-  showImmediately.value = isCurrentSlide.value
-    && $clicks.value >= resolvedClick.value
-    && withinRange.value
-  unsettle()
-  scheduleUpdate()
-
-  if (isCurrentSlide.value)
-    connectObservers()
-
-  document.fonts?.ready.then(() => {
-    labelSizeCache.clear()
-    scheduleUpdate()
-  })
-})
-
 onBeforeUnmount(() => {
   mounted = false
+  unregisterEditorActions?.()
+  unregisterEditorActions = undefined
+  if (locator.value)
+    releaseAnnotationSelection(locator.value)
+  placedLabelRegistry.delete(placementToken)
   settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
@@ -1711,6 +1748,11 @@ onBeforeUnmount(() => {
 // Magic Move and click transitions are driven by the click count, and both move
 // the annotated element for a while after it changes.
 watch($clicks, () => {
+  // A hidden slide's clicks can move while it is preloaded. Nothing of it is
+  // on screen, and becoming current re-measures everything in the
+  // `isCurrentSlide` watch below, so skip the per-click measurement work.
+  if (!isCurrentSlide.value)
+    return
   unsettle()
   track(CLICK_TRACK_DURATION)
 }, { flush: 'sync' })
@@ -1728,34 +1770,566 @@ watch(isCurrentSlide, (current) => {
   }
   else {
     disconnectObservers()
+    // Cancel in-flight measurement too: a settle pass or tracking loop begun
+    // before navigating away would keep calling updateGeometry on a slide
+    // that is no longer visible. During a transition the outgoing slide moves
+    // (or is snapshotted) as a whole, so its frozen geometry stays correct.
+    settleRun++
+    trackUntil = 0
+    cancelAnimationFrame(trackFrame)
+    trackFrame = 0
+    cancelAnimationFrame(frame)
   }
 }, { flush: 'sync' })
 
 // Any prop can change what is drawn or where the label may go, so re-measure
 // on all of them instead of maintaining a list that can silently go stale.
 // The caches assume unchanged props, so they are dropped along the way.
-// (The click props — `at`, `on`, `label-at`, `insert` — are the exception:
-// clicks resolve and register once at mount, like Slidev's own components, so
-// changing them afterwards requires a remount.)
 watch(props, () => {
   labelSizeCache.clear()
   lastMarkKey = ''
   scheduleUpdate()
 })
+
+// A draft is applied immediately instead of waiting for source HMR after save.
+// Connector drags affect only their owning SVG. Label drags also affect labels
+// that avoid one another, but their shared placement is published only at the
+// start and end of the gesture rather than once per pointer frame.
+watch(annotationDraftChange, (change) => {
+  if (change?.locator !== locator.value)
+    return
+  if (change.kind === 'clear') {
+    labelSizeCache.clear()
+    lastMarkKey = ''
+  }
+  scheduleDraftUpdate()
+})
+watch(annotationLabelLayoutChange, (change) => {
+  // The dragged label already has its exact on-screen geometry. Re-measuring it
+  // on release would briefly reset it; only dependent labels need a full pass.
+  if (change?.locator === locator.value) {
+    scheduleDraftUpdate()
+    return
+  }
+  labelSizeCache.clear()
+  lastMarkKey = ''
+  scheduleUpdate()
+})
+
+const editable = computed(() => isAnnotationEditorDevelopment && !!locator.value && hasLabel.value && labelActive.value && geometry.ready)
+const connectorEditable = computed(() => isAnnotationEditorDevelopment && !!locator.value && connectsLine.value && active.value && !!geometry.connectorStart && !!geometry.connectorEnd)
+const selectedForEditing = computed(() => (editable.value || connectorEditable.value) && annotationEditMode.value && selectedAnnotationId.value === locator.value)
+interface DragSaveSession extends AnnotationUndoSession {
+  /** The source geometry before this gesture's first autosave. */
+  persistedCaptured: boolean
+  persistedBefore?: PersistedAnnotationGeometry | null
+}
+
+let labelDrag: ({ pointerId: number, width: boolean, centerX: number, rightOffsetX: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+
+function fraction(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+// Labels only suppress Slidev navigation while they are real editor controls.
+// Outside edit mode they are presentation-only (`pointer-events: none`), but
+// retaining that boundary here also keeps a transient/stale DOM state from
+// swallowing an ordinary slide click.
+function stopEditorClick(event: MouseEvent) {
+  if (annotationEditMode.value && editable.value)
+    event.stopPropagation()
+}
+
+function beginLabelDrag(event: PointerEvent, width = false) {
+  if (!editable.value || !annotationEditMode.value || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  // Keep the selected control in sync with the gesture. In particular, a
+  // width-handle drag must leave the width handle selected so follow-up arrow
+  // presses resize instead of unexpectedly moving the label.
+  selectAnnotation(locator.value, width ? 'width' : 'label')
+  const slide = slideRoot()
+  const label = labelEl.value
+  if (!slide || !label)
+    return
+  const slideBox = slide.getBoundingClientRect()
+  const labelBox = label.getBoundingClientRect()
+  labelDrag = {
+    pointerId: event.pointerId,
+    width,
+    // The label is centre-anchored and a width drag leaves x untouched, so
+    // the centre is the fixed point a new width is measured from; the right
+    // edge moves at half the width change.
+    centerX: labelBox.left + labelBox.width / 2,
+    rightOffsetX: event.clientX - labelBox.right,
+    // Preserve the grab point rather than snapping the label centre to the
+    // pointer on its first move.
+    offsetX: event.clientX - (labelBox.left + labelBox.width / 2),
+    offsetY: event.clientY - (labelBox.top + labelBox.height / 2),
+    previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined,
+    persistedCaptured: false,
+  }
+  beginAnnotationDraftGesture(locator.value, 'label')
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+}
+
+function moveLabelDrag(event: PointerEvent) {
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const slide = slideRoot()
+  if (!slide)
+    return
+  const box = slide.getBoundingClientRect()
+  if (labelDrag.width) {
+    // Keep the handle under the pointer: the grabbed right edge follows the
+    // cursor and the width doubles its distance from the fixed centre.
+    const edge = event.clientX - labelDrag.rightOffsetX
+    setLabelDraft(locator.value, { ...labelPositionSeed(), width: Math.max(.02, Math.min(1, 2 * (edge - labelDrag.centerX) / box.width)) })
+  }
+  else {
+    setLabelDraft(locator.value, {
+      x: fraction((event.clientX - labelDrag.offsetX - box.left) / box.width),
+      y: fraction((event.clientY - labelDrag.offsetY - box.top) / box.height),
+    })
+  }
+  scheduleDraftSave(labelDrag)
+}
+
+/** Source HMR updates `geometry`; drafts intentionally remain until the save response is reconciled. */
+
+let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+const savingDraftSignatures = new Set<string>()
+/** Independent of key order, so a draft compares equal to the same geometry read back from the source. */
+function draftSignature(geometry: PersistedAnnotationGeometry) {
+  return JSON.stringify([geometry.x, geometry.y, geometry.width, geometry.x1, geometry.y1, geometry.x2, geometry.y2, geometry.cx, geometry.cy].map(value => value ?? null))
+}
+
+/** Save during a pause in a long drag as well as on pointer release. */
+function scheduleDraftSave(session?: DragSaveSession) {
+  clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(() => {
+    if (locator.value)
+      void saveDraft(locator.value, session)
+  }, 350)
+}
+
+async function saveDraft(id: string, session?: DragSaveSession) {
+  const draft = annotationDrafts.get(id)
+  if (!draft)
+    return
+  // This import stays behind a compile-time development guard. Production
+  // decks neither render controls nor include browser write-client code.
+  if (!isAnnotationEditorDevelopment)
+    return
+  const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
+  // Undo must return to what the source holds now: the geometry this tab
+  // last saved (HMR may not have delivered it as a prop yet), otherwise the
+  // authored binding. Store it before replacing it with the new geometry.
+  const previous = cachedAnnotationGeometry(id) ?? persistedLabelGeometry()
+  // The writer replaces the whole binding with what it is sent. A first drag
+  // drafts only the label, so complete it from the source baseline rather than
+  // letting a label move erase the connector or width the source holds.
+  const savedDraft = { ...previous, ...draft }
+  const signature = draftSignature(savedDraft)
+  // There is nothing to write when the source already holds this geometry:
+  // after a completed save, or when a drag ends where it started. Comparing
+  // with the source rather than with the last request keeps a position that
+  // Undo or Reset removed from the source saveable again.
+  if (signature === draftSignature(previous) || savingDraftSignatures.has(signature))
+    return
+  savingDraftSignatures.add(signature)
+  annotationEditorStatus.value = 'Saving annotation…'
+  try {
+    // A long drag may autosave before the pointer is released. Remember the
+    // pre-drag rule before that first request, so Escape can truly cancel the
+    // whole gesture instead of merely hiding a value that HMR has saved.
+    if (session && !session.persistedCaptured) {
+      session.persistedBefore = previous
+      session.persistedCaptured = true
+    }
+    const saved = await saveLabelGeometry(id, savedDraft)
+    // A debounced save and the release save belong to the same pointer
+    // gesture. Record the pre-gesture snapshot once, rather than making Undo
+    // stop at every intermediate autosave position.
+    if (session)
+      recordAnnotationUndoOnce(session, id, session.persistedBefore ?? previous)
+    else
+      recordAnnotationUndo(id, previous)
+    // The writer returns its fixed-four-decimal source snapshot. Keep that
+    // draft visible until Slidev recompiles the rewritten Markdown.
+    const persisted = saved.geometry[id]
+    if (persisted) setLabelDraft(id, persisted)
+    annotationEditorStatus.value = 'Annotation saved'
+  }
+  catch (error) {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to save annotation geometry'
+  }
+  finally {
+    savingDraftSignatures.delete(signature)
+  }
+}
+
+/**
+ * Switch explicitly between the attached route and a frozen two-endpoint
+ * route. Unlike dragging, this makes the connector state discoverable from
+ * the global toolbar without making the toolbar depend on annotation DOM.
+ */
+async function toggleConnectorAttachment() {
+  if (!locator.value || !connectorEditable.value)
+    return
+  if (manualConnector()) {
+    annotationEditorStatus.value = 'Restoring automatic connector…'
+    try {
+      const { cachedAnnotationGeometry, resetAnnotationGeometry } = await loadWriterClient()
+      const previous = cachedAnnotationGeometry(locator.value) ?? persistedLabelGeometry()
+      await resetAnnotationGeometry(locator.value, 'connector', previous)
+      recordAnnotationUndo(locator.value, previous)
+      clearLabelDraft(locator.value)
+      annotationEditorStatus.value = 'Connector now follows its source and label'
+    }
+    catch (error) {
+      annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to restore automatic connector'
+    }
+    return
+  }
+
+  const start = geometry.connectorStart && localConnectorFraction(geometry.connectorStart)
+  const end = geometry.connectorEnd && localConnectorFraction(geometry.connectorEnd)
+  if (!start || !end)
+    return
+  setLabelDraft(locator.value, { x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+  await saveDraft(locator.value)
+}
+
+async function endLabelDrag(event: PointerEvent) {
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const session = labelDrag
+  labelDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'label')
+  clearTimeout(draftSaveTimer)
+  await saveDraft(locator.value, session)
+}
+
+// A pointer cancellation means the browser interrupted the gesture (for
+// example, a window focus change), not that the author released it. Never turn
+// that partial movement into a persisted edit.
+function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry | undefined, session: DragSaveSession) {
+  if (previous)
+    setLabelDraft(id, previous)
+  else
+    clearLabelDraft(id)
+  // No request has started, so reverting the local preview is sufficient.
+  if (!session.persistedCaptured) {
+    annotationEditorStatus.value = 'Annotation drag cancelled'
+    return
+  }
+  annotationEditorStatus.value = 'Cancelling annotation drag…'
+  // Keep this dynamic import behind the explicit serve-mode boundary. Slidev's
+  // build renderer can still set DEV, but a published deck must not ship a
+  // browser client capable of reaching the local writer endpoint.
+  if (!isAnnotationEditorDevelopment)
+    return
+  // Writer-client writes are serialized. This restore runs after any autosave
+  // already in flight, preventing source HMR from resurrecting a cancelled drag.
+  void loadWriterClient().then(({ restoreAnnotationGeometry }) =>
+    restoreAnnotationGeometry(id, session.persistedBefore ?? null),
+  ).then(() => {
+    clearLabelDraft(id)
+    annotationEditorStatus.value = 'Annotation drag cancelled'
+  }).catch((error) => {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to cancel saved annotation geometry'
+  })
+}
+
+function cancelLabelDrag(event: PointerEvent) {
+  if (!labelDrag || labelDrag.pointerId !== event.pointerId || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const drag = labelDrag
+  labelDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'label')
+  clearTimeout(draftSaveTimer)
+  restoreCancelledDrag(locator.value, drag.previous, drag)
+}
+
+type ConnectorDragKind = 'start' | 'end' | 'body'
+let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, snapCandidates: FractionPoint[], connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+
+function localConnectorFraction(point: Point) {
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg)
+    return undefined
+  const local = localPointToSlideFraction(point, slide.getBoundingClientRect(), svg.getBoundingClientRect(), geometry)
+  return { x: fraction(local.x), y: fraction(local.y) }
+}
+
+/**
+ * A width-only draft cannot be persisted: the writer's document shape stores
+ * `width` inside `label`, which requires a position. When no position is
+ * known yet, the first width edit materializes the label's current on-screen
+ * position, so the edit survives the save instead of being silently dropped
+ * and snapped back while the status still reports "Annotation saved".
+ */
+function labelPositionSeed(): PersistedAnnotationGeometry {
+  const draft = draftLabelGeometry()
+  const saved = persistedLabelGeometry()
+  if ((draft?.x ?? saved.x) !== undefined && (draft?.y ?? saved.y) !== undefined)
+    return {}
+  const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
+  return current ? { x: current.x, y: current.y } : {}
+}
+
+/** Slide-centre/edge guides plus the live source, target and label ports. */
+function connectorSnapCandidates() {
+  const candidates = [
+    { x: 0, y: 0 }, { x: .5, y: .5 }, { x: 1, y: 1 },
+    ...geometry.sourcePorts.map(localConnectorFraction),
+    geometry.targetPoint && localConnectorFraction(geometry.targetPoint),
+  ].filter((point): point is { x: number, y: number } => !!point)
+  const slide = slideRoot()
+  const label = labelEl.value
+  if (slide && label) {
+    const slideBox = slide.getBoundingClientRect()
+    const box = label.getBoundingClientRect()
+    // Centre and edge-midpoints make a connector meet the label cleanly.
+    for (const [x, y] of [[box.left + box.width / 2, box.top + box.height / 2], [box.left, box.top + box.height / 2], [box.right, box.top + box.height / 2], [box.left + box.width / 2, box.top], [box.left + box.width / 2, box.bottom]])
+      candidates.push({ x: fraction((x - slideBox.left) / slideBox.width), y: fraction((y - slideBox.top) / slideBox.height) })
+  }
+  return candidates
+}
+
+function snapConnectorPoint(point: { x: number, y: number }, disabled: boolean) {
+  return disabled || !connectorDrag ? point : snapFractionPoint(point, connectorDrag.snapCandidates)
+}
+
+/**
+ * Render the same concrete-slide snap ports used by dragging. Keeping this
+ * conversion beside the drag conversion prevents a nested annotation canvas
+ * from displaying guides at a different origin than the endpoint receives.
+ */
+const connectorGuidePoints = computed(() => {
+  if (!connectorEditable.value || !annotationEditMode.value || selectedAnnotationId.value !== locator.value)
+    return []
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg || !geometry.width || !geometry.height)
+    return []
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  return connectorSnapCandidates().map(point => slideFractionPointToLocal(point, slideBox, overlayBox, geometry))
+})
+
+function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
+  if (!connectorEditable.value || !annotationEditMode.value || !locator.value || !geometry.connectorStart || !geometry.connectorEnd)
+    return
+  const slide = slideRoot()
+  const start = localConnectorFraction(geometry.connectorStart)
+  const end = localConnectorFraction(geometry.connectorEnd)
+  if (!slide || !start || !end)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  selectAnnotation(locator.value, kind)
+  const saved = manualConnector()
+  // The slide, label, and ports stay put while a connector is dragged, so the
+  // snap candidates and slide box are measured once per gesture instead of
+  // re-reading a dozen client rects on every pointer move.
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), snapCandidates: connectorSnapCandidates(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  beginAnnotationDraftGesture(locator.value, 'connector')
+  ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
+}
+
+function moveConnectorDrag(event: PointerEvent) {
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const box = connectorDrag.slideBox
+  const dx = (event.clientX - connectorDrag.startX) / box.width
+  const dy = (event.clientY - connectorDrag.startY) / box.height
+  const next = { ...connectorDrag.connector }
+  if (connectorDrag.kind === 'start') {
+    const snapped = snapConnectorPoint({ x: fraction(next.x1 + dx), y: fraction(next.y1 + dy) }, event.altKey)
+    next.x1 = snapped.x; next.y1 = snapped.y
+  }
+  else if (connectorDrag.kind === 'end') {
+    const snapped = snapConnectorPoint({ x: fraction(next.x2 + dx), y: fraction(next.y2 + dy) }, event.altKey)
+    next.x2 = snapped.x; next.y2 = snapped.y
+  }
+  else {
+    // Translate as one rigid line. Constrain the *delta* rather than its two
+    // endpoints, otherwise a line against a slide edge would shrink as the
+    // pointer kept moving. Snap the start port, then constrain that correction
+    // as one more rigid translation for the same reason.
+    const translated = translateConnector(next, dx, dy)
+    const snapped = snapConnectorPoint({ x: translated.x1, y: translated.y1 }, event.altKey)
+    Object.assign(next, translateConnector(translated, snapped.x - translated.x1, snapped.y - translated.y1))
+  }
+  setLabelDraft(locator.value, next)
+  scheduleDraftSave(connectorDrag)
+}
+
+async function endConnectorDrag(event: PointerEvent) {
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const session = connectorDrag
+  connectorDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'connector')
+  clearTimeout(draftSaveTimer)
+  await saveDraft(locator.value, session)
+}
+
+function cancelConnectorDrag(event: PointerEvent) {
+  if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const drag = connectorDrag
+  connectorDrag = undefined
+  endAnnotationDraftGesture(locator.value, 'connector')
+  clearTimeout(draftSaveTimer)
+  restoreCancelledDrag(locator.value, drag.previous, drag)
+}
+
+let keyboardSaveTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Arrow keys nudge the selected label or connector in slide fractions. */
+function nudgeSelectedAnnotation(event: KeyboardEvent) {
+  if (!annotationEditMode.value || selectedAnnotationId.value !== locator.value || labelDrag || connectorDrag || !locator.value)
+    return
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
+    return
+  // Do not steal arrow keys from toolbar controls or a deck's editable text.
+  // The width handle is deliberately a real button for accessibility, but it
+  // is also an annotation control: its focused arrow keys must resize rather
+  // than being discarded by the generic form-control guard.
+  const target = event.target instanceof Element ? event.target : undefined
+  const annotationControl = target?.closest('.annotation-width-handle, .annotation-connector-handle')
+  if (!annotationControl && target?.closest('button, input, textarea, select, [contenteditable="true"]'))
+    return
+
+  const step = event.shiftKey ? .01 : .002
+  const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
+  const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
+  const part = selectedAnnotationPart.value
+
+  if ((part === 'label' || part === 'width') && editable.value) {
+    if (part === 'width') {
+      // Width is a horizontal dimension. Do not make Up/Down silently resize
+      // a label just because they have no horizontal delta.
+      if (!dx) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+      const slide = slideRoot()
+      const label = labelEl.value
+      if (!slide || !label)
+        return
+      // An unbounded label has no saved maximum yet. Materialize the width it
+      // occupies now, so the first key press changes the visible label rather
+      // than jumping to an unrelated default cap.
+      const slideWidth = slide.getBoundingClientRect().width
+      const overlayWidth = overlay.value?.getBoundingClientRect().width
+      if (!overlayWidth)
+        return
+      const currentFraction = geometry.labelWidth === undefined
+        ? label.getBoundingClientRect().width / slideWidth
+        : localLabelWidthToSlideFraction(geometry.labelWidth, geometry.width, overlayWidth, slideWidth)
+      setLabelDraft(locator.value, { ...labelPositionSeed(), width: nudgeLabelWidth(currentFraction, dx) })
+    }
+    else {
+      const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
+      if (!current)
+        return
+      setLabelDraft(locator.value, { x: fraction(current.x + dx), y: fraction(current.y + dy) })
+    }
+  }
+  else if ((part === 'start' || part === 'end' || part === 'body') && connectorEditable.value && geometry.connectorStart && geometry.connectorEnd) {
+    const start = localConnectorFraction(geometry.connectorStart)
+    const end = localConnectorFraction(geometry.connectorEnd)
+    if (!start || !end)
+      return
+    // Keep arrow-key body movement identical to dragging the line itself:
+    // translation is constrained as one rigid segment at slide edges.
+    const saved = manualConnector()
+    const base = {
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      ...(saved?.cx !== undefined && saved.cy !== undefined ? { cx: saved.cx, cy: saved.cy } : {}),
+    }
+    const translated = nudgeConnector(base, part, dx, dy)
+    setLabelDraft(locator.value, { ...translated } satisfies PersistedAnnotationGeometry)
+  }
+  else {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  // One debounce is intentional. Reusing the pointer-drag timer here creates
+  // two writes for one key press; after a 409 the second would adopt the
+  // conflict response's revision and overwrite the other author's geometry.
+  clearTimeout(keyboardSaveTimer)
+  keyboardSaveTimer = setTimeout(() => void saveDraft(locator.value!), 250)
+}
+
+function cancelActiveDrag(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || (!labelDrag && !connectorDrag) || !locator.value)
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  const drag = labelDrag ?? connectorDrag
+  const dragKind = labelDrag ? 'label' as const : 'connector' as const
+  labelDrag = undefined
+  connectorDrag = undefined
+  endAnnotationDraftGesture(locator.value, dragKind)
+  clearTimeout(draftSaveTimer)
+  restoreCancelledDrag(locator.value, drag?.previous, drag!)
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', cancelActiveDrag, true)
+  window.addEventListener('keydown', nudgeSelectedAnnotation, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', cancelActiveDrag, true)
+  window.removeEventListener('keydown', nudgeSelectedAnnotation, true)
+  clearTimeout(keyboardSaveTimer)
+  clearTimeout(draftSaveTimer)
+})
 </script>
 
 <template>
-  <div ref="container" class="drawn-annotation" :class="{ 'is-fading-out': fadingOut }">
+  <div
+    ref="container"
+    class="drawn-annotation"
+    :class="{ 'is-fading-out': fadingOut }"
+      >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
-    <span ref="clickMarker" v-click="manualClicks ? false : atClick" class="click-marker annotation-ignore" />
+    <span ref="clickMarker" v-click="manualClicks || !hasExplicitStartClick ? false : atClick" class="click-marker annotation-ignore" />
     <span v-if="props.labelAt !== undefined" ref="labelMarker" v-click="manualClicks ? false : props.labelAt" class="click-marker annotation-ignore" />
     <svg
       ref="overlay"
       class="annotation-overlay annotation-ignore"
       :viewBox="`0 0 ${geometry.width} ${geometry.height}`"
       preserveAspectRatio="none"
-      aria-hidden="true"
+      :aria-hidden="!(connectorEditable && annotationEditMode)"
+      :role="connectorEditable && annotationEditMode ? 'group' : undefined"
+      :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${locator}` : undefined"
       :style="{
         '--annotation-color': props.color,
         '--annotation-width': `${props.strokeWidth}px`,
@@ -1808,13 +2382,63 @@ watch(props, () => {
           />
         </g>
       </template>
+      <!-- Development-only hit targets deliberately live in the shared SVG
+           canvas, so their coordinates match the persisted connector. -->
+      <g
+        v-if="connectorEditable && annotationEditMode && geometry.connectorStart && geometry.connectorEnd"
+        class="annotation-connector-editor"
+        @click.stop
+      >
+        <!-- Visible ports make snapping discoverable; they are decorative,
+             unlike the keyboard-accessible endpoint controls below. -->
+        <g class="annotation-connector-guides" aria-hidden="true">
+          <circle v-for="(point, index) in connectorGuidePoints" :key="`guide-${index}`" :cx="point.x" :cy="point.y" r="4" />
+        </g>
+        <line
+          class="annotation-connector-hit"
+          :x1="geometry.connectorStart.x" :y1="geometry.connectorStart.y"
+          :x2="geometry.connectorEnd.x" :y2="geometry.connectorEnd.y"
+          role="button"
+          tabindex="0"
+          aria-label="Move connector"
+          @focus="selectAnnotation(locator!, 'body')"
+          @pointerdown="beginConnectorDrag($event, 'body')"
+          @pointermove="moveConnectorDrag"
+          @pointerup="endConnectorDrag"
+          @pointercancel="cancelConnectorDrag"
+        />
+        <circle
+          v-for="(point, index) in [geometry.connectorStart, geometry.connectorEnd]"
+          :key="index"
+          class="annotation-connector-handle"
+          :cx="point.x" :cy="point.y" r="9"
+          :aria-label="index ? 'Move connector end' : 'Move connector start'"
+          role="button"
+          tabindex="0"
+          @focus="selectAnnotation(locator!, index ? 'end' : 'start')"
+          @pointerdown.stop="beginConnectorDrag($event, index ? 'end' : 'start')"
+          @pointermove="moveConnectorDrag"
+          @pointerup="endConnectorDrag"
+          @pointercancel="cancelConnectorDrag"
+        />
+      </g>
     </svg>
+    <!-- In authoring mode the label itself is the keyboard target for moving
+         it. It must not remain aria-hidden: otherwise the selected width
+         handle nested below is invisible to assistive technology. Outside
+         that development-only mode the positioned copy stays presentation
+         only; the live region after the slot announces its text instead. -->
     <div
       v-if="hasLabel"
       ref="labelEl"
       class="annotation-label annotation-ignore"
-      :class="{ 'is-active': labelActive && geometry.ready, 'is-placed': geometry.labelPlaced }"
+      :class="{ 'is-active': labelActive && geometry.ready, 'is-placed': geometry.labelPlaced, 'is-editable': editable && annotationEditMode, 'is-selected-for-editing': selectedForEditing }"
       :data-click="resolvedLabelClick"
+      @pointerdown="beginLabelDrag($event)"
+      @pointermove="moveLabelDrag"
+      @pointerup="endLabelDrag"
+      @pointercancel="cancelLabelDrag"
+      @click="stopEditorClick"
       :style="{
         '--annotation-color': props.color,
         '--label-delay': `${delays.label}ms`,
@@ -1823,9 +2447,24 @@ watch(props, () => {
         'top': `${geometry.labelTop}px`,
         'maxWidth': geometry.labelWidth === undefined ? undefined : `${geometry.labelWidth}px`,
       }"
-      aria-hidden="true"
+      :tabindex="editable && annotationEditMode ? 0 : undefined"
+      :aria-label="editable && annotationEditMode ? `Move annotation label ${locator}` : undefined"
+      :aria-hidden="!(editable && annotationEditMode)"
+      @focus="selectAnnotation(locator!, 'label')"
     >
       {{ props.label }}
+      <button
+        v-if="selectedForEditing"
+        class="annotation-width-handle"
+        type="button"
+        aria-label="Resize annotation label"
+        title="Drag to resize label"
+        @pointerdown.stop="beginLabelDrag($event, true)"
+        @pointermove="moveLabelDrag"
+        @pointerup="endLabelDrag"
+        @pointercancel="cancelLabelDrag"
+        @focus.stop="selectAnnotation(locator!, 'width')"
+      />
     </div>
     <slot />
     <!-- Keep the live region mounted so screen readers announce the label when
@@ -1943,6 +2582,46 @@ watch(props, () => {
 .annotation-label.is-active {
   opacity: 1;
   transition-delay: var(--label-delay);
+}
+
+/* Enabled only in Vite development by Alt+Shift+A. */
+.annotation-label.is-editable { pointer-events: auto; cursor: grab; }
+.annotation-label.is-editable:active { cursor: grabbing; }
+.annotation-label.is-selected-for-editing { outline: 1px dashed currentColor; outline-offset: 6px; }
+.annotation-width-handle {
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  width: 12px;
+  height: 28px;
+  transform: translateY(-50%);
+  padding: 0;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  background: Canvas;
+  cursor: ew-resize;
+}
+.annotation-connector-editor { pointer-events: auto; }
+.annotation-connector-hit {
+  stroke: transparent;
+  stroke-width: 24px;
+  cursor: move;
+}
+.annotation-connector-guides circle {
+  fill: color-mix(in srgb, currentColor 22%, transparent);
+  stroke: currentColor;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.annotation-connector-handle {
+  fill: Canvas;
+  stroke: currentColor;
+  stroke-width: 2px;
+  cursor: crosshair;
+}
+@media print {
+  .annotation-width-handle { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

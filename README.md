@@ -31,6 +31,29 @@ npm install slidev-theme-kotlin
 
 ## Usage
 
+### Visual annotation editor (development)
+
+Enable the optional, development-only source writer in the consuming deck's
+`vite.config.ts`:
+
+```ts
+import { defineConfig } from 'vite'
+import { drawnAnnotationEditor } from 'slidev-theme-kotlin/annotation-editor'
+
+export default defineConfig({
+  plugins: [drawnAnnotationEditor()],
+})
+```
+
+Open Slidev's annotation editor (or press **Alt+Shift+A**) and drag a visible
+label, its width handle, or a connector control. The editor persists normalized
+`:geometry` on exactly that `DrawnAnnotation` tag. **Cmd/Ctrl+Z** undoes a
+saved edit; reset controls restore label, connector, or all geometry. Source
+revisions are checked, so a conflict preserves the local draft until **Reload
+saved geometry** is chosen. The locator, toolbar, and write endpoint exist only
+while Vite serves the deck; builds and exports render saved geometry without
+editor code.
+
 ### Basic Setup
 
 Add the theme to your slides' frontmatter:

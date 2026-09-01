@@ -9,3 +9,5 @@ dist
 .idea/
 components.d.ts
 */*.iml
+# Throwaway deck copy written by scripts/test-annotation-editor.mjs
+slides.annotation-editor-test.md
