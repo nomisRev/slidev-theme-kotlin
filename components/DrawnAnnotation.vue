@@ -8,6 +8,7 @@
  */
 interface PlacedLabelRecord {
   order: number
+  click: number
   root: HTMLElement
   box: { left: number, top: number, right: number, bottom: number }
   active: boolean
@@ -330,6 +331,15 @@ function searchRoot() {
   return root.closest<HTMLElement>('.slidev-layout') ?? root.parentElement ?? root
 }
 const searchScope = () => slots.default ? 'the slot' : 'the content below this annotation on the slide'
+// The self-closing search root is the whole layout, so occurrence counting and
+// selector matches are narrowed here to what actually follows the tag —
+// content above it (a slide title, say) is outside the promised scope.
+function followsAnnotation(node: Node) {
+  const anchor = container.value
+  if (slots.default || !anchor)
+    return true
+  return !!(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) && !anchor.contains(node)
+}
 
 // The mark and the label can share one click or be spread over two, which is
 // what makes "mark it, then name it" possible from Markdown.
@@ -694,9 +704,12 @@ function textRange(root: HTMLElement, needle: string, occurrence: number | strin
       // a match is never made against text that is on its way off the slide.
       if (!parent || parent.closest('svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'))
         return NodeFilter.FILTER_REJECT
+      // Only leaves are position-filtered: an element that merely precedes or
+      // contains the annotation must still be descended into (FILTER_SKIP),
+      // because content following the tag can live inside it.
       if (node.nodeType === Node.ELEMENT_NODE)
-        return (node as HTMLElement).tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-      return NodeFilter.FILTER_ACCEPT
+        return (node as HTMLElement).tagName === 'BR' && followsAnnotation(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      return followsAnnotation(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
     },
   })
 
@@ -990,7 +1003,9 @@ function updateGeometry() {
   )
 
   const match = props.text ? textRange(root, props.text, props.occurrence) : undefined
-  const source = props.text ? undefined : root.querySelector<HTMLElement>(props.selector)
+  const source = props.text
+    ? undefined
+    : Array.from(root.querySelectorAll<HTMLElement>(props.selector)).find(followsAnnotation) ?? null
   const rects = match?.range
     ? Array.from(match.range.getClientRects()).filter(rect => rect.width > 0.5 && rect.height > 0.5)
     : source
@@ -1539,9 +1554,10 @@ function overlapArea(a: Box, b: Box) {
  * coordinates: the slide's laid-out content (text lines, images, code blocks
  * — including v-click content that is laid out but still hidden, so a label
  * never sits where the slide is about to grow), elements matched by
- * `avoid-selector`, and the labels that annotations earlier in document order
- * have placed on this slide. Only what the browser has laid out is measured —
- * deterministic by construction, never guessed.
+ * `avoid-selector`, and the labels that annotations on an earlier click (or
+ * the same click and earlier in mount order) have placed on this slide. Only
+ * what the browser has laid out is measured — deterministic by construction,
+ * never guessed.
  */
 function collectLabelObstacles(toLocal: (rect: DOMRect) => Box): Box[] {
   const obstacles: Box[] = []
@@ -1561,8 +1577,15 @@ function collectLabelObstacles(toLocal: (rect: DOMRect) => Box): Box[] {
   }
   const slideBox = slide.getBoundingClientRect()
   const overlayBox = svg.getBoundingClientRect()
+  const ourClick = resolvedLabelClick.value
   for (const record of placedLabelRegistry.values()) {
-    if (record.root !== slide || record.order >= placementOrder || !record.active)
+    if (record.root !== slide || !record.active)
+      continue
+    // A later label avoids an earlier one, never the other way round, so two
+    // labels can never chase each other. Earlier means an earlier click first
+    // — a click-1 label is already on screen when a click-3 label is placed,
+    // whatever their markup order — with mount order breaking the tie.
+    if (!(record.click < ourClick || (record.click === ourClick && record.order < placementOrder)))
       continue
     const topLeft = slideFractionPointToLocal({ x: record.box.left, y: record.box.top }, slideBox, overlayBox, geometry)
     const bottomRight = slideFractionPointToLocal({ x: record.box.right, y: record.box.bottom }, slideBox, overlayBox, geometry)
@@ -1610,6 +1633,7 @@ function publishPlacedLabel(box: Box) {
   const bottomRight = localPointToSlideFraction({ x: box.right, y: box.bottom }, slideBox, overlayBox, geometry)
   placedLabelRegistry.set(placementToken, {
     order: placementOrder,
+    click: resolvedLabelClick.value,
     root: slide,
     box: { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y },
     active: withinRange.value,
@@ -1685,6 +1709,29 @@ onMounted(async () => {
   unsettle()
   scheduleUpdate()
 
+  if (isCurrentSlide.value)
+    connectObservers()
+
+  document.fonts?.ready.then(() => {
+    labelSizeCache.clear()
+    scheduleUpdate()
+  })
+})
+
+/**
+ * The observers only run while this annotation's slide is current. Every
+ * slide of the deck stays mounted, so without the gate a deck full of
+ * annotations would keep reacting to layout changes on slides nobody is
+ * looking at. Nothing goes stale from being disconnected: becoming current
+ * re-measures everything anyway, in the `isCurrentSlide` watch below.
+ */
+let observersConnected = false
+
+function connectObservers() {
+  if (observersConnected || !mounted)
+    return
+  observersConnected = true
+
   resizeObserver = new ResizeObserver(scheduleUpdate)
   if (container.value)
     resizeObserver.observe(container.value)
@@ -1707,12 +1754,21 @@ onMounted(async () => {
       mutationObserver.observe(element, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] })
   }
 
-  document.fonts?.ready.then(() => {
-    labelSizeCache.clear()
-    scheduleUpdate()
-  })
   window.addEventListener('resize', scheduleUpdate)
-})
+}
+
+function disconnectObservers() {
+  if (!observersConnected)
+    return
+  observersConnected = false
+  resizeObserver?.disconnect()
+  resizeObserver = undefined
+  mutationObserver?.disconnect()
+  mutationObserver = undefined
+  for (const image of watchedImages.splice(0))
+    image.removeEventListener('load', scheduleUpdate)
+  window.removeEventListener('resize', scheduleUpdate)
+}
 
 onBeforeUnmount(() => {
   mounted = false
@@ -1727,16 +1783,17 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(frame)
   cancelAnimationFrame(paintFrame)
   cancelAnimationFrame(trackFrame)
-  resizeObserver?.disconnect()
-  mutationObserver?.disconnect()
-  for (const image of watchedImages.splice(0))
-    image.removeEventListener('load', scheduleUpdate)
-  window.removeEventListener('resize', scheduleUpdate)
+  disconnectObservers()
 })
 
 // Magic Move and click transitions are driven by the click count, and both move
 // the annotated element for a while after it changes.
 watch($clicks, () => {
+  // A hidden slide's clicks can move while it is preloaded. Nothing of it is
+  // on screen, and becoming current re-measures everything in the
+  // `isCurrentSlide` watch below, so skip the per-click measurement work.
+  if (!isCurrentSlide.value)
+    return
   unsettle()
   track(CLICK_TRACK_DURATION)
 }, { flush: 'sync' })
@@ -1748,8 +1805,21 @@ watch($clicks, () => {
 // document-level pseudo-elements before the first animation scan.
 watch(isCurrentSlide, (current) => {
   if (current) {
+    connectObservers()
     unsettle(VIEW_TRANSITION_START_GRACE)
     track()
+  }
+  else {
+    disconnectObservers()
+    // Cancel in-flight measurement too: a settle pass or tracking loop begun
+    // before navigating away would keep calling updateGeometry on a slide
+    // that is no longer visible. During a transition the outgoing slide moves
+    // (or is snapshotted) as a whole, so its frozen geometry stays correct.
+    settleRun++
+    trackUntil = 0
+    cancelAnimationFrame(trackFrame)
+    trackFrame = 0
+    cancelAnimationFrame(frame)
   }
 }, { flush: 'sync' })
 
@@ -1796,7 +1866,7 @@ interface DragSaveSession extends AnnotationUndoSession {
   persistedBefore?: PersistedAnnotationGeometry | null
 }
 
-let labelDrag: ({ pointerId: number, width: boolean, startLeft: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+let labelDrag: ({ pointerId: number, width: boolean, centerX: number, rightOffsetX: number, offsetX: number, offsetY: number, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function fraction(value: number) {
   return Math.max(0, Math.min(1, value))
@@ -1829,7 +1899,11 @@ function beginLabelDrag(event: PointerEvent, width = false) {
   labelDrag = {
     pointerId: event.pointerId,
     width,
-    startLeft: labelBox.left,
+    // The label is centre-anchored and a width drag leaves x untouched, so
+    // the centre is the fixed point a new width is measured from; the right
+    // edge moves at half the width change.
+    centerX: labelBox.left + labelBox.width / 2,
+    rightOffsetX: event.clientX - labelBox.right,
     // Preserve the grab point rather than snapping the label centre to the
     // pointer on its first move.
     offsetX: event.clientX - (labelBox.left + labelBox.width / 2),
@@ -1851,7 +1925,10 @@ function moveLabelDrag(event: PointerEvent) {
     return
   const box = slide.getBoundingClientRect()
   if (labelDrag.width) {
-    setLabelDraft(locator.value, { ...labelPositionSeed(), width: Math.max(.02, Math.min(1, (event.clientX - labelDrag.startLeft) / box.width)) })
+    // Keep the handle under the pointer: the grabbed right edge follows the
+    // cursor and the width doubles its distance from the fixed centre.
+    const edge = event.clientX - labelDrag.rightOffsetX
+    setLabelDraft(locator.value, { ...labelPositionSeed(), width: Math.max(.02, Math.min(1, 2 * (edge - labelDrag.centerX) / box.width)) })
   }
   else {
     setLabelDraft(locator.value, {

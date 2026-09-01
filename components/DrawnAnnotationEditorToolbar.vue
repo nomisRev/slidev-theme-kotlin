@@ -205,6 +205,9 @@ async function undoSelected() {
     annotationEditorStatus.value = 'Annotation restored'
   }
   catch (error) {
+    // A failed write (e.g. a revision conflict) restored nothing, so the step
+    // is still pending: put it back instead of silently losing it.
+    recordAnnotationUndo(undo.locator, undo.geometry)
     annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to undo annotation geometry'
   }
 }
