@@ -22,7 +22,7 @@ import type { Options as RoughOptions } from 'roughjs/bin/core'
 import type { ClicksContext } from '@slidev/types'
 import type { ComputedRef, InjectionKey, Ref } from 'vue'
 import { injectLocal } from '@vueuse/core'
-import { useSlideContext } from '@slidev/client'
+import { useIsSlideActive, useSlideContext } from '@slidev/client'
 // The explicit `.ts` extension is required: Slidev's client ships bare TypeScript
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
@@ -358,13 +358,12 @@ const showImmediately = ref(false)
 // own clicks context reaches nested components the same way.
 const outerClicksContext = injectLocal(realClicksKey, null)
 const slideContext = useSlideContext()
-const $nav = slideContext.$nav
 const $clicksContext = outerClicksContext ?? slideContext.$clicksContext
 const $clicks = toRef($clicksContext, 'current')
 // Slidev mounts the previous and next slides ahead of time. An annotation on
 // one of those hidden slides must not paint before that slide becomes current,
 // otherwise the view-transition snapshot captures the finished mark.
-const isCurrentSlide = computed(() => slideContext.$page.value === $nav.value.currentSlideNo)
+const isCurrentSlide = useIsSlideActive()
 provide(realClicksKey, $clicksContext)
 // An annotation without `at` or `on` belongs to the slide's initial state.
 // It must not render a bare `v-click` marker: Slidev treats that as the next

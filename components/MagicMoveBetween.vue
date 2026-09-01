@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
 import { ShikiMagicMovePrecompiled } from '@shikijs/magic-move/vue'
-import { useNav, useSlideContext } from '@slidev/client'
+import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { CLICKS_MAX } from '@slidev/client/constants.ts'
 import { configs } from '@slidev/client/env.ts'
 import TitleIcon from '@slidev/client/internals/TitleIcon.vue'
@@ -191,8 +191,9 @@ onMounted(() => {
 
 // Only the visible slide may claim the view-transition name: all slides of
 // the deck stay mounted, and duplicate names would cancel the transition.
+const isSlideActive = useIsSlideActive()
 const viewTransitionName = computed(() =>
-  !isPrintMode.value && currentSlideNo.value === $page.value ? props.navKey : 'none',
+  !isPrintMode.value && isSlideActive.value ? props.navKey : 'none',
 )
 
 // The View Transitions API would cross-fade a snapshot of the old code window
