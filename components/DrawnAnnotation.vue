@@ -29,6 +29,7 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
+import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
@@ -113,7 +114,7 @@ const props = withDefaults(defineProps<{
   targetType?: MarkType
   /** Show the default target circle when `targetType` is omitted. */
   targetMark?: boolean
-  /** Text label. Placed automatically unless geometry supplies a position. */
+  /** Markdown text label. Placed automatically unless geometry supplies a position. */
   label?: string
   /** Preferred side for automatic placement. `auto` picks by vertical position. */
   placement?: 'auto' | 'up' | 'down' | 'left' | 'right'
@@ -306,6 +307,8 @@ const resolvedPlacement = computed(() => {
 // The label and the target each drive several stages, so their presence is
 // decided once, and an empty string counts as absent everywhere.
 const hasLabel = computed(() => !!props.label)
+const labelHtml = computed(() => renderAnnotationLabel(props.label ?? ''))
+const labelText = computed(() => annotationLabelText(props.label ?? ''))
 const hasTarget = computed(() => !!props.target)
 // A source-only mark exposes no visual-editor operation. It remains valid:
 // only labels and connectors have geometry that an editor can manipulate.
@@ -2389,7 +2392,9 @@ onBeforeUnmount(() => {
       :aria-hidden="!(editable && annotationEditMode)"
       @focus="selectAnnotation(locator!, 'label')"
     >
-      {{ props.label }}
+      <!-- MarkdownIt has HTML disabled in `labelHtml`, so this remains safe
+           while allowing authored inline code and block quotes. -->
+      <div class="annotation-label-content" v-html="labelHtml" />
       <button
         v-if="selectedForEditing"
         class="annotation-width-handle"
@@ -2411,7 +2416,7 @@ onBeforeUnmount(() => {
       role="status"
       aria-live="polite"
       aria-atomic="true"
-    >{{ labelActive && geometry.ready ? props.label : '' }}</span>
+    >{{ labelActive && geometry.ready ? labelText : '' }}</span>
   </div>
 </template>
 
@@ -2511,6 +2516,19 @@ onBeforeUnmount(() => {
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--label-fade, 250ms) ease-out;
+}
+
+/* MarkdownIt wraps ordinary text in a paragraph. Reset the layout defaults
+   inherited from `.slidev-layout`, otherwise its margins distort label
+   measurement and placement. `v-html` children do not receive Vue's scoped
+   attribute, so the descendant selectors intentionally remain deep. */
+.annotation-label-content > :first-child { margin-top: 0; }
+.annotation-label-content > :last-child { margin-bottom: 0; }
+.annotation-label-content :deep(p) { margin: 0; }
+.annotation-label-content :deep(code),
+.annotation-label-content :deep(pre),
+.annotation-label-content :deep(blockquote) {
+  font-family: var(--drawn-annotation-code-font, var(--slidev-code-font-family, 'JetBrains Mono Local', 'JetBrains Mono', ui-monospace, monospace));
 }
 
 /* Measured before it is placed, so keep it laid out but invisible until then. */

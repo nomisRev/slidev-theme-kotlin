@@ -43,7 +43,7 @@ annotation stays hidden.
 
 | prop | default | meaning |
 | --- | --- | --- |
-| `label` | – | text to write next to the mark |
+| `label` | – | Markdown text to write next to the mark; inline code and quotes use the mono stack |
 | `target` | – | selector of another element to connect the mark to |
 | `target-x`, `target-y` | `50`, `50` | point inside the target, as a percentage of its box |
 | `target-radius` | `3` | size of the mark at that point, as a percentage of the target's width |
@@ -56,6 +56,24 @@ annotation stays hidden.
 Percentages keep annotations on screenshots independent of the rendered size.
 Giving both a `target` and a `label` connects the mark to the target and writes
 the label next to it.
+
+`label` is safe Markdown (embedded HTML is escaped). Backticks render semantic
+inline `<code>`, and a label beginning with `>` renders a block quote. Both use
+the theme's local-first JetBrains Mono stack instead of the label's sans face:
+
+```md
+<DrawnAnnotation selector="[data-class]" label="The `class MyClass` declaration">
+
+<span data-class>MyClass</span>
+
+</DrawnAnnotation>
+
+<DrawnAnnotation selector="[data-quote]" label="> I am a quote in markdown">
+
+<span data-quote>Quote</span>
+
+</DrawnAnnotation>
+```
 
 ## Where the label goes
 
@@ -271,6 +289,7 @@ narrower scope:
 | --- | --- | --- |
 | `--drawn-annotation-color` | text colour | stroke and label colour |
 | `--drawn-annotation-label-font` | `'JetBrains Sans'`, slide sans font | label font family |
+| `--drawn-annotation-code-font` | Slidev's local-first JetBrains Mono stack | inline-code and quote font family |
 | `--drawn-annotation-label-size` | `28px` | label font size, in slide pixels |
 | `--drawn-annotation-label-weight` | `800` | label font weight |
 
@@ -282,11 +301,12 @@ plus one internal constant, `injectionClicksContext` from
 Move block's clicks — and `vue` and `@vueuse/core` already ship with Slidev.
 To move it into a theme:
 
-1. copy `DrawnAnnotation.vue` and `code-text-match.ts` (the text matching it
-   shares with `InlineCompilerError`) into the theme's `components/`
-   directory, where Slidev auto-registers the component for every deck that
-   uses the theme;
-2. add `roughjs` to the theme's `dependencies` — it draws every stroke;
+1. copy `DrawnAnnotation.vue`, `code-text-match.ts` (the text matching it
+   shares with `InlineCompilerError`), and `annotation-label-markdown.ts` into
+   the theme's `components/` directory, where Slidev auto-registers the
+   component for every deck that uses the theme;
+2. add `roughjs` and `markdown-it` to the theme's `dependencies` — they draw
+   the strokes and safely render Markdown labels respectively;
 3. define `--drawn-annotation-color` (and, if wanted, the label variables
    above) in the theme's styles to pick the theme-wide default look.
 

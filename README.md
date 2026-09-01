@@ -260,7 +260,7 @@ kodee:
 
 ### Using DrawnAnnotation
 
-`<DrawnAnnotation>` is auto-registered for every deck using the theme. It can mark an element with a selector or exact text inside a Shiki or Magic Move code block, then connect that mark to a label or another element.
+`<DrawnAnnotation>` is auto-registered for every deck using the theme. It can mark an element with a selector or exact text inside a Shiki or Magic Move code block, then connect that mark to a label or another element. Labels accept safe Markdown: backticked inline code and `>` quotes use the local-first JetBrains Mono stack.
 
 ````md
 <DrawnAnnotation type="circle" text="fun main" label="program entry point" :on="1">

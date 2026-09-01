@@ -301,8 +301,16 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
 :root {
     --drawn-annotation-color: var(--slidev-theme-primary, #7954f6);
     --drawn-annotation-label-font: var(--slidev-font-sans), sans-serif;
+    /* The same local-first stack used by Slidev's code fences. */
+    --drawn-annotation-code-font: var(--slidev-code-font-family, 'JetBrains Mono Local', 'JetBrains Mono', ui-monospace, monospace);
     --drawn-annotation-label-size: 28px;
     --drawn-annotation-label-weight: 800;
+}
+
+/* Quotes are code-adjacent callouts in this developer theme. They use the
+   configured mono stack whether they are ordinary Markdown or label content. */
+.slidev-layout blockquote {
+    font-family: var(--drawn-annotation-code-font);
 }
 
 /* Let a click-ranged annotation finish its exit fade before the content it
