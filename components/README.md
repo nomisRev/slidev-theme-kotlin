@@ -246,9 +246,11 @@ endpoint handles are keyboard focusable: focus one, then use the arrow keys to
 nudge it (`Shift` for larger steps) — arrow keys always edit the selected
 control and never navigate while the session is active. The width handle
 adjusts maximum width; connector endpoints and its body can likewise be
-dragged. The first connector drag (or the **Make connector manual** button)
-materializes the currently automatic route as two manual endpoints, as a draft
-like any other edit.
+dragged. One toolbar control switches the selected connector between its two
+states: the first connector drag (or the **Make connector manual** button)
+materializes the currently automatic route as two manual endpoints — as a
+draft like any other edit — and **Use automatic connector** removes the manual
+connector geometry so the route follows its target and label again.
 
 **Done editing annotations** is the commit boundary: it writes every draft
 that differs from the saved source, one annotation at a time in the order they
@@ -264,8 +266,8 @@ its drafts without writing. **Cmd/Ctrl+Z** undoes the previous gesture for the
 selected annotation locally; the restored state is committed or discarded with
 the rest of the session. The reset buttons are the one exception to
 draft-only editing: removing saved geometry cannot be expressed as a draft, so
-**Reset label / connector / selected** and **Use automatic connector** write
-immediately; Undo restores what they removed as an ordinary draft. A deck
+**Reset label**, **Reset label & connector**, and **Use automatic connector**
+write immediately; Undo restores what they removed as an ordinary draft. A deck
 without the writer plugin reports its configuration error instead of entering
 an editor that cannot save.
 

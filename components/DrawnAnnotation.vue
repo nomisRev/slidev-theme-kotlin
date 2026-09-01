@@ -1915,6 +1915,11 @@ function recordGestureUndo(id: string, previous: PersistedAnnotationGeometry | u
  * Switch explicitly between the attached route and a frozen two-endpoint
  * route. Unlike dragging, this makes the connector state discoverable from
  * the global toolbar without making the toolbar depend on annotation DOM.
+ * This is the single path back to the automatic state — the toolbar has no
+ * separate connector reset — so undo, status text, draft clearing and the
+ * source write behave identically for every transition to automatic. The
+ * writer removes the whole `geometry.connector` object, endpoints and any
+ * control point alike.
  */
 async function toggleConnectorAttachment() {
   if (!locator.value || !connectorEditable.value)

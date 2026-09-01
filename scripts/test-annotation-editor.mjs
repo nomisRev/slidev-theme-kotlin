@@ -275,6 +275,38 @@ async function run() {
     if (!/:geometry="\{ label: \{ x: 0\.\d{4}, y: 0\.\d{4}, width: 0\.\d{4} \}, connector: \{ start: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, end: \{ x: 0\.\d{4}, y: 0\.\d{4} \} \} \}"/.test(committed.tag))
       fail(`The written binding is not the compact four-decimal literal the writer promises:\n${committed.tag}`)
 
+    // 7b. The toolbar's single connector state control (issue 003): switching
+    // back to automatic removes saved endpoints, which a draft cannot express,
+    // so it is one of the documented immediate-write exceptions. It removes
+    // the whole connector object — not individual fields — while the label
+    // geometry stays untouched, and the control flips to its other state.
+    await enterEditMode()
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await page.getByRole('button', { name: 'Use automatic connector' }).click()
+    const afterAutomatic = await waitFor(async () => { const now = await fixtureSource(); return now.tag === committed.tag ? undefined : now })
+    if (!afterAutomatic)
+      fail(`Switching to the automatic connector did not write the source. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+    if (afterAutomatic.geometry?.connector !== undefined)
+      fail(`Switching to the automatic connector should remove the whole connector object; the tag holds ${JSON.stringify(afterAutomatic.geometry)}.`)
+    if (!same(afterAutomatic.geometry?.label, committed.geometry.label))
+      fail('Switching to the automatic connector changed the label geometry.')
+    await page.getByRole('button', { name: 'Make connector manual' }).waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+      .catch(() => fail('The connector state control did not offer "Make connector manual" after switching to automatic.'))
+
+    // 7c. Undo restores the manual connector the switch removed — as an
+    // ordinary uncommitted draft, so nothing is written until Done commits it.
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const hotBeforeAutomaticUndo = hotUpdates
+    await page.keyboard.press(`${undoModifier}+z`)
+    if (!await waitFor(async () => /undone/i.test(await status.textContent() ?? '')))
+      fail(`Cmd/Ctrl+Z after switching to automatic did not undo locally. Toolbar status: ${JSON.stringify(await status.textContent())}`)
+    await assertNoWrite('Cmd/Ctrl+Z after switching to automatic', afterAutomatic, hotBeforeAutomaticUndo)
+    const restored = await commitSession('Committing the undone automatic switch')
+    if (!same(restored.geometry, committed.geometry))
+      fail(`Undo did not restore the manual connector the automatic switch removed.\nExpected ${JSON.stringify(committed.geometry)}\nReceived ${JSON.stringify(restored.geometry)}`)
+
     // 8. A conflicting commit fails without losing drafts: the session stays
     // open, the file keeps the other author's revision, and "Reload saved
     // geometry" is the documented recovery.
