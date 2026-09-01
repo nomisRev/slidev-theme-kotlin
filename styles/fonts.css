@@ -1,0 +1,59 @@
+/**
+ * Local-first font faces.
+ *
+ * Slidev treats names in `fonts.local` as local-only and imports the other
+ * configured families from its provider. JetBrains Sans therefore resolves
+ * from an installed font before the Inter fallback, while this alias lets
+ * JetBrains Mono resolve locally before its Google-hosted fallback. The
+ * explicit faces prevent CSS from choosing a neighbouring local weight when
+ * the requested weight or style has a webfont fallback.
+ *
+ * These are the exact 400, 700, and 800 weights used by the theme. Slidev
+ * requests the same weights and their italics for the remote fallbacks, so
+ * local and non-local installations render the theme without synthetic bold
+ * or italic faces. Slidev still loads the provider stylesheet for its
+ * fallbacks, but browsers download a remote font file only when the local
+ * face is unavailable and that weight/style is used.
+ */
+
+@font-face {
+  font-family: 'JetBrains Mono Local';
+  font-style: normal;
+  font-weight: 400;
+  src: local('JetBrains Mono'), local('JetBrainsMono-Regular');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Local';
+  font-style: normal;
+  font-weight: 700;
+  src: local('JetBrains Mono Bold'), local('JetBrainsMono-Bold');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Local';
+  font-style: normal;
+  font-weight: 800;
+  src: local('JetBrains Mono ExtraBold'), local('JetBrainsMono-ExtraBold');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Local';
+  font-style: italic;
+  font-weight: 400;
+  src: local('JetBrains Mono Italic'), local('JetBrainsMono-Italic');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Local';
+  font-style: italic;
+  font-weight: 700;
+  src: local('JetBrains Mono Bold Italic'), local('JetBrainsMono-BoldItalic');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Local';
+  font-style: italic;
+  font-weight: 800;
+  src: local('JetBrains Mono ExtraBold Italic'), local('JetBrainsMono-ExtraBoldItalic');
+}
