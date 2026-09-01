@@ -9,7 +9,15 @@ let cachedGeometry = new Map<string, PersistedAnnotationGeometry>()
 let pendingWrite = Promise.resolve()
 
 function flatten(geometry: WriterResponse['geometry']): PersistedAnnotationGeometry {
-  return { x: geometry?.label?.x, y: geometry?.label?.y, width: geometry?.label?.width, x1: geometry?.connector?.start.x, y1: geometry?.connector?.start.y, x2: geometry?.connector?.end.x, y2: geometry?.connector?.end.y, cx: geometry?.connector?.control?.x, cy: geometry?.connector?.control?.y }
+  // Only present values are kept: spreading `{ width: undefined }` over a
+  // draft would erase fields the response simply did not mention.
+  const result: PersistedAnnotationGeometry = {}
+  const assign = (key: keyof PersistedAnnotationGeometry, value: number | undefined) => { if (value !== undefined) result[key] = value }
+  assign('x', geometry?.label?.x); assign('y', geometry?.label?.y); assign('width', geometry?.label?.width)
+  assign('x1', geometry?.connector?.start.x); assign('y1', geometry?.connector?.start.y)
+  assign('x2', geometry?.connector?.end.x); assign('y2', geometry?.connector?.end.y)
+  assign('cx', geometry?.connector?.control?.x); assign('cy', geometry?.connector?.control?.y)
+  return result
 }
 function documentGeometry(geometry: PersistedAnnotationGeometry | null) {
   if (!geometry) return {}
@@ -24,7 +32,10 @@ function documentGeometry(geometry: PersistedAnnotationGeometry | null) {
 /** The Markdown file a locator addresses; the rest of the token stays opaque. */
 function locatorFile(locator: string) {
   try {
-    const file = JSON.parse(atob(locator.replace(/-/g, '+').replace(/_/g, '/'))).file
+    // The server base64url-encodes UTF-8 bytes; `atob` alone yields a Latin-1
+    // string that mangles a non-ASCII deck filename.
+    const bytes = Uint8Array.from(atob(locator.replace(/-/g, '+').replace(/_/g, '/')), character => character.charCodeAt(0))
+    const file = JSON.parse(new TextDecoder().decode(bytes)).file
     if (typeof file === 'string') return file
   } catch {}
   throw new Error('invalid source locator')
@@ -32,7 +43,11 @@ function locatorFile(locator: string) {
 async function response(result: Response, file?: string) {
   const body = await result.json() as WriterResponse
   for (const [name, revision] of Object.entries(body.revisions ?? {})) revisions.set(name, revision)
-  if (file && body.revision) revisions.set(file, body.revision)
+  // Adopt a write's new revision only from a success. A 409 body carries the
+  // *other* author's revision; adopting it would let the next debounced
+  // autosave of the same gesture silently overwrite their edit instead of
+  // preserving the local draft until "Reload saved geometry" is chosen.
+  if (result.ok && file && body.revision) revisions.set(file, body.revision)
   // A conflict means the source changed under this tab, so nothing it
   // remembers about persisted geometry can be trusted any more.
   if (result.status === 409) cachedGeometry = new Map()

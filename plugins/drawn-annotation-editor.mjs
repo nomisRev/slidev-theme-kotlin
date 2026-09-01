@@ -1,69 +1,78 @@
+/**
+ * Development-only Vite plugin that lets the DrawnAnnotation visual editor
+ * persist `:geometry` bindings back into the authored Markdown.
+ *
+ * Plain JavaScript on purpose: the package export `./annotation-editor` is
+ * loaded by Node itself when a consuming deck's `vite.config.ts` imports it —
+ * Vite's config bundler externalizes resolved node_modules imports, and Node
+ * refuses raw TypeScript under node_modules. The public types live in
+ * `drawn-annotation-editor.d.ts` next to this file.
+ */
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
-
-export interface DrawnAnnotationLabelGeometry { x: number, y: number, width?: number }
-export interface DrawnAnnotationGeometryPatch {
-  label?: DrawnAnnotationLabelGeometry | null
-  connector?: { start: { x: number, y: number }, control?: { x: number, y: number }, end: { x: number, y: number } } | null
-}
-export interface DrawnAnnotationEditorOptions {}
+import { isAbsolute, relative, resolve } from 'node:path'
 
 const MAX_BODY_BYTES = 64 * 1024
 const component = '<DrawnAnnotation'
-const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16)
+const hash = value => createHash('sha256').update(value).digest('hex').slice(0, 16)
 /**
  * Slidev never feeds a Markdown file through Vite as one module. Every slide is
  * its own virtual module, `<file>__slidev_<n>.md`, whose code is that slide's
  * content. The writer must always address the file the author edits.
  */
 const slidevSlideModule = /__slidev_\d+\.md$/
-const fraction = (value: unknown, min = 0) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= 1
+const fraction = (value, min = 0) => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= 1
 
 /** Whether candidate is root itself or a descendant, without prefix ambiguity. */
-function isWithinRoot(root: string, candidate: string) {
+function isWithinRoot(root, candidate) {
   const path = relative(root, candidate)
   return path === '' || (!path.startsWith('..') && !isAbsolute(path))
 }
 
 /** Validate the only document shape the development writer accepts. */
-export function validateGeometryPatch(value: unknown): DrawnAnnotationGeometryPatch {
+export function validateGeometryPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('geometry patch must be an object')
-  const input = value as Record<string, unknown>
+  const input = value
   if (Object.keys(input).some(key => key !== 'label' && key !== 'connector')) throw new Error('geometry patch has an unknown property')
-  const point = (value: unknown, name: string, allowed = ['x', 'y']) => {
+  const point = (value, name, allowed = ['x', 'y']) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} must be an object`)
-    const item = value as Record<string, unknown>
+    const item = value
     if (Object.keys(item).some(key => !allowed.includes(key)) || !fraction(item.x) || !fraction(item.y)) throw new Error(`${name} must contain x and y fractions from 0 to 1`)
     return { x: item.x, y: item.y }
   }
-  const result: DrawnAnnotationGeometryPatch = {}
+  const result = {}
   if (input.label !== undefined) {
     if (input.label === null) result.label = null
     else {
-      const label = point(input.label, 'label', ['x', 'y', 'width']) as DrawnAnnotationLabelGeometry
-      const source = input.label as Record<string, unknown>
+      const label = point(input.label, 'label', ['x', 'y', 'width'])
+      const source = input.label
       if (Object.keys(source).some(key => key !== 'x' && key !== 'y' && key !== 'width') || (source.width !== undefined && !fraction(source.width, .02))) throw new Error('label width must be a fraction from 0.02 to 1')
-      if (source.width !== undefined) label.width = source.width as number
+      if (source.width !== undefined) label.width = source.width
       result.label = label
     }
   }
   if (input.connector !== undefined) {
     if (input.connector === null) result.connector = null
     else {
-      const connector = input.connector as Record<string, unknown>
-      if (Object.keys(connector).some(key => key !== 'start' && key !== 'control' && key !== 'end')) throw new Error('connector has an unknown property')
+      const connector = input.connector
+      if (Object.keys(connector).some(key => key !== 'type' && key !== 'start' && key !== 'control' && key !== 'end')) throw new Error('connector has an unknown property')
+      // The write client mirrors serializeGeometry's own output, which tags a
+      // curved connector with `type: 'quadratic'`. Accept exactly that tag so
+      // the editor can round-trip the geometry it reads back from a source
+      // binding; the persisted shape stays keyed on the control point alone.
+      if (connector.type !== undefined && connector.type !== 'quadratic') throw new Error('connector type must be \'quadratic\'')
       const control = connector.control === undefined ? undefined : point(connector.control, 'connector.control')
+      if (connector.type === 'quadratic' && !control) throw new Error('a quadratic connector requires a control point')
       result.connector = { start: point(connector.start, 'connector.start'), ...(control ? { control } : {}), end: point(connector.end, 'connector.end') }
     }
   }
   return result
 }
 
-function format(value: number) { return value.toFixed(4) }
-export function serializeGeometry(geometry: DrawnAnnotationGeometryPatch) {
-  const parts: string[] = []
+function format(value) { return value.toFixed(4) }
+export function serializeGeometry(geometry) {
+  const parts = []
   if (geometry.label) parts.push(`label: { x: ${format(geometry.label.x)}, y: ${format(geometry.label.y)}${geometry.label.width === undefined ? '' : `, width: ${format(geometry.label.width)}`} }`)
   if (geometry.connector) {
     const { start, control, end } = geometry.connector
@@ -74,17 +83,16 @@ export function serializeGeometry(geometry: DrawnAnnotationGeometryPatch) {
   return `{ ${parts.join(', ')} }`
 }
 
-interface Tag { start: number, end: number, text: string }
 /**
  * Regions where a tag is only shown, never rendered: fenced code blocks
  * (``` or ~~~, closed by a fence of the same character at least as long) and
  * HTML comments. Injecting there pastes a locator into a code sample, and
  * counting there shifts the ordinals of the real tags after it.
  */
-function excludedRanges(source: string) {
-  const ranges: Array<[number, number]> = []
+function excludedRanges(source) {
+  const ranges = []
   const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/
-  let open: { marker: string, start: number } | undefined
+  let open
   for (let lineStart = 0; lineStart < source.length;) {
     const lineEnd = source.indexOf('\n', lineStart)
     const next = lineEnd < 0 ? source.length : lineEnd + 1
@@ -98,7 +106,7 @@ function excludedRanges(source: string) {
     lineStart = next
   }
   if (open) ranges.push([open.start, source.length])
-  const inside = (offset: number) => ranges.some(([start, end]) => offset >= start && offset < end)
+  const inside = offset => ranges.some(([start, end]) => offset >= start && offset < end)
   for (let start = source.indexOf('<!--'); start >= 0; start = source.indexOf('<!--', start + 4)) {
     if (inside(start)) continue
     const close = source.indexOf('-->', start + 4)
@@ -113,8 +121,8 @@ function excludedRanges(source: string) {
  * must end the tag name, so `<DrawnAnnotationEditorToolbar>` never matches,
  * and tags inside fenced code or comments are left to the reader.
  */
-export function findDrawnAnnotationTags(source: string): Tag[] {
-  const tags: Tag[] = []
+export function findDrawnAnnotationTags(source) {
+  const tags = []
   const excluded = excludedRanges(source)
   for (let start = source.indexOf(component); start >= 0; start = source.indexOf(component, start + component.length)) {
     if (!/[\s/>]/.test(source[start + component.length] ?? '')) continue
@@ -123,7 +131,7 @@ export function findDrawnAnnotationTags(source: string): Tag[] {
     for (; end < source.length; end++) {
       const char = source[end]
       if (quote) { if (char === quote && source[end - 1] !== '\\') quote = ''; continue }
-      if (char === '"' || char === "'") { quote = char; continue }
+      if (char === '"' || char === '\'') { quote = char; continue }
       if (char === '{') braces++; else if (char === '}') braces--; else if (char === '>' && braces === 0) { end++; break }
     }
     if (end <= source.length) tags.push({ start, end, text: source.slice(start, end) })
@@ -142,9 +150,8 @@ export function findDrawnAnnotationTags(source: string): Tag[] {
  * client fetches that out of band), and the fingerprint ignores the
  * `:geometry` binding, the only part of the tag the writer rewrites.
  */
-interface Locator { file: string, fingerprint: string, ordinal: number, line: number }
-function encodeLocator(value: Locator) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
-function decodeLocator(value: unknown): Locator {
+function encodeLocator(value) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
+function decodeLocator(value) {
   if (typeof value !== 'string') throw new Error('a source locator is required')
   try {
     const data = JSON.parse(Buffer.from(value, 'base64url').toString())
@@ -154,15 +161,15 @@ function decodeLocator(value: unknown): Locator {
   } catch { throw new Error('invalid source locator') }
 }
 /** The tag's identity: its text without the writer-owned `:geometry` binding. */
-export function fingerprintDrawnAnnotationTag(tag: string) {
-  let binding: { start: number, end: number } | undefined
+export function fingerprintDrawnAnnotationTag(tag) {
+  let binding
   // A malformed binding cannot be patched later anyway; fingerprint it as is.
   try { binding = geometryBinding(tag) } catch {}
   return hash(binding ? `${tag.slice(0, binding.start)}${tag.slice(binding.end)}` : tag)
 }
-function lineAt(source: string, offset: number) { let line = 1; for (let index = source.indexOf('\n'); index >= 0 && index < offset; index = source.indexOf('\n', index + 1)) line++; return line }
+function lineAt(source, offset) { let line = 1; for (let index = source.indexOf('\n'); index >= 0 && index < offset; index = source.indexOf('\n', index + 1)) line++; return line }
 /** Where `tag`, found in `source` (a chunk of `fileSource`), sits in the file. */
-function locateInFile(source: string, tag: Tag, fileSource: string, fileTags: Tag[]) {
+function locateInFile(source, tag, fileSource, fileTags) {
   const chunk = fileSource.indexOf(source)
   const fingerprint = fingerprintDrawnAnnotationTag(tag.text)
   const identical = fileTags.filter(candidate => fingerprintDrawnAnnotationTag(candidate.text) === fingerprint)
@@ -179,7 +186,7 @@ function locateInFile(source: string, tag: Tag, fileSource: string, fileTags: Ta
  * would make Vue evaluate the base64 token as a JavaScript expression, so the
  * component would receive `undefined` instead of the locator.
  */
-export function injectDrawnAnnotationLocators(source: string, file: string, fileSource = source) {
+export function injectDrawnAnnotationLocators(source, file, fileSource = source) {
   const fileTags = findDrawnAnnotationTags(fileSource)
   let result = source
   for (const tag of findDrawnAnnotationTags(source).reverse()) {
@@ -198,7 +205,7 @@ export function injectDrawnAnnotationLocators(source: string, file: string, file
  * component tags; insert before the slash rather than splitting `/>` into
  * malformed markup that swallows the rest of the slide.
  */
-function attributeInsertionPoint(tag: string) {
+function attributeInsertionPoint(tag) {
   return /\/\s*>$/.test(tag) ? tag.lastIndexOf('/') : tag.length - 1
 }
 
@@ -208,7 +215,7 @@ function attributeInsertionPoint(tag: string) {
  * `{` belongs to some later attribute, and replacing up to its `}` would
  * delete that attribute.
  */
-function geometryBinding(tag: string) {
+function geometryBinding(tag) {
   const match = /\s:geometry\s*=\s*(["']?)\s*\{/.exec(tag)
   const start = tag.search(/\s:geometry\s*=/)
   if (start < 0) return undefined
@@ -223,7 +230,7 @@ function geometryBinding(tag: string) {
       if (character === quote && tag[index - 1] !== '\\') quote = ''
       continue
     }
-    if (character === '"' || character === "'" || character === '`') { quote = character; continue }
+    if (character === '"' || character === '\'' || character === '`') { quote = character; continue }
     if (character === '{') depth++
     else if (character === '}' && --depth === 0) {
       // Consume the closing quote with the binding so a replacement cannot
@@ -238,7 +245,7 @@ function geometryBinding(tag: string) {
 }
 
 /** Patch exactly one opening tag, preserving every unrelated character. */
-export function patchDrawnAnnotationTag(tag: string, patch: DrawnAnnotationGeometryPatch) {
+export function patchDrawnAnnotationTag(tag, patch) {
   // The writer owns only its binding. Existing source geometry is intentionally
   // replaced by the validated editor snapshot, never evaluated as JavaScript.
   const existing = geometryBinding(tag)
@@ -251,32 +258,32 @@ export function patchDrawnAnnotationTag(tag: string, patch: DrawnAnnotationGeome
   return `${tag.slice(0, close)} :geometry="${serializeGeometry(patch)}"${tag.slice(close)}`
 }
 
-async function requestBody(request: any): Promise<unknown> {
-  const chunks: Buffer[] = []; let length = 0
+async function requestBody(request) {
+  const chunks = []; let length = 0
   for await (const chunk of request) { length += chunk.length; if (length > MAX_BODY_BYTES) throw new Error('request body is too large'); chunks.push(chunk) }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { throw new Error('request body must be JSON') }
 }
-function json(response: any, status: number, body: unknown) { response.statusCode = status; response.setHeader('Content-Type', 'application/json; charset=utf-8'); response.end(JSON.stringify(body)) }
+function json(response, status, body) { response.statusCode = status; response.setHeader('Content-Type', 'application/json; charset=utf-8'); response.end(JSON.stringify(body)) }
 
 /** The current revision of every transformed Markdown file, for the client's `expectedRevision`. */
-async function currentRevisions(root: string, files: Iterable<string>) {
-  const revisions: Record<string, string> = {}
+async function currentRevisions(root, files) {
+  const revisions = {}
   for (const file of files) {
     try { revisions[file] = hash(await readFile(resolve(root, file), 'utf8')) } catch {}
   }
   return revisions
 }
 
-export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {}) {
+export function drawnAnnotationEditor(_options = {}) {
   let root = ''; let writes = Promise.resolve()
   // Files that received locators. Their revisions live outside the locator so
   // a write never invalidates the locators of the annotations it rewrites.
-  const files = new Set<string>()
-  const serialized = <T>(operation: () => Promise<T>) => { const result = writes.then(operation, operation); writes = result.then(() => undefined, () => undefined); return result }
+  const files = new Set()
+  const serialized = (operation) => { const result = writes.then(operation, operation); writes = result.then(() => undefined, () => undefined); return result }
   return {
-    name: 'slidev-theme-kotlin:drawn-annotation-editor', apply: 'serve' as const,
-    configResolved(config: { root: string }) { root = resolve(config.root) },
-    transform(code: string, id: string) {
+    name: 'slidev-theme-kotlin:drawn-annotation-editor', apply: 'serve',
+    configResolved(config) { root = resolve(config.root) },
+    transform(code, id) {
       // Vite can append query parameters to module IDs. They describe the
       // module request, not a pathname and must never become part of a writer
       // locator.
@@ -288,19 +295,19 @@ export function drawnAnnotationEditor(_options: DrawnAnnotationEditorOptions = {
       if (!isWithinRoot(root, absolute) || absolute === root) return null
       // Every tag position comes from the file on disk, the only source the
       // writer will ever read back.
-      let fileSource: string
+      let fileSource
       try { fileSource = readFileSync(absolute, 'utf8') } catch { return null }
       const file = relative(root, absolute)
       files.add(file)
       return { code: injectDrawnAnnotationLocators(code, file, fileSource), map: null }
     },
-    configureServer(server: { middlewares: { use: (handler: Function) => void } }) {
-      server.middlewares.use(async (request: any, response: any, next: Function) => {
+    configureServer(server) {
+      server.middlewares.use(async (request, response, next) => {
         if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/__drawn-annotation-source') return next()
         if (request.method === 'GET') return json(response, 200, { ok: true, revisions: await currentRevisions(root, files) })
         if (request.method !== 'POST') return json(response, 405, { error: 'use POST' })
         try {
-          const payload = await requestBody(request) as { locator?: unknown, expectedRevision?: unknown, geometry?: unknown }
+          const payload = await requestBody(request)
           const result = await serialized(async () => {
             if (Object.keys(payload).some(key => key !== 'locator' && key !== 'expectedRevision' && key !== 'geometry'))
               throw new Error('source writer payload has an unknown property')

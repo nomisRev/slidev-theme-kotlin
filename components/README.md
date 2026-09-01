@@ -59,27 +59,30 @@ the label next to it.
 
 ## Where the label goes
 
-A label is placed out of the slide's normal flow. Its automatic fallback is
-intentionally small and deterministic: `auto` chooses below a mark in the
-upper half of the slide and above one in the lower half; an explicit
-`placement` chooses that side. The result is constrained to the slide margin
-and wraps only when its natural width cannot fit. It does **not** scan the
-slide, future click states, or other annotations for obstacles. This prevents
-unrelated content and click changes from moving an already composed label.
+A label is placed out of the slide's normal flow. Automatic placement is
+deterministic: `auto` prefers below a mark in the upper half of the slide and
+above one in the lower half, then falls back to the other sides; an explicit
+`placement` is a contract and never drifts to another side. Candidates stay
+clear of the slide's laid-out content (text, images, code blocks — including
+v-click content that is laid out but still hidden, so a label never sits
+where the slide is about to grow), of the annotation's own mark, of labels
+placed by earlier annotations on the slide, and of anything matched by
+`avoid-selector`, each kept at `clearance` distance; when the natural width
+cannot be placed clear, the label wraps into the free space. Nothing is
+guessed: only what the browser has laid out is measured.
 
 Use a `:geometry` binding for a fixed authored position, or let the
- development visual editor write the same normalized source geometry. Geometry
-wins over automatic placement. The legacy `clearance` and `avoid-selector`
-props are accepted for compatibility but no longer affect placement.
+development visual editor write the same normalized source geometry. Geometry
+wins over automatic placement and is never moved by obstacles.
 
 | prop | default | meaning |
 | --- | --- | --- |
-| `placement` | `auto` | fallback side: `up`, `down`, `left`, `right`, or automatic vertical choice |
+| `placement` | `auto` | preferred side: `up`, `down`, `left`, `right`, or automatic vertical choice with fallbacks |
 | `geometry.label` | – | label centre (`x`, `y`) and optional maximum `width`, each normalized to concrete slide width/height |
-| `geometry.connector` | – | manual `start`/`end` points, normalized to the concrete slide |
+| `geometry.connector` | – | manual `start`/`end` points, optionally with a quadratic `control`, normalized to the concrete slide |
 | `gap` | `28` | distance between the mark and automatically placed label, in slide pixels |
-| `clearance` | `16` | deprecated; has no effect |
-| `avoid-selector` | – | deprecated; has no effect |
+| `clearance` | `16` | space an automatic label keeps from its obstacles, in slide pixels |
+| `avoid-selector` | – | extra elements an automatic label must not cover |
 
 ## When it is drawn
 
@@ -291,8 +294,9 @@ To move it into a theme:
 
 Nothing in the component reads deck-specific layout state: every colour,
 font and duration flows in through props or CSS variables. Automatic placement
-uses only the marked box, requested side, and concrete slide bounds; final
-composition belongs in explicit props or saved editor geometry.
+measures only what the browser has laid out on the slide — content boxes, the
+marked box, earlier labels, the requested side, and concrete slide bounds;
+final composition belongs in explicit props or saved editor geometry.
 
 ## When nothing appears
 

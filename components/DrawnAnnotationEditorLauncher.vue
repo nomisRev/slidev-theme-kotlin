@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import editIcon from '../assets/edit-3-svgrepo-com.svg'
 import { annotationEditorRegistryVersion, hasRegisteredAnnotationEditors } from './drawn-annotation/editor-store'
 
 const hasAnnotations = computed(() => {
@@ -21,7 +22,7 @@ function openAnnotationEditor() {
     aria-label="Edit annotations"
     @click="openAnnotationEditor"
   >
-    <img src="/edit-3-svgrepo-com.svg" alt="" aria-hidden="true">
+    <img :src="editIcon" alt="" aria-hidden="true">
   </button>
 </template>
 

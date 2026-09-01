@@ -46,7 +46,9 @@ export interface AnnotationUndoSession { undoRecorded?: boolean }
 export function recordAnnotationUndoOnce(session: AnnotationUndoSession | undefined, locator: string, geometry: PersistedAnnotationGeometry | null) { if (session?.undoRecorded) return; recordAnnotationUndo(locator, geometry); if (session) session.undoRecorded = true }
 export function takeAnnotationUndo(locator: string) { for (let index = history.length - 1; index >= 0; index--) if (history[index].locator === locator) return history.splice(index, 1)[0] }
 let shortcutInstalled = false
-export function installAnnotationEditorShortcut() { if (shortcutInstalled || typeof window === 'undefined') return; shortcutInstalled = true; window.addEventListener('keydown', (event) => { if (event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); window.dispatchEvent(new Event('drawn-annotation-editor-toggle')) } }) }
+// Matched by physical key (`event.code`): on macOS, Option+Shift+A composes
+// 'Å', so an `event.key` comparison would never fire there.
+export function installAnnotationEditorShortcut() { if (shortcutInstalled || typeof window === 'undefined') return; shortcutInstalled = true; window.addEventListener('keydown', (event) => { if (event.altKey && event.shiftKey && event.code === 'KeyA') { event.preventDefault(); window.dispatchEvent(new Event('drawn-annotation-editor-toggle')) } }) }
 export function selectAnnotation(locator: string, part: 'label' | 'width' | 'start' | 'end' | 'body' = 'label') { selectedAnnotationId.value = locator; selectedAnnotationPart.value = part; released = undefined }
 export function clearAnnotationSelection(locator?: string) { if (locator !== undefined && selectedAnnotationId.value !== locator) return; selectedAnnotationId.value = undefined; selectedAnnotationPart.value = undefined; released = undefined }
 /**

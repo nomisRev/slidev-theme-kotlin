@@ -1,4 +1,19 @@
 <script lang="ts">
+/**
+ * Labels already placed on the current slide, in concrete-slide fractions,
+ * shared by every annotation instance. Automatic placement treats the labels
+ * of annotations that registered earlier (mount order, which follows document
+ * order) as obstacles; an earlier label never reacts to a later one, so the
+ * avoidance is deterministic and cannot oscillate.
+ */
+interface PlacedLabelRecord {
+  order: number
+  root: HTMLElement
+  box: { left: number, top: number, right: number, bottom: number }
+  active: boolean
+}
+const placedLabelRegistry = new Map<symbol, PlacedLabelRecord>()
+let nextPlacementOrder = 0
 </script>
 
 <script setup lang="ts">
@@ -39,10 +54,15 @@ function loadWriterClient() {
  * to a second element on the slide or to a text label.
  *
  * A label is placed out of the slide's normal flow: its position is searched at
- * runtime with a simple placement near its source — preferring downwards for
- * marks in the upper half of the slide and upwards for marks in the lower
- * half. Source-authored `geometry.label` gives authors the final say;
- * automatic placement deliberately does not scan the slide for collisions.
+ * runtime near its source — preferring downwards for marks in the upper half
+ * of the slide and upwards for marks in the lower half — while staying clear
+ * of the slide's laid-out content, of its own mark, of labels placed by
+ * earlier annotations on the slide, and of anything matched by
+ * `avoid-selector`, kept at `clearance` distance. Laid-out but still-hidden
+ * v-click content counts too, so a label never sits where the slide is about
+ * to grow; nothing is guessed, so placement stays deterministic.
+ * Source-authored `geometry.label` gives authors the final say and is never
+ * moved by obstacles.
  *
  * Annotations nest, and two that share a click draw one after the other: the
  * inner one starts when the one around it has finished, so "point at it, then
@@ -96,9 +116,9 @@ const props = withDefaults(defineProps<{
   placement?: 'auto' | 'up' | 'down' | 'left' | 'right'
   /** Smallest distance between the mark and the label, in slide pixels. */
   gap?: number
-  /** @deprecated Automatic placement is deliberately local; use saved editor geometry. */
+  /** Space an automatically placed label keeps from its obstacles, in slide pixels. */
   clearance?: number
-  /** @deprecated Automatic placement is deliberately local; use saved editor geometry. */
+  /** Extra elements an automatically placed label must not cover. */
   avoidSelector?: string
   /** Draw the leader line between the mark and the label or target. */
   connect?: boolean
@@ -754,6 +774,11 @@ let unregisterEditorActions: (() => void) | undefined
 // Fingerprint of the mark's last measured boxes. While the slide animates, a
 // frame in which the mark has not moved recomputes nothing.
 let lastMarkKey = ''
+// Content boxes an automatic label avoids, in local SVG coordinates. The DOM
+// scan is refreshed on discrete re-measures (click settles, resizes, prop or
+// draft changes) and reused by the per-frame tracking passes, which must not
+// re-walk and re-measure the whole slide.
+let contentObstacleCache: Box[] | undefined
 // The images whose load re-measures geometry, kept so unmount removes exactly
 // the listeners that were added.
 const watchedImages: HTMLImageElement[] = []
@@ -840,9 +865,11 @@ async function settleAfterAnimations(run: number, grace = 0) {
  */
 function unsettle(grace = 0) {
   const run = ++settleRun
-  // A click can restyle the slide, so measured label sizes go stale here —
-  // once per click, which leaves them shared by every frame of the animation.
+  // A click can restyle the slide, so measured label sizes and content
+  // obstacles go stale here — once per click, which leaves them shared by
+  // every frame of the animation.
   labelSizeCache.clear()
+  contentObstacleCache = undefined
   if (!props.wait || !props.track) {
     settled.value = true
     return
@@ -857,6 +884,9 @@ function scheduleUpdate() {
   // decodes — must not schedule work on an annotation that is already gone.
   if (!mounted)
     return
+  // Discrete events land here (per-frame tracking calls updateGeometry
+  // directly): the slide may have reflowed, so re-scan content obstacles.
+  contentObstacleCache = undefined
   cancelAnimationFrame(frame)
   frame = requestAnimationFrame(updateGeometry)
 }
@@ -1114,6 +1144,7 @@ function paintDestinationInto(
     geometry.labelTop = label.box.cy
     geometry.labelWidth = label.width
     geometry.labelPlaced = true
+    publishPlacedLabel(label.box)
     if (!destination) {
       destination = label.box
       endPoint = undefined
@@ -1121,6 +1152,7 @@ function paintDestinationInto(
   }
   else {
     geometry.labelPlaced = false
+    placedLabelRegistry.delete(placementToken)
   }
 
   if (!destination || !props.connect)
@@ -1266,6 +1298,11 @@ const SLIDE_MARGIN = 24
 // resizes too. Cleared on every click and whenever the props or fonts change.
 const labelSizeCache = new Map<number | 'natural', { width: number, height: number }>()
 
+// This instance's slot in the shared placed-label registry (module scope, see
+// the plain `<script>` block above). Mount order approximates document order.
+const placementToken = Symbol('drawn-annotation-label')
+const placementOrder = nextPlacementOrder++
+
 const locator = computed(() => props.__drawnAnnotationLocator)
 if (isAnnotationEditorDevelopment) {
   // A save remounts the slide. The locator survives the writer's own edits,
@@ -1359,8 +1396,9 @@ function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
 /**
  * Finds a bounded default label position. The unbounded measurement is always
  * tried first, so ordinary labels remain a single, readable line instead of
- * inheriting an arbitrary short line length. Collision-free composition is an
- * authored editor override, not a moving runtime promise.
+ * inheriting an arbitrary short line length. When the natural width cannot be
+ * placed clear of the obstacles, narrower candidates let the label wrap into
+ * the free space instead.
  */
 function fitLabel(
   root: HTMLElement,
@@ -1369,17 +1407,14 @@ function fitLabel(
   bounds: Box,
 ): { box: Box, width: number | undefined } {
   // Collected once for every width candidate tried below: the obstacles do not
-  // depend on how the label wraps. Inflated so the label breathes — a label
-  // that ends up flush against the bottom of a code block reads as part of it.
-  // An explicitly positioned label ignores obstacles entirely.
+  // depend on how the label wraps. An explicitly positioned label ignores
+  // obstacles entirely — authored geometry is the final say.
   const explicitX = effectiveLabelX()
   const explicitY = effectiveLabelY()
   const maximumWidth = effectiveLabelWidth(bounds)
-  // Manual geometry is the composition mechanism. The automatic fallback is
-  // intentionally local and deterministic: scanning every text/media box made
-  // a label move when unrelated content or a future click changed.
+  const obstacles = explicitX !== undefined || explicitY !== undefined ? [] : collectLabelObstacles(toLocal)
   const natural = measureLabel(toLocal)
-  const unwrapped = placeLabel(anchor, natural, bounds)
+  const unwrapped = placeLabel(anchor, natural, bounds, obstacles)
   const fitsSlide = natural.width <= bounds.width - SLIDE_MARGIN * 2 && natural.height <= bounds.height - SLIDE_MARGIN * 2
   const respectsExplicitMaximum = maximumWidth === undefined || natural.width <= maximumWidth
 
@@ -1397,7 +1432,7 @@ function fitLabel(
   // Magic Move animations.
   for (let cap = maximum; cap >= minimum; cap -= 48) {
     const size = measureLabel(toLocal, cap)
-    const placed = placeLabel(anchor, size, bounds)
+    const placed = placeLabel(anchor, size, bounds, obstacles)
     if (placed.overlap === 0)
       return { box: placed.box, width: cap }
     if (!best || placed.overlap < best.overlap)
@@ -1407,7 +1442,7 @@ function fitLabel(
   // Include the lower bound when the step above did not land on it.
   if (!best || best.width !== minimum) {
     const size = measureLabel(toLocal, minimum)
-    const placed = placeLabel(anchor, size, bounds)
+    const placed = placeLabel(anchor, size, bounds, obstacles)
     if (placed.overlap === 0)
       return { box: placed.box, width: minimum }
     if (!best || placed.overlap < best.overlap)
@@ -1421,6 +1456,7 @@ function placeLabel(
   anchor: Box,
   size: { width: number, height: number },
   bounds: Box,
+  obstacles: Box[] = [],
 ): { box: Box, overlap: number } {
   const halfW = size.width / 2
   const halfH = size.height / 2
@@ -1428,26 +1464,148 @@ function placeLabel(
   const explicitX = effectiveLabelX()
   const explicitY = effectiveLabelY()
   if (explicitX !== undefined || explicitY !== undefined) {
+    // Authored geometry is the final say; it is never moved by obstacles.
     return { box: centred(
       explicitX !== undefined ? bounds.left + bounds.width * explicitX : anchor.cx,
       explicitY !== undefined ? bounds.top + bounds.height * explicitY : anchor.cy,
     ), overlap: 0 }
   }
 
-  const direction = resolvedPlacement.value === 'auto'
+  type Direction = 'up' | 'down' | 'left' | 'right'
+  const preferred: Direction = resolvedPlacement.value === 'auto'
     ? (anchor.cy < bounds.cy ? 'down' : 'up')
     : resolvedPlacement.value
-  const cx = direction === 'left' ? anchor.left - props.gap - halfW
-    : direction === 'right' ? anchor.right + props.gap + halfW : anchor.cx
-  const cy = direction === 'up' ? anchor.top - props.gap - halfH
-    : direction === 'down' ? anchor.bottom + props.gap + halfH : anchor.cy
-  return {
-    box: centred(
+  // `auto` may fall back to the other sides. An explicit side is a contract:
+  // the label wraps or stays put rather than drifting to another side.
+  const directions: Direction[] = resolvedPlacement.value === 'auto'
+    ? [preferred, preferred === 'down' ? 'up' : 'down', 'right', 'left']
+    : [preferred]
+
+  const candidate = (direction: Direction, shift: number, extra: number) => {
+    const cx = direction === 'left' ? anchor.left - props.gap - extra - halfW
+      : direction === 'right' ? anchor.right + props.gap + extra + halfW : anchor.cx + shift
+    const cy = direction === 'up' ? anchor.top - props.gap - extra - halfH
+      : direction === 'down' ? anchor.bottom + props.gap + extra + halfH : anchor.cy + shift
+    const box = centred(
       clamp(cx, bounds.left + SLIDE_MARGIN + halfW, bounds.right - SLIDE_MARGIN - halfW),
       clamp(cy, bounds.top + SLIDE_MARGIN + halfH, bounds.bottom - SLIDE_MARGIN - halfH),
-    ),
-    overlap: 0,
+    )
+    // The clearance keeps the label breathing: a label flush against the
+    // bottom of a code block reads as part of it. The anchor is an obstacle
+    // too, so a clamped candidate never covers its own mark unnoticed.
+    const inflated = padBox(box, props.clearance)
+    let overlap = overlapArea(inflated, anchor)
+    for (const obstacle of obstacles)
+      overlap += overlapArea(inflated, obstacle)
+    return { box, overlap }
   }
+
+  let best: { box: Box, overlap: number } | undefined
+  for (const direction of directions) {
+    // Nearest first: step further out along the side to clear an occupied
+    // row, and slide along it to step out from under an obstacle — both
+    // without leaving the requested side.
+    const lateral = direction === 'up' || direction === 'down' ? halfW + props.gap : halfH + props.gap
+    for (const extra of [0, 70, 150]) {
+      for (const shift of [0, -lateral, lateral]) {
+        const placed = candidate(direction, shift, extra)
+        if (placed.overlap === 0)
+          return placed
+        if (!best || placed.overlap < best.overlap)
+          best = placed
+      }
+    }
+  }
+  return best!
+}
+
+/** The intersection area of two boxes, 0 when they do not touch. */
+function overlapArea(a: Box, b: Box) {
+  const width = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+  const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+  return width > 0 && height > 0 ? width * height : 0
+}
+
+/**
+ * Everything an automatically placed label must stay clear of, in local SVG
+ * coordinates: the slide's laid-out content (text lines, images, code blocks
+ * — including v-click content that is laid out but still hidden, so a label
+ * never sits where the slide is about to grow), elements matched by
+ * `avoid-selector`, and the labels that annotations earlier in document order
+ * have placed on this slide. Only what the browser has laid out is measured —
+ * deterministic by construction, never guessed.
+ */
+function collectLabelObstacles(toLocal: (rect: DOMRect) => Box): Box[] {
+  const obstacles: Box[] = []
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg)
+    return obstacles
+  obstacles.push(...contentObstacles(slide, toLocal))
+  if (props.avoidSelector) {
+    for (const element of Array.from(slide.querySelectorAll<HTMLElement>(props.avoidSelector))) {
+      if (element.closest('.annotation-ignore'))
+        continue
+      const rect = element.getBoundingClientRect()
+      if (rect.width && rect.height)
+        obstacles.push(toLocal(rect))
+    }
+  }
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  for (const record of placedLabelRegistry.values()) {
+    if (record.root !== slide || record.order >= placementOrder || !record.active)
+      continue
+    const topLeft = slideFractionPointToLocal({ x: record.box.left, y: record.box.top }, slideBox, overlayBox, geometry)
+    const bottomRight = slideFractionPointToLocal({ x: record.box.right, y: record.box.bottom }, slideBox, overlayBox, geometry)
+    obstacles.push(makeBox(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y))
+  }
+  return obstacles
+}
+
+/** The slide's own laid-out content, scanned once per discrete re-measure. */
+function contentObstacles(slide: HTMLElement, toLocal: (rect: DOMRect) => Box): Box[] {
+  if (contentObstacleCache)
+    return contentObstacleCache
+  const boxes: Box[] = []
+  for (const element of Array.from(slide.querySelectorAll<HTMLElement>('*'))) {
+    if (element.closest('.annotation-ignore'))
+      continue
+    // A code block or an SVG drawing counts as one opaque box.
+    const aggregate = element.closest('pre, svg')
+    if (aggregate && aggregate !== element)
+      continue
+    const tag = element.tagName.toLowerCase()
+    const isMedia = tag === 'img' || tag === 'video' || tag === 'canvas' || tag === 'svg' || tag === 'pre'
+    // Only leaf-ish boxes obstruct: an element with text of its own keeps its
+    // line, while pure layout containers leave their free space usable.
+    if (!isMedia && !Array.from(element.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()))
+      continue
+    const rect = element.getBoundingClientRect()
+    if (rect.width < 2 || rect.height < 2)
+      continue
+    boxes.push(toLocal(rect))
+  }
+  contentObstacleCache = boxes
+  return boxes
+}
+
+/** Record this label's placed box for later annotations on the same slide. */
+function publishPlacedLabel(box: Box) {
+  const slide = slideRoot()
+  const svg = overlay.value
+  if (!slide || !svg)
+    return
+  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = svg.getBoundingClientRect()
+  const topLeft = localPointToSlideFraction({ x: box.left, y: box.top }, slideBox, overlayBox, geometry)
+  const bottomRight = localPointToSlideFraction({ x: box.right, y: box.bottom }, slideBox, overlayBox, geometry)
+  placedLabelRegistry.set(placementToken, {
+    order: placementOrder,
+    root: slide,
+    box: { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y },
+    active: withinRange.value,
+  })
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1554,6 +1712,7 @@ onBeforeUnmount(() => {
   unregisterEditorActions = undefined
   if (locator.value)
     releaseAnnotationSelection(locator.value)
+  placedLabelRegistry.delete(placementToken)
   settleRun++
   clearTimeout(exitFadeTimer)
   $clicksContext.unregister(ownClicks)
@@ -1665,7 +1824,7 @@ function moveLabelDrag(event: PointerEvent) {
     return
   const box = slide.getBoundingClientRect()
   if (labelDrag.width) {
-    setLabelDraft(locator.value, { width: Math.max(.02, Math.min(1, (event.clientX - labelDrag.startLeft) / box.width)) })
+    setLabelDraft(locator.value, { ...labelPositionSeed(), width: Math.max(.02, Math.min(1, (event.clientX - labelDrag.startLeft) / box.width)) })
   }
   else {
     setLabelDraft(locator.value, {
@@ -1847,6 +2006,22 @@ function localConnectorFraction(point: Point) {
   return { x: fraction(local.x), y: fraction(local.y) }
 }
 
+/**
+ * A width-only draft cannot be persisted: the writer's document shape stores
+ * `width` inside `label`, which requires a position. When no position is
+ * known yet, the first width edit materializes the label's current on-screen
+ * position, so the edit survives the save instead of being silently dropped
+ * and snapped back while the status still reports "Annotation saved".
+ */
+function labelPositionSeed(): PersistedAnnotationGeometry {
+  const draft = draftLabelGeometry()
+  const saved = persistedLabelGeometry()
+  if ((draft?.x ?? saved.x) !== undefined && (draft?.y ?? saved.y) !== undefined)
+    return {}
+  const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
+  return current ? { x: current.x, y: current.y } : {}
+}
+
 /** Slide-centre/edge guides plus the live source, target and label ports. */
 function connectorSnapCandidates() {
   const candidates = [
@@ -2004,7 +2179,7 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       // occupies now, so the first key press changes the visible label rather
       // than jumping to an unrelated default cap.
       const currentWidth = geometry.labelWidth ?? label.getBoundingClientRect().width * geometry.width / slide.getBoundingClientRect().width
-      setLabelDraft(locator.value, { width: nudgeLabelWidth(currentWidth / geometry.width, dx) })
+      setLabelDraft(locator.value, { ...labelPositionSeed(), width: nudgeLabelWidth(currentWidth / geometry.width, dx) })
     }
     else {
       const current = localConnectorFraction({ x: geometry.labelLeft, y: geometry.labelTop })
@@ -2020,7 +2195,20 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
       return
     // Keep arrow-key body movement identical to dragging the line itself:
     // translation is constrained as one rigid segment at slide edges.
-    setLabelDraft(locator.value, nudgeConnector({ x1: start.x, y1: start.y, x2: end.x, y2: end.y }, part, dx, dy))
+    const base = { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
+    const translated = nudgeConnector(base, part, dx, dy)
+    const next: PersistedAnnotationGeometry = { ...translated }
+    // A body nudge, like a body drag, translates the entire Bézier control
+    // polygon: leaving the control point behind would distort the curve, and
+    // the debounced save below would persist the distortion.
+    if (part === 'body') {
+      const saved = manualConnector()
+      if (saved?.cx !== undefined && saved.cy !== undefined) {
+        next.cx = fraction(saved.cx + (translated.x1 - base.x1))
+        next.cy = fraction(saved.cy + (translated.y1 - base.y1))
+      }
+    }
+    setLabelDraft(locator.value, next)
   }
   else {
     return

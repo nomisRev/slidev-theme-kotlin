@@ -35,6 +35,26 @@ function withIconClass(options: string | undefined, icon: string) {
 }
 
 /**
+ * Escape a value for a double-quoted HTML attribute. Vue's template compiler
+ * decodes entities in attribute values, so quotes inside fence titles or
+ * options (`[Bob's file.kt]`, `{at:"+2"}`) survive instead of terminating the
+ * attribute and breaking the slide's markup.
+ */
+function attributeValue(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
+/**
+ * Duplicate identical fences on one slide would all match the same
+ * `findIndex` result, sharing one nav-key (duplicate view-transition-names
+ * cancel the transition) and morphing every copy like the first. Slidev
+ * transforms a slide's fences in document order within each compile pass, so
+ * a cycling cursor per (slide, fence identity) assigns each duplicate its own
+ * position on every pass, including HMR re-compiles.
+ */
+const duplicateFenceCursor = new Map<string, number>()
+
+/**
  * Cross-slide Magic Move: replace every top-level code fence of a slide that
  * belongs to a `magic-move` chain (see `magic-move-between.ts`) with a
  * `<MagicMoveBetween>` component. The component receives every step of the
@@ -58,13 +78,21 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
   // decides which fences of the neighbouring slides it morphs to and from.
   const own = fencesPerSlide[slide.index - chain.start]
   const codeKey = code.replace(/\r?\n$/, '')
-  let groupIndex = own.findIndex(f => f.code === codeKey && f.info === info)
-  if (groupIndex < 0)
-    groupIndex = own.findIndex(f => f.code === codeKey)
-  if (groupIndex < 0)
+  let matches = own.map((f, index) => index).filter(index => own[index].code === codeKey && own[index].info === info)
+  if (!matches.length)
+    matches = own.map((f, index) => index).filter(index => own[index].code === codeKey)
+  if (!matches.length)
     return
+  let groupIndex = matches[0]
+  if (matches.length > 1) {
+    const cursorKey = `${slide.index}|${info}|${codeKey}`
+    const cursor = duplicateFenceCursor.get(cursorKey) ?? 0
+    duplicateFenceCursor.set(cursorKey, cursor + 1)
+    groupIndex = matches[cursor % matches.length]
+  }
 
   const steps = [] as ParsedFence[]
+  const stepPages = [] as number[]
   let ownStep = -1
   fencesPerSlide.forEach((fences, slideOffset) => {
     const f = fences[groupIndex]
@@ -73,6 +101,10 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
     if (slideOffset === slide.index - chain.start)
       ownStep = steps.length
     steps.push(f)
+    // The 1-based page each step belongs to. A chain slide without a fence at
+    // this position contributes no step, so page adjacency alone cannot tell
+    // the component which step a navigation actually came from.
+    stepPages.push(chain.start + slideOffset + 1)
   })
   if (steps.length < 2 || ownStep < 0)
     return
@@ -102,19 +134,20 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
   const attrs = [
     `steps-lz="${lz.compressToBase64(JSON.stringify(compiled))}"`,
     `:step="${ownStep}"`,
+    `:step-pages="${attributeValue(JSON.stringify(stepPages))}"`,
     // Shared across the chain so the View Transitions API pairs the old and
     // new code windows instead of cross-fading them with the page.
     `nav-key="magic-move-between-${chain.start}-${groupIndex}"`,
-    `:title='${JSON.stringify(ownFence.title ?? '')}'`,
+    `:title="${attributeValue(JSON.stringify(ownFence.title ?? ''))}"`,
   ]
   // `{1|2-3}` highlight ranges step through on clicks within this slide, just
   // like they do for one step of a classic magic-move block.
   if (ownFence.ranges.length)
-    attrs.push(`:step-ranges='${JSON.stringify(ownFence.ranges)}'`)
+    attrs.push(`:step-ranges="${attributeValue(JSON.stringify(ownFence.ranges))}"`)
   // Fence options (`{at:2, duration:500}`) become props, like the options of
   // a classic magic-move block.
   if (ownFence.optionsRaw)
-    attrs.unshift(`v-bind="${ownFence.optionsRaw}"`)
+    attrs.unshift(`v-bind="${attributeValue(ownFence.optionsRaw)}"`)
   if (icon)
     attrs.push(`class="code-window-icon--${icon}"`)
   return `<MagicMoveBetween ${attrs.join(' ')} />`

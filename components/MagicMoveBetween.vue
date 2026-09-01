@@ -21,6 +21,12 @@ const props = withDefaults(defineProps<{
   /** This slide's position in the chain of code snippets. */
   step: number
   /**
+   * 1-based page numbers of the chain slides contributing each step. A chain
+   * slide without a fence at this position contributes no step, so page
+   * adjacency alone would morph from the wrong (non-adjacent) step.
+   */
+  stepPages?: number[]
+  /**
    * Identifier shared by the whole chain. Used as `view-transition-name` so
    * decks with `transition: view-transition` pair the code windows of both
    * slides instead of cross-fading them with the rest of the page.
@@ -39,6 +45,7 @@ const props = withDefaults(defineProps<{
   /** Line numbers are baked into the precompiled steps; declared so the fence option doesn't land on the DOM. */
   lines?: boolean
 }>(), {
+  stepPages: () => [],
   title: '',
   duration: configs.magicMoveDuration,
   stepRanges: () => [],
@@ -86,12 +93,19 @@ watch(currentSlideNo, async (to, from) => {
     stepIndex.value = props.step
     return
   }
-  const fromStep = from === $page.value - 1
-    ? props.step - 1
-    : from === $page.value + 1
-      ? props.step + 1
-      : null
-  if (fromStep === null || fromStep < 0 || fromStep >= steps.value.length)
+  // The page-to-step map is authoritative when the transformer supplied one
+  // that matches this payload; page adjacency remains the fallback for
+  // payloads emitted before `step-pages` existed.
+  const pages = props.stepPages
+  const mapped = pages.length === steps.value.length && pages[props.step] === $page.value
+  const fromStep = mapped
+    ? pages.indexOf(from)
+    : from === $page.value - 1
+      ? props.step - 1
+      : from === $page.value + 1
+        ? props.step + 1
+        : -1
+  if (fromStep < 0 || fromStep >= steps.value.length || fromStep === props.step)
     return
   // First render the neighbour's code without animation, wait for the slide
   // to become visible (the renderer measures real token positions), then move

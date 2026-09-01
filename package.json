@@ -3,7 +3,10 @@
   "version": "0.11.0",
   "type": "module",
   "exports": {
-    "./annotation-editor": "./annotation-editor.ts"
+    "./annotation-editor": {
+      "types": "./annotation-editor.d.ts",
+      "default": "./annotation-editor.mjs"
+    }
   },
   "keywords": [
     "slidev-theme",
@@ -16,7 +19,8 @@
     "assets",
     "components",
     "plugins",
-    "annotation-editor.ts",
+    "annotation-editor.mjs",
+    "annotation-editor.d.ts",
     "global-top.vue",
     "layouts",
     "public",

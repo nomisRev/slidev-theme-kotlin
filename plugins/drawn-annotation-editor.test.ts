@@ -59,6 +59,40 @@ describe('source geometry editor', () => {
     expect(validateGeometryPatch({ connector: { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } } })).toBeTruthy()
   })
 
+  it('accepts the quadratic connector shape the write client round-trips', () => {
+    // documentGeometry mirrors serializeGeometry's own output, which tags a
+    // curved connector with `type: 'quadratic'`; the validator must accept it
+    // or every curved-connector edit fails with 400.
+    expect(validateGeometryPatch({ connector: { type: 'quadratic', start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } }))
+      .toEqual({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } })
+    // An untagged control point stays accepted; unknown tags and a quadratic
+    // tag without its control point stay rejected.
+    expect(validateGeometryPatch({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } })).toBeTruthy()
+    expect(() => validateGeometryPatch({ connector: { type: 'polyline', start: { x: .1, y: .2 }, end: { x: .5, y: .6 } } })).toThrow()
+    expect(() => validateGeometryPatch({ connector: { type: 'quadratic', start: { x: .1, y: .2 }, end: { x: .5, y: .6 } } })).toThrow()
+  })
+
+  it('persists a curved connector through the writer end to end', async () => {
+    const source = '<DrawnAnnotation text="curve" label="bent">\n'
+    const { root, plugin, handler, dispose } = await serve({ 'slides.md': source })
+    const file = join(root, 'slides.md')
+    try {
+      const locator = locatorOf(plugin.transform(source, file)?.code ?? '')
+      expect(locator).toBeTruthy()
+      const saved = await sourceRequest(handler, {
+        locator,
+        expectedRevision: revision(source),
+        geometry: { connector: { type: 'quadratic', start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } },
+      })
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+      const written = await readFile(file, 'utf8')
+      expect(written).toContain(':geometry="{ connector: { type: \'quadratic\', start: { x: 0.1000, y: 0.2000 }, control: { x: 0.3000, y: 0.4000 }, end: { x: 0.5000, y: 0.6000 } } }"')
+    }
+    finally {
+      await dispose()
+    }
+  })
+
   it('replaces or removes only the geometry binding and preserves self-closing tags', () => {
     const tag = '<DrawnAnnotation text="Suspend" :geometry="{ label: { x: .1, y: .2 } }" on="0">'
     expect(patchDrawnAnnotationTag(tag, { connector: { start: { x: 0, y: .1 }, end: { x: .2, y: .3 } } }))
