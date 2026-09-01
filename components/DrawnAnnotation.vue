@@ -2531,6 +2531,10 @@ onBeforeUnmount(() => {
   font-family: var(--drawn-annotation-code-font, var(--slidev-code-font-family, 'JetBrains Mono Local', 'JetBrains Mono', ui-monospace, monospace));
 }
 
+/* Inline Markdown code should read as part of the handwritten label, rather
+   than carrying the code-chip background supplied by the slide theme. */
+.annotation-label-content :deep(code) { background: transparent; }
+
 /* Measured before it is placed, so keep it laid out but invisible until then. */
 .annotation-label.is-placed { visibility: visible; }
 
