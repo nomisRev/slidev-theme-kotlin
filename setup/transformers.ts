@@ -49,14 +49,17 @@ function attributeValue(value: string) {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
 }
 
-/** Add stable, per-slide fence positions before markdown is parsed. */
-export function markMagicMoveFenceOrdinals(source: string): string {
+function magicMoveFenceOrdinalInsertions(source: string): { at: number, text: string }[] {
+  const insertions: { at: number, text: string }[] = []
   const lines = source.split(/(\r?\n)/)
   let ordinal = 0
   let fence: string | undefined
+  let offset = 0
 
   for (let index = 0; index < lines.length; index += 2) {
     const line = lines[index]
+    const lineEnd = offset + line.length
+    offset = lineEnd + (lines[index + 1]?.length ?? 0)
     if (fence) {
       if (!/^ {4}/.test(line) && line.trimStart().startsWith(fence))
         fence = undefined
@@ -70,11 +73,18 @@ export function markMagicMoveFenceOrdinals(source: string): string {
     // Keep this aligned with extractTopLevelFences: only three-backtick,
     // language-bearing fences participate in cross-slide Magic Move.
     if (fence.length === 3 && open[2].trim()) {
-      lines[index] = `${line} __slidev_magic_move_ordinal__=${ordinal}`
+      insertions.push({ at: lineEnd, text: ` __slidev_magic_move_ordinal__=${ordinal}` })
       ordinal++
     }
   }
-  return lines.join('')
+  return insertions
+}
+
+/** Add stable, per-slide fence positions before markdown is parsed. */
+export function markMagicMoveFenceOrdinals(source: string): string {
+  for (const { at, text } of magicMoveFenceOrdinalInsertions(source).reverse())
+    source = source.slice(0, at) + text + source.slice(at)
+  return source
 }
 
 export function takeMagicMoveFenceOrdinal(info: string): { info: string, ordinal?: number } {
@@ -119,7 +129,7 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
     // Be conservative for callers outside Slidev's markdown-transform path:
     // unique fences remain supported, but duplicate fences are never guessed.
     const codeKey = code.replace(/\r?\n$/, '')
-    const matches = own.map((f, index) => index).filter(index => f.code === codeKey && f.info === info)
+    const matches = own.flatMap((f, index) => f.code === codeKey && f.info === info ? [index] : [])
     if (matches.length !== 1)
       return
     groupIndex = matches[0]
@@ -189,37 +199,34 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
   return `<MagicMoveBetween ${attrs.join(' ')} />`
 })
 
-function addMagicMoveIconClasses(source: string): string {
-  const replacements: { start: number, end: number, text: string }[] = []
-  for (const block of source.matchAll(magicMove)) {
-    const icon = iconForMagicMove(block.groups?.body ?? '')
-    const suffix = block.groups?.suffix ?? ''
-    const options = suffix.match(magicMoveOptions)
-    if (!icon || !options || block.index === undefined)
-      continue
-
-    const headerEnd = block[0].search(/\r?\n/)
-    const start = block.index + headerEnd - suffix.length
-    replacements.push({
-      start,
-      end: start + suffix.length,
-      text: `${options.groups?.before ?? ''}${withIconClass(options.groups?.options, icon)}${options.groups?.after ?? ''}`,
-    })
-  }
-  for (const replacement of replacements.reverse())
-    source = source.slice(0, replacement.start) + replacement.text + source.slice(replacement.end)
-  return source
-}
-
 export default defineTransformersSetup(() => ({
   codeblocks: [magicMoveBetween],
   pre: [({ s, slide, options: transformerOptions }) => {
     const source = s.toString()
     // `pre` is a MarkdownTransformer and therefore runs before Slidev parses
     // this slide into codeblock contexts. Only linked slides need markers.
-    const marked = resolveChain(transformerOptions.data.slides, slide.index)
-      ? markMagicMoveFenceOrdinals(source)
-      : source
-    s.overwrite(0, source.length, addMagicMoveIconClasses(marked))
+    // Ordinal markers land on top-level three-backtick fences and icon classes
+    // on four-plus-backtick magic-move headers, so both edit sets can be
+    // applied to disjoint ranges of the same source; targeted edits keep the
+    // per-slide sourcemap intact for Slidev's v-drag position persistence.
+    if (resolveChain(transformerOptions.data.slides, slide.index)) {
+      for (const { at, text } of magicMoveFenceOrdinalInsertions(source))
+        s.appendLeft(at, text)
+    }
+    for (const block of source.matchAll(magicMove)) {
+      const icon = iconForMagicMove(block.groups?.body ?? '')
+      const suffix = block.groups?.suffix ?? ''
+      const options = suffix.match(magicMoveOptions)
+      if (!icon || !options || block.index === undefined)
+        continue
+
+      const headerEnd = block[0].search(/\r?\n/)
+      const start = block.index + headerEnd - suffix.length
+      const replacement = `${options.groups?.before ?? ''}${withIconClass(options.groups?.options, icon)}${options.groups?.after ?? ''}`
+      if (suffix)
+        s.overwrite(start, start + suffix.length, replacement)
+      else
+        s.appendLeft(start, replacement)
+    }
   }],
 }))
