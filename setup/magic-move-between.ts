@@ -16,6 +16,7 @@
  * with a `<MagicMoveBetween>` component that animates between the fences at
  * the same position on the neighbouring slides.
  */
+import { parseSync } from '@slidev/parser'
 
 export interface ParsedFence {
   /** The Shiki language, i.e. the first word of the fence info. */
@@ -36,7 +37,6 @@ export interface ParsedFence {
   code: string
 }
 
-const SEPARATOR = /^---+$/
 const FENCE_OPEN = /^ {0,3}(`{3,})\s*([^\r\n`]*)$/
 // Tilde fences never yield magic-move steps, but their bodies are skipped so
 // a backtick sample rendered inside one is not mistaken for a real fence.
@@ -88,30 +88,18 @@ export function isLinkedToPrevious(frontmatter: unknown): boolean {
  * Rewrite bare `magic-move` slide separators into `magicMove: true` in place,
  * so the frontmatter parses as a YAML object. Keeps the line count intact to
  * preserve source locations.
+ *
+ * The slide boundaries come from `@slidev/parser` itself rather than a mirror
+ * of its slicing rules: only a frontmatter block Slidev is actually about to
+ * parse is rewritten, and the two can never drift apart on how a fence, an
+ * HTML comment, or an unusual separator affects slicing.
  */
 export function normalizeMagicMoveSeparators(lines: string[]): void {
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trimEnd()
-    if (line.trimStart().startsWith('```')) {
-      // Skip fenced code, mirroring @slidev/parser's slicing logic.
-      const level = line.match(/^\s*`{3,}/)![0].trimStart()
-      let j = i + 1
-      for (; j < lines.length; j++) {
-        if (lines[j].startsWith(level))
-          break
-      }
-      if (j !== lines.length)
-        i = j
-      continue
-    }
-    if (
-      SEPARATOR.test(line)
-      && lines[i + 1]?.trim() === 'magic-move'
-      && SEPARATOR.test(lines[i + 2]?.trimEnd() ?? '')
-    ) {
-      lines[i + 1] = 'magicMove: true'
-      i += 2
-    }
+  for (const slide of parseSync(lines.join('\n'), '').slides) {
+    if (slide.contentStart - slide.start === 3
+      && lines[slide.start + 1].trim() === 'magic-move'
+      && lines[slide.contentStart - 1]?.trimEnd() === '---')
+      lines[slide.start + 1] = 'magicMove: true'
   }
 }
 
