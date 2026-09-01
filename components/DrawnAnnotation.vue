@@ -27,8 +27,10 @@ import { useSlideContext } from '@slidev/client'
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
+import { findTextInSegments } from './code-text-match'
+import type { TextSegment } from './code-text-match'
 import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, snapFractionPoint, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
-import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
+import type { DrawnAnnotationGeometry, FractionPoint, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
 import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
@@ -716,60 +718,18 @@ function textRange(root: HTMLElement, needle: string, occurrence: number | strin
   // Magic Move renders line breaks as <br> instead of newline characters, so
   // they are folded back into the searched text to keep line-aware matches
   // working in both kinds of code block.
-  const segments: { node?: Text, text: string }[] = []
-  let value = ''
+  const segments: TextSegment[] = []
   let node: Node | null
   // eslint-disable-next-line no-cond-assign
   while ((node = walker.nextNode())) {
-    const segment = node.nodeType === Node.TEXT_NODE
+    segments.push(node.nodeType === Node.TEXT_NODE
       ? { node: node as Text, text: (node as Text).data }
-      : { text: '\n' }
-    segments.push(segment)
-    value += segment.text
+      : { text: '\n' })
   }
 
-  const starts: number[] = []
-  for (let index = value.indexOf(needle); index >= 0; index = value.indexOf(needle, index + 1))
-    starts.push(index)
   const requestedOccurrence = Number(occurrence)
-  const start = starts[Math.max(1, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1) - 1]
-  if (start === undefined)
-    return { matches: starts.length }
-
-  const end = start + needle.length
-  let offset = 0
-  let startNode: Text | undefined
-  let endNode: Text | undefined
-  let startOffset = 0
-  let endOffset = 0
-  for (const segment of segments) {
-    const next = offset + segment.text.length
-    if (segment.node) {
-      if (!startNode && start >= offset && start < next) {
-        startNode = segment.node
-        startOffset = start - offset
-      }
-      if (startNode && end > offset && end <= next) {
-        endNode = segment.node
-        endOffset = end - offset
-        break
-      }
-      // A match that ends on a line break ends inside a <br>, which cannot hold
-      // a range boundary. Trail the last real node the match covered instead.
-      if (startNode && end > next) {
-        endNode = segment.node
-        endOffset = segment.text.length
-      }
-    }
-    offset = next
-  }
-  if (!startNode || !endNode)
-    return { matches: starts.length }
-
-  const range = document.createRange()
-  range.setStart(startNode, startOffset)
-  range.setEnd(endNode, endOffset)
-  return { range, matches: starts.length }
+  const match = findTextInSegments(segments, needle, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1)
+  return { range: match.range ?? undefined, matches: match.matches }
 }
 
 function slideRoot() {
@@ -2101,7 +2061,7 @@ function cancelLabelDrag(event: PointerEvent) {
 }
 
 type ConnectorDragKind = 'start' | 'end' | 'body'
-let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
+let connectorDrag: ({ pointerId: number, kind: ConnectorDragKind, startX: number, startY: number, slideBox: DOMRect, snapCandidates: FractionPoint[], connector: { x1: number, y1: number, x2: number, y2: number, cx?: number, cy?: number }, previous?: PersistedAnnotationGeometry } & DragSaveSession) | undefined
 
 function localConnectorFraction(point: Point) {
   const slide = slideRoot()
@@ -2148,7 +2108,7 @@ function connectorSnapCandidates() {
 }
 
 function snapConnectorPoint(point: { x: number, y: number }, disabled: boolean) {
-  return disabled ? point : snapFractionPoint(point, connectorSnapCandidates())
+  return disabled || !connectorDrag ? point : snapFractionPoint(point, connectorDrag.snapCandidates)
 }
 
 /**
@@ -2171,15 +2131,19 @@ const connectorGuidePoints = computed(() => {
 function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
   if (!connectorEditable.value || !annotationEditMode.value || !locator.value || !geometry.connectorStart || !geometry.connectorEnd)
     return
+  const slide = slideRoot()
   const start = localConnectorFraction(geometry.connectorStart)
   const end = localConnectorFraction(geometry.connectorEnd)
-  if (!start || !end)
+  if (!slide || !start || !end)
     return
   event.preventDefault()
   event.stopPropagation()
   selectAnnotation(locator.value, kind)
   const saved = manualConnector()
-  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
+  // The slide, label, and ports stay put while a connector is dragged, so the
+  // snap candidates and slide box are measured once per gesture instead of
+  // re-reading a dozen client rects on every pointer move.
+  connectorDrag = { pointerId: event.pointerId, kind, startX: event.clientX, startY: event.clientY, slideBox: slide.getBoundingClientRect(), snapCandidates: connectorSnapCandidates(), connector: { x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: saved?.cx, cy: saved?.cy }, previous: annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined, persistedCaptured: false }
   beginAnnotationDraftGesture(locator.value, 'connector')
   ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
 }
@@ -2187,12 +2151,9 @@ function beginConnectorDrag(event: PointerEvent, kind: ConnectorDragKind) {
 function moveConnectorDrag(event: PointerEvent) {
   if (!connectorDrag || connectorDrag.pointerId !== event.pointerId || !locator.value)
     return
-  const slide = slideRoot()
-  if (!slide)
-    return
   event.preventDefault()
   event.stopPropagation()
-  const box = slide.getBoundingClientRect()
+  const box = connectorDrag.slideBox
   const dx = (event.clientX - connectorDrag.startX) / box.width
   const dy = (event.clientY - connectorDrag.startY) / box.height
   const next = { ...connectorDrag.connector }

@@ -43,7 +43,10 @@ const selected = computed(() => selectedAnnotationId.value)
 const selectedDescription = computed(() => {
   if (!selected.value) return 'Select a visible annotation'
   try {
-    const source = JSON.parse(atob(selected.value.replace(/-/g, '+').replace(/_/g, '/')))
+    // `atob` yields one char per byte; decode those bytes as UTF-8 so a
+    // non-ASCII file path in the locator displays intact.
+    const bytes = Uint8Array.from(atob(selected.value.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0))
+    const source = JSON.parse(new TextDecoder().decode(bytes))
     return typeof source.line === 'number' ? `${source.file}:${source.line}` : source.file
   } catch { return 'Selected annotation' }
 })

@@ -85,10 +85,6 @@ export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotation
       return { x: coordinates.x, y: coordinates.y }
     }
 
-    // Keep existing editor output (`start` / `end`) and accept paths written
-    // by the previous editor. The focused editor renders a simple authored
-    // leader, so a polyline or quadratic is reduced to its fixed endpoints
-    // rather than making its label and mark disappear altogether.
     if (Object.keys(fields).every(key => key === 'start' || key === 'control' || key === 'end')) {
       geometry.connector = {
         start: point(fields.start, 'start'),
@@ -96,13 +92,8 @@ export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotation
         end: point(fields.end, 'end'),
       }
     }
-    else if (fields.type === 'polyline' && Array.isArray(fields.points) && fields.points.length >= 2
-      && Object.keys(fields).every(key => key === 'type' || key === 'points')) {
-      geometry.connector = {
-        start: point(fields.points[0], 'points[0]'),
-        end: point(fields.points[fields.points.length - 1], `points[${fields.points.length - 1}]`),
-      }
-    }
+    // The writer serializes a curved connector with an explicit tag; a tagged
+    // quadratic must carry its control point.
     else if (fields.type === 'quadratic'
       && Object.keys(fields).every(key => key === 'type' || key === 'start' || key === 'control' || key === 'end')) {
       geometry.connector = {
@@ -112,7 +103,7 @@ export function validateDrawnAnnotationGeometry(value: unknown): DrawnAnnotation
       }
     }
     else {
-      throw new Error('geometry.connector must be `{ start, control?, end }`, a polyline, or a quadratic')
+      throw new Error('geometry.connector must be `{ start, control?, end }` or a tagged quadratic')
     }
   }
   return geometry

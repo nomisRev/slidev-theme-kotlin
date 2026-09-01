@@ -21,11 +21,13 @@ const props = withDefaults(defineProps<{
   /** This slide's position in the chain of code snippets. */
   step: number
   /**
-   * 1-based page numbers of the chain slides contributing each step. A chain
-   * slide without a fence at this position contributes no step, so page
-   * adjacency alone would morph from the wrong (non-adjacent) step.
+   * 1-based page numbers of the chain slides contributing each step, one per
+   * step. A chain slide without a fence at this position contributes no step,
+   * so page adjacency alone would morph from the wrong (non-adjacent) step —
+   * the map is required, and a map that does not match the payload disables
+   * the animation rather than guessing.
    */
-  stepPages?: number[]
+  stepPages: number[]
   /**
    * Identifier shared by the whole chain. Used as `view-transition-name` so
    * decks with `transition: view-transition` pair the code windows of both
@@ -45,7 +47,6 @@ const props = withDefaults(defineProps<{
   /** Line numbers are baked into the precompiled steps; declared so the fence option doesn't land on the DOM. */
   lines?: boolean
 }>(), {
-  stepPages: () => [],
   title: '',
   duration: configs.magicMoveDuration,
   stepRanges: () => [],
@@ -108,19 +109,14 @@ watch(currentSlideNo, async (to, from) => {
     stepIndex.value = props.step
     return
   }
-  // The page-to-step map is authoritative when the transformer supplied one
-  // that matches this payload; page adjacency remains the fallback for
-  // payloads emitted before `step-pages` existed.
+  // The transformer supplies the page-to-step map with every payload it
+  // compiles. A map that does not place this step on this page means payload
+  // and slide are out of sync (mid-HMR, say): skip the animation over guessing.
   const pages = props.stepPages
-  const mapped = pages.length === steps.value.length && pages[props.step] === $page.value
-  const fromStep = mapped
-    ? pages.indexOf(from)
-    : from === $page.value - 1
-      ? props.step - 1
-      : from === $page.value + 1
-        ? props.step + 1
-        : -1
-  if (fromStep < 0 || fromStep >= steps.value.length || fromStep === props.step)
+  if (pages.length !== steps.value.length || pages[props.step] !== $page.value)
+    return
+  const fromStep = pages.indexOf(from)
+  if (fromStep < 0 || fromStep === props.step)
     return
   // First render the neighbour's code without animation, wait for the slide
   // to become visible (the renderer measures real token positions), then move

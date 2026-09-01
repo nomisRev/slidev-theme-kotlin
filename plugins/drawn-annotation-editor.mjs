@@ -228,8 +228,7 @@ function locateInFile(source, tag, fileSource, fileTags) {
  * would make Vue evaluate the base64 token as a JavaScript expression, so the
  * component would receive `undefined` instead of the locator.
  */
-export function injectDrawnAnnotationLocators(source, file, fileSource = source) {
-  const fileTags = findDrawnAnnotationTags(fileSource)
+export function injectDrawnAnnotationLocators(source, file, fileSource = source, fileTags = findDrawnAnnotationTags(fileSource)) {
   let result = source
   for (const tag of findDrawnAnnotationTags(source).reverse()) {
     const location = locateInFile(source, tag, fileSource, fileTags)
@@ -327,6 +326,17 @@ export function drawnAnnotationEditor(_options = {}) {
   // Files that received locators. Their revisions live outside the locator so
   // a write never invalidates the locators of the annotations it rewrites.
   const files = new Set()
+  // Every slide of a deck is its own Vite module, so one reload transforms the
+  // same Markdown file once per slide. Scanning it for tags is the expensive
+  // part; key the scan on the exact content so an edit invalidates it.
+  const fileTagsCache = new Map()
+  const cachedFileTags = (absolute, source) => {
+    const entry = fileTagsCache.get(absolute)
+    if (entry && entry.source === source) return entry.tags
+    const tags = findDrawnAnnotationTags(source)
+    fileTagsCache.set(absolute, { source, tags })
+    return tags
+  }
   const serialized = (operation) => { const result = writes.then(operation, operation); writes = result.then(() => undefined, () => undefined); return result }
   return {
     name: 'slidev-theme-kotlin:drawn-annotation-editor', apply: 'serve',
@@ -347,7 +357,7 @@ export function drawnAnnotationEditor(_options = {}) {
       try { fileSource = readFileSync(absolute, 'utf8') } catch { return null }
       const file = relative(root, absolute)
       files.add(file)
-      return { code: injectDrawnAnnotationLocators(code, file, fileSource), map: null }
+      return { code: injectDrawnAnnotationLocators(code, file, fileSource, cachedFileTags(absolute, fileSource)), map: null }
     },
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
