@@ -38,6 +38,9 @@ export interface ParsedFence {
 
 const SEPARATOR = /^---+$/
 const FENCE_OPEN = /^ {0,3}(`{3,})\s*([^\r\n`]*)$/
+// Tilde fences never yield magic-move steps, but their bodies are skipped so
+// a backtick sample rendered inside one is not mistaken for a real fence.
+const TILDE_FENCE_OPEN = /^ {0,3}(~{3,})(.*)$/
 // Added only by setup/transformers.ts between its markdown and codeblock
 // passes. Keep it out of ParsedFence so it cannot affect titles, options,
 // icon lookup, or Shiki inputs.
@@ -171,28 +174,28 @@ export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
 
 /**
  * Every top-level three-backtick fence of a slide, in order. Fences opened
- * with four or more backticks (e.g. classic `md magic-move` blocks) are
- * skipped along with their contents.
+ * with four or more backticks (e.g. classic `md magic-move` blocks) and
+ * tilde fences are skipped along with their contents.
  */
 export function extractTopLevelFences(content: string): ParsedFence[] {
   const lines = content.split(/\r?\n/)
   const fences: ParsedFence[] = []
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trimEnd()
-    const open = line.match(FENCE_OPEN)
+    const open = line.match(FENCE_OPEN) ?? line.match(TILDE_FENCE_OPEN)
     if (!open)
       continue
-    const backticks = open[1]
+    const marker = open[1]
     let j = i + 1
     for (; j < lines.length; j++) {
-      if (!/^ {4}/.test(lines[j]) && lines[j].trimStart().startsWith(backticks))
+      if (!/^ {4}/.test(lines[j]) && lines[j].trimStart().startsWith(marker))
         break
     }
     if (j === lines.length) {
       // Unclosed fence: nothing more to extract.
       break
     }
-    if (backticks.length === 3 && open[2]?.trim())
+    if (marker === '```' && open[2]?.trim())
       fences.push(parseFenceInfo(open[2], lines.slice(i + 1, j).join('\n')))
     i = j
   }

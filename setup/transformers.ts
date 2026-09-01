@@ -66,13 +66,15 @@ function magicMoveFenceOrdinalInsertions(source: string): { at: number, text: st
       continue
     }
 
-    const open = line.match(/^ {0,3}(`{3,})\s*([^\r\n`]*)$/)
+    // Tilde fences are tracked too, so a backtick sample rendered inside one
+    // is never mistaken for a real fence and stamped with a visible marker.
+    const open = line.match(/^ {0,3}(`{3,})\s*([^\r\n`]*)$/) ?? line.match(/^ {0,3}(~{3,})(.*)$/)
     if (!open)
       continue
     fence = open[1]
     // Keep this aligned with extractTopLevelFences: only three-backtick,
     // language-bearing fences participate in cross-slide Magic Move.
-    if (fence.length === 3 && open[2].trim()) {
+    if (fence === '```' && open[2].trim()) {
       insertions.push({ at: lineEnd, text: ` __slidev_magic_move_ordinal__=${ordinal}` })
       ordinal++
     }

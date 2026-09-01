@@ -181,6 +181,27 @@ describe('duplicate Magic Move fence identities', () => {
       .toEqual(['0', '1'])
   })
 
+  it('skips backtick samples rendered inside tilde fences', () => {
+    // markdown-it renders a tilde fence's body verbatim, so a backtick sample
+    // inside one must neither become a chain step nor carry a visible marker.
+    const content = [
+      '~~~md',
+      '```kotlin',
+      'val sample = true',
+      '```',
+      '~~~',
+      '',
+      '```kotlin',
+      'val real = true',
+      '```',
+    ].join('\n')
+    expect(extractTopLevelFences(content).map(fence => fence.code)).toEqual(['val real = true'])
+    const marked = markMagicMoveFenceOrdinals(content)
+    expect(marked.split('\n')[1]).toBe('```kotlin')
+    expect(marked).toContain('```kotlin __slidev_magic_move_ordinal__=0')
+    expect([...marked.matchAll(/__slidev_magic_move_ordinal__=/g)]).toHaveLength(1)
+  })
+
   it('removes private ordinals before fence info is parsed', () => {
     const marked = markMagicMoveFenceOrdinals(duplicateFences)
     const fences = extractTopLevelFences(marked)
