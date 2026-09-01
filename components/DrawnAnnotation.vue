@@ -153,6 +153,12 @@ const props = withDefaults(defineProps<{
   duration?: number
   at?: number | string
   /**
+   * Observe an existing slide click without registering another click marker.
+   * Use this beside a `v-click` / `v-clicks` reveal that already owns `at`,
+   * when the annotation should draw after that reveal has settled.
+   */
+  passive?: boolean | string
+  /**
    * Start drawing only once the annotation this one sits inside has finished,
    * when the two share a click. That is what turns "point at it, then circle
    * it" into a single reveal instead of two clicks, without anyone having to
@@ -226,6 +232,7 @@ const props = withDefaults(defineProps<{
   duration: 500,
   sequential: true,
   at: undefined,
+  passive: false,
   until: undefined,
   on: undefined,
   insert: false,
@@ -378,7 +385,8 @@ const hasExplicitStartClick = computed(() => props.at !== undefined || props.on 
 // Slidev deliberately normalizes `v-click="0"` to click 1. Resolve an
 // annotation on click 0 ourselves so it can be present before the first click.
 const startsOnInitialSlide = computed(() => hasExplicitStartClick.value && Number(atClick.value) === 0)
-const manualClicks = computed(() => props.insert || !!outerClicksContext || startsOnInitialSlide.value)
+const passive = computed(() => props.passive === true || props.passive === 'true' || props.passive === '')
+const manualClicks = computed(() => passive.value || props.insert || !!outerClicksContext || startsOnInitialSlide.value)
 const painted = computed(() => geometryPainted.value || showImmediately.value)
 // True once the animations triggered by the current click have finished.
 // Drawing is held back until then, so a mark never appears on top of a Magic
@@ -1637,7 +1645,11 @@ onMounted(async () => {
     resolvedLabelClick.value = props.labelAt === undefined
       ? resolvedClick.value
       : manualClick(props.labelAt, 'label-at')
-    $clicksContext.register(ownClicks, { delta: 0, max: Math.max(resolvedClick.value, resolvedLabelClick.value) })
+    // A passive annotation observes the click owned by neighbouring Slidev
+    // content. Registering here would make that content's automatic click
+    // sequence advance one extra step.
+    if (!passive.value)
+      $clicksContext.register(ownClicks, { delta: 0, max: Math.max(resolvedClick.value, resolvedLabelClick.value) })
   }
   await nextTick()
   if (!manualClicks.value) {
