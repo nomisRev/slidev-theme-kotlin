@@ -38,6 +38,10 @@ export interface ParsedFence {
 
 const SEPARATOR = /^---+$/
 const FENCE_OPEN = /^ {0,3}(`{3,})\s*([^\r\n`]*)$/
+// Added only by setup/transformers.ts between its markdown and codeblock
+// passes. Keep it out of ParsedFence so it cannot affect titles, options,
+// icon lookup, or Shiki inputs.
+const FENCE_ORDINAL_MARKER = /(?:^|\s)__slidev_magic_move_ordinal__=\d+(?=\s|$)/g
 
 function findBalancedBraceGroup(input: string): { start: number, end: number } | undefined {
   const start = input.indexOf('{')
@@ -130,7 +134,7 @@ export function resolveChain(
 
 /** Parse the info line of a fence (```kotlin foo [Main.kt] {1|2-3} {lines:true}). */
 export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
-  const info = rawInfo.trim()
+  const info = rawInfo.replace(FENCE_ORDINAL_MARKER, ' ').trim()
   const spaceIndex = info.search(/\s/)
   const lang = spaceIndex < 0 ? info : info.slice(0, spaceIndex)
   let rest = spaceIndex < 0 ? '' : info.slice(spaceIndex + 1)

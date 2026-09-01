@@ -6,6 +6,7 @@ import {
   parseFenceInfo,
   resolveChain,
 } from '../setup/magic-move-between'
+import { markMagicMoveFenceOrdinals, takeMagicMoveFenceOrdinal } from '../setup/transformers'
 
 describe('normalizeMagicMoveSeparators', () => {
   it('rewrites a bare magic-move separator in place', () => {
@@ -157,6 +158,36 @@ describe('parseFenceInfo', () => {
       lines: true,
       meta: '',
     })
+  })
+})
+
+describe('duplicate Magic Move fence identities', () => {
+  const duplicateFences = [
+    '```kotlin',
+    'val same = true',
+    '```',
+    '',
+    '```kotlin',
+    'val same = true',
+    '```',
+  ].join('\n')
+
+  it('assigns deterministic positions on every transform pass', () => {
+    const firstPass = markMagicMoveFenceOrdinals(duplicateFences)
+    // An aborted codeblock transform never feeds state into the next pass.
+    const cleanPassAfterAbort = markMagicMoveFenceOrdinals(duplicateFences)
+    expect(cleanPassAfterAbort).toBe(firstPass)
+    expect([...cleanPassAfterAbort.matchAll(/__slidev_magic_move_ordinal__=(\d+)/g)].map(match => match[1]))
+      .toEqual(['0', '1'])
+  })
+
+  it('removes private ordinals before fence info is parsed', () => {
+    const marked = markMagicMoveFenceOrdinals(duplicateFences)
+    const fences = extractTopLevelFences(marked)
+    expect(fences.map(fence => fence.info)).toEqual(['kotlin', 'kotlin'])
+    expect(fences.map(fence => fence.meta)).toEqual(['', ''])
+    expect(takeMagicMoveFenceOrdinal('kotlin __slidev_magic_move_ordinal__=1'))
+      .toEqual({ info: 'kotlin', ordinal: 1 })
   })
 })
 
