@@ -74,6 +74,11 @@ const { currentSlideNo, isPrintMode } = useNav()
 const container = useTemplateRef<HTMLElement>('container')
 
 const stepIndex = ref(props.step)
+// Keep rendering in bounds even for a transient HMR prop patch where the
+// payload has changed before its synchronizing watcher has run.
+const renderedStep = computed(() =>
+  Math.max(0, Math.min(stepIndex.value, steps.value.length - 1)),
+)
 // The animation duration is 0 until we are deliberately moving between steps,
 // so re-renders (theme switch, HMR) never replay the transition.
 const animated = ref(false)
@@ -82,6 +87,16 @@ const animated = ref(false)
 // a stale continuation resuming after its awaits must not replay the animation
 // or overwrite the step a newer navigation already settled on.
 let navigationEpoch = 0
+
+// HMR patches this existing component instance rather than remounting it. Pin
+// it to the new payload's declared step and invalidate a navigation watcher
+// continuation that may otherwise restore the previous payload's step.
+watch([() => props.stepsLz, () => props.step], () => {
+  navigationEpoch++
+  animated.value = false
+  stepIndex.value = props.step
+  void nextTick(applyHighlight)
+})
 
 watch(currentSlideNo, async (to, from) => {
   if (isPrintMode.value)
@@ -234,7 +249,7 @@ function copyCode() {
       v-if="steps.length"
       class="slidev-code relative shiki overflow-visible"
       :steps="steps"
-      :step="stepIndex"
+      :step="renderedStep"
       :animate="!isPrintMode"
       :options="{
         globalScale: scale * zoom,
