@@ -21,11 +21,15 @@ describe('DrawnAnnotation source geometry', () => {
       connector: { start: { x: 0, y: 1 }, end: { x: 1, y: 0 } },
     })
     expect(validateDrawnAnnotationGeometry({
+      connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } },
+    })).toEqual({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } })
+    expect(validateDrawnAnnotationGeometry({
       connector: { type: 'quadratic', start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } },
     })).toEqual({ connector: { start: { x: .1, y: .2 }, control: { x: .3, y: .4 }, end: { x: .5, y: .6 } } })
     expect(validateDrawnAnnotationGeometry({
       connector: { type: 'polyline', points: [{ x: .1, y: .2 }, { x: .3, y: .4 }, { x: .5, y: .6 }] },
     })).toEqual({ connector: { start: { x: .1, y: .2 }, end: { x: .5, y: .6 } } })
+    expect(() => validateDrawnAnnotationGeometry({ connector: { start: { x: 0, y: 0 }, end: { x: 1, y: 1 }, unexpected: true } })).toThrow(/connector/)
     expect(() => validateDrawnAnnotationGeometry({ label: { x: 1.1, y: 0 } })).toThrow(/fractions/)
     expect(() => validateDrawnAnnotationGeometry({ label: { x: 0, y: 0, width: .01 } })).toThrow(/width/)
   })
