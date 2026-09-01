@@ -248,6 +248,22 @@ describe('source geometry editor', () => {
     }
   })
 
+  it('does not attach a first-slide locator to an identical later slide chunk', async () => {
+    const chunk = '# Same\n\n<DrawnAnnotation text="duplicate" label="same">\n'
+    const source = `---\ntitle: Deck\n---\n\n${chunk}\n---\n\n${chunk}`
+    const { root, plugin, dispose } = await serve({ 'slides.md': source })
+    try {
+      const transformed = plugin.transform(chunk, `${join(root, 'slides.md')}__slidev_2.md`)?.code ?? ''
+      // The chunk and tag both occur twice. Without an unambiguous source
+      // location, the editor must leave this annotation non-editable rather
+      // than issuing a locator for the first tag.
+      expect(locatorOf(transformed)).toBeUndefined()
+    }
+    finally {
+      await dispose()
+    }
+  })
+
   it('keeps locators stable across its own writes', async () => {
     // Editor state (selection, drafts, undo history) is keyed by the locator,
     // so rewriting a tag's `:geometry` binding must not change its locator.

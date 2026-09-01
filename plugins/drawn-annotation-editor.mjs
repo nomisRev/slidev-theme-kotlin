@@ -170,12 +170,16 @@ export function fingerprintDrawnAnnotationTag(tag) {
 function lineAt(source, offset) { let line = 1; for (let index = source.indexOf('\n'); index >= 0 && index < offset; index = source.indexOf('\n', index + 1)) line++; return line }
 /** Where `tag`, found in `source` (a chunk of `fileSource`), sits in the file. */
 function locateInFile(source, tag, fileSource, fileTags) {
-  const chunk = fileSource.indexOf(source)
+  const occurrences = []
+  for (let offset = fileSource.indexOf(source); offset >= 0; offset = fileSource.indexOf(source, offset + 1)) occurrences.push(offset)
   const fingerprint = fingerprintDrawnAnnotationTag(tag.text)
   const identical = fileTags.filter(candidate => fingerprintDrawnAnnotationTag(candidate.text) === fingerprint)
-  // The chunk is normally a verbatim slice of the file, so the tag's file
-  // position is exact. Otherwise only an unambiguous tag can be addressed.
-  const match = chunk >= 0 ? identical.find(candidate => candidate.start === chunk + tag.start) : identical.length === 1 ? identical[0] : undefined
+  // A verbatim chunk gives an exact position only when it occurs once. With
+  // duplicate chunks, addressing the first matching tag would silently edit a
+  // different slide, so use only a fingerprint that identifies one file tag.
+  const match = occurrences.length === 1
+    ? identical.find(candidate => candidate.start === occurrences[0] + tag.start)
+    : identical.length === 1 ? identical[0] : undefined
   return match && { fingerprint, ordinal: identical.indexOf(match), line: lineAt(fileSource, match.start) }
 }
 
