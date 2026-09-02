@@ -313,6 +313,13 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
     font-family: var(--drawn-annotation-code-font);
 }
 
+/* Inline Markdown code in a quote is part of its prose, not a separate code
+   chip. This mirrors annotation labels and overrides Slidev's default inline
+   code background only within blockquotes. */
+.slidev-layout blockquote :not(pre) > code {
+    background: transparent;
+}
+
 /* Let a click-ranged annotation finish its exit fade before the content it
    replaces begins its own click transition. */
 .slidev-layout:has(.drawn-annotation.is-fading-out)
