@@ -2,9 +2,11 @@
 import type { ClicksInfo } from '@slidev/types'
 import type { TextSegment } from './code-text-match'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
-import { useNav, useSlideContext } from '@slidev/client'
+import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { useMutationObserver, useResizeObserver } from '@vueuse/core'
 import { findTextInSegments } from './code-text-match'
+import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
+import type { TransitionInkBox } from './transition-ink'
 
 const props = defineProps<{
   /** One-based source line number inside the single fenced code block this component wraps. Optional when `text` identifies the target. */
@@ -27,8 +29,10 @@ const props = defineProps<{
   on?: number | string
 }>()
 
-const { $clicksContext, $clicks, $scale, $zoom } = useSlideContext()
+const slideContext = useSlideContext()
+const { $clicksContext, $clicks, $scale, $zoom } = slideContext
 const { isPrintMode } = useNav()
+const isCurrentSlide = useIsSlideActive()
 const id = useId()
 const container = useTemplateRef<HTMLElement>('container')
 const position = ref({
@@ -52,6 +56,12 @@ const textMatches = ref(0)
 const hasTarget = computed(() => !!targetRange.value)
 // True while Shiki Magic Move is transitioning between steps.
 const animating = ref(false)
+const skipEntranceAnimation = ref(false)
+const transitionInkIdentity = computed(() => JSON.stringify([
+  props.line, props.text, props.occurrence, props.message,
+]))
+let lastTargetTransitionBox: TransitionInkBox | undefined
+let lastVisibleTargetTransitionBox: TransitionInkBox | undefined
 
 // Slidev reserves click 0 for the pre-click state and warns when anything
 // registers at 0, so `at` values <= 0 mean "visible from the start".
@@ -94,6 +104,8 @@ onMounted(() => {
     $clicksContext.register(id, clickInfo.value)
 })
 const visible = computed(() => {
+  if (!isCurrentSlide.value)
+    return false
   const info = clickInfo.value
   if (!info)
     return true
@@ -131,6 +143,49 @@ let magicMoveFrame: number | undefined
 // itself survives step changes, so it is cached across syncs.
 let codeHost: HTMLElement | null = null
 let isMagicMove = false
+
+function isCrossSlideMagicMove(host: HTMLElement) {
+  return !!(host.closest('.slidev-layout') ?? host).querySelector('.magic-move-between')
+}
+
+function transitionInkBox(left: number, top: number, right: number, bottom: number, slide: DOMRect): TransitionInkBox | undefined {
+  if (!slide.width || !slide.height)
+    return undefined
+  return {
+    left: (left - slide.left) / slide.width,
+    top: (top - slide.top) / slide.height,
+    right: (right - slide.left) / slide.width,
+    bottom: (bottom - slide.top) / slide.height,
+  }
+}
+
+function relevantMagicMoveAnimations(host: HTMLElement) {
+  const root = host.closest<HTMLElement>('.slidev-layout') ?? host
+  const pageAnimations = document.getAnimations().filter((animation) => {
+    const pseudo = (animation.effect as KeyframeEffect | null)?.pseudoElement
+    return typeof pseudo === 'string' && pseudo.startsWith('::view-transition-')
+  })
+  const animations = [...root.getAnimations({ subtree: true }), ...pageAnimations]
+  return [...new Set(animations)].filter((animation) => {
+    if (animation.playState !== 'running' && !animation.pending)
+      return false
+    const effect = animation.effect as KeyframeEffect | null
+    const target = effect?.target
+    const pseudo = effect?.pseudoElement
+    return (typeof pseudo === 'string' && pseudo.startsWith('::view-transition-'))
+      || (target instanceof Element && !!target.closest('.magic-move-between, .slidev-code-magic-move, .shiki-magic-move-container'))
+  }).filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+}
+
+function isMagicMoveAnimating(host: HTMLElement) {
+  return !!host.querySelector(MAGIC_MOVE_ANIMATING) || relevantMagicMoveAnimations(host).length > 0
+}
+
+function inheritTransitionInk(host: HTMLElement) {
+  if (!visible.value || !lastTargetTransitionBox || !isCrossSlideMagicMove(host))
+    return
+  skipEntranceAnimation.value = takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTargetTransitionBox)
+}
 
 function findCodeHost(host: HTMLElement): HTMLElement | null {
   if (!codeHost?.isConnected) {
@@ -369,7 +424,20 @@ function sync() {
     targets.value = nextTargets
   }
 
-  animating.value = !!host.querySelector(MAGIC_MOVE_ANIMATING)
+  const wasAnimating = animating.value
+  animating.value = isMagicMoveAnimating(host)
+  if (wasAnimating && !animating.value) {
+    inheritTransitionInk(host)
+    // A preloaded page's visibility watcher can run before Slidev commits the
+    // incoming route, then be invalidated by that commit. This is the actual
+    // settled edge, so open explicitly rather than depending on that earlier
+    // watcher to fire a second time. The hand-off class makes unchanged ink
+    // instantaneous; moved ink still uses the normal Transition entrance.
+    if (visible.value && hasTarget.value) {
+      clearTimeout(revealTimer)
+      revealed.value = true
+    }
+  }
   if (animating.value)
     sawAnimating = true
   if (import.meta.env.DEV && !warnedClassDrift && !isPrintMode.value && stepSwaps >= 2 && !sawAnimating) {
@@ -443,6 +511,9 @@ function sync() {
     top: `${(bottom - hostBox.top) / scale - 1}px`,
     width: `${(right - left) / scale}px`,
   }
+  lastTargetTransitionBox = transitionInkBox(left, top, right, bottom, slideBox)
+  if (revealed.value)
+    lastVisibleTargetTransitionBox = lastTargetTransitionBox
 }
 
 // Coalesce observer bursts into one sync per frame: during a Magic Move
@@ -523,6 +594,27 @@ watch([visible, hasTarget, animating], ([isVisible, targetPresent, isAnimating])
     revealTimer = setTimeout(reveal, 100)
 })
 
+watch(revealed, (isRevealed) => {
+  if (isRevealed && lastTargetTransitionBox)
+    lastVisibleTargetTransitionBox = lastTargetTransitionBox
+  else if (isCurrentSlide.value)
+    lastVisibleTargetTransitionBox = undefined
+})
+
+watch(isCurrentSlide, (current) => {
+  if (current) {
+    lastVisibleTargetTransitionBox = undefined
+    skipEntranceAnimation.value = false
+    scheduleSync()
+    return
+  }
+  const host = container.value
+  if (host && lastVisibleTargetTransitionBox && isCrossSlideMagicMove(host))
+    rememberTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastVisibleTargetTransitionBox)
+  lastVisibleTargetTransitionBox = undefined
+  revealed.value = false
+}, { flush: 'sync' })
+
 // A target that is absent from the current code step has nothing to anchor to,
 // so the diagnostic stays hidden. Silent in production, but tell the slide
 // author after the longest Magic Move transition has had time to finish.
@@ -557,7 +649,7 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 </script>
 
 <template>
-  <div ref="container" class="inline-compiler-error-host">
+  <div ref="container" class="inline-compiler-error-host" :class="{ 'skip-entrance-animation': skipEntranceAnimation }">
     <slot />
     <!-- Screen readers only announce a live region reliably when its content
          changes while it is already mounted, so this one exists permanently
@@ -593,6 +685,7 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 .compiler-error-leave-active { transition: opacity .18s ease; }
 .compiler-error-enter-from,
 .compiler-error-leave-to { opacity: 0; }
+.inline-compiler-error-host.skip-entrance-animation .compiler-error-enter-active { transition-duration: 0ms; }
 .inline-compiler-error-message i { color: var(--inline-compiler-error-color, #f05b5b); font-size: .55em; font-style: normal; }
 .inline-compiler-error-underline {
   position: absolute;

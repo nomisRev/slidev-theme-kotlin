@@ -29,6 +29,8 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
+import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
+import type { TransitionInkBox } from './transition-ink'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
@@ -317,6 +319,17 @@ const hasLabel = computed(() => !!props.label)
 const labelHtml = computed(() => renderAnnotationLabel(props.label ?? ''))
 const labelText = computed(() => annotationLabelText(props.label ?? ''))
 const hasTarget = computed(() => !!props.target)
+// Cross-slide Magic Move mounts a separate annotation component on each page.
+// This identity lets a visible mark hand its ink to an equivalent neighbour;
+// the geometry hand-off below still requires their final positions to match.
+const transitionInkIdentity = computed(() => JSON.stringify([
+  sourceMarkType.value, targetMarkType.value, props.selector, props.text,
+  props.occurrence, props.multiline, props.padding, props.target,
+  props.targetX, props.targetY, props.targetRadius, props.label,
+  props.placement, props.gap, props.connect, props.arrow, props.curve,
+  props.iterations, props.color, props.strokeWidth, props.duration,
+  props.geometry, props.options,
+]))
 // A source-only mark exposes no visual-editor operation. It remains valid:
 // only labels and connectors have geometry that an editor can manipulate.
 const editorRelevant = computed(() => hasLabel.value || (props.connect && hasTarget.value))
@@ -392,6 +405,10 @@ const painted = computed(() => geometryPainted.value || showImmediately.value)
 // Drawing is held back until then, so a mark never appears on top of a Magic
 // Move step or a slide transition that is still travelling.
 const settled = ref(!props.wait)
+// A matching annotation was already visible on the preceding Magic Move page.
+// Let the incoming SVG appear complete after the move, rather than replaying
+// its stroke-dash entrance from scratch.
+const skipEntranceAnimation = ref(false)
 // An annotation with `until` is only shown while the thing it points at is on
 // screen: past that click every stage hides again, in one step.
 // `on` is the same thing derived from the resolved clicks, so the shorthand
@@ -754,6 +771,20 @@ let unregisterEditorActions: (() => void) | undefined
 // Fingerprint of the mark's last measured boxes. While the slide animates, a
 // frame in which the mark has not moved recomputes nothing.
 let lastMarkKey = ''
+// The marked bounds are retained in concrete-slide fractions. They are used
+// only to hand already-visible ink to an equivalent annotation on the next
+// cross-slide Magic Move page.
+let lastMarkTransitionBox: TransitionInkBox | undefined
+let lastVisibleMarkTransitionBox: TransitionInkBox | undefined
+watch(active, (isActive) => {
+  if (isActive && lastMarkTransitionBox)
+    lastVisibleMarkTransitionBox = lastMarkTransitionBox
+  // Keep the outgoing page's final visible bounds long enough for the
+  // isCurrentSlide watcher to hand them to its neighbour. A click-range exit,
+  // by contrast, really removes the annotation and must not carry stale ink.
+  else if (isCurrentSlide.value)
+    lastVisibleMarkTransitionBox = undefined
+})
 // Content boxes an automatic label avoids, in local SVG coordinates. The DOM
 // scan is refreshed on discrete re-measures (click settles, resizes, prop or
 // draft changes) and reused by the per-frame tracking passes, which must not
@@ -767,16 +798,25 @@ const watchedImages: HTMLImageElement[] = []
 // animations and Magic Move's generated animations with the same `finished`
 // promise, including their real delay and duration.
 let settleRun = 0
+// A Magic Move renderer replaces individual token animations as it progresses.
+// Its DOM classes, observed below, are the reliable final-settlement signal.
+let magicMoveWasObserved = false
 
 function relevantAnimations() {
-  const root = container.value
+  // A wrapped annotation owns its content, but a self-closing annotation is
+  // `display: contents` and its target is a following sibling. In particular,
+  // that is how an annotation points into a top-level Magic Move code fence.
+  // Query the concrete slide rather than the annotation container, otherwise
+  // its animation is invisible here and we settle at the view transition's
+  // end instead of at the final Shiki layout.
+  const root = slideRoot() ?? searchRoot()
   if (!root?.getAnimations)
     return []
 
   // A view transition is owned by the document, not by the incoming slide's
-  // slot. Its pseudo-elements therefore never appear in the annotation
-  // container's subtree, even though they are exactly the animation we must
-  // wait for before drawing on the new slide.
+  // layout. Its pseudo-elements therefore never appear in this subtree, even
+  // though they are exactly the animation we must wait for before drawing on
+  // the new slide.
   const viewTransitionAnimations = typeof document !== 'undefined'
     ? document.getAnimations().filter((animation) => {
         const pseudo = (animation.effect as KeyframeEffect | null)?.pseudoElement
@@ -806,9 +846,9 @@ function nextFrame() {
 
 /**
  * Release the entrance when the animations that actually started for this
- * click finish. Re-check after each batch because Magic Move can create the
- * next transition while completing the previous one. A final frame lets the
- * browser commit the finished layout before it is measured for drawing.
+ * click finish. Magic Move replaces its individual token animations while it
+ * runs, so its observed DOM classes, rather than a potentially stale
+ * `Animation.finished` promise, release the final measurement.
  */
 const VIEW_TRANSITION_START_GRACE = 100
 
@@ -824,6 +864,13 @@ async function settleAfterAnimations(run: number, grace = 0) {
   await nextFrame()
   while (mounted && run === settleRun) {
     const animations = relevantAnimations()
+    if (isMagicMoveInProgress()) {
+      // The MutationObserver sees the final class removal and settles then.
+      // Do not await these token animations: Shiki may replace one while it is
+      // running, leaving that old promise unresolved.
+      magicMoveWasObserved = true
+      return
+    }
     if (!animations.length) {
       await nextFrame()
       if (mounted && run === settleRun && !relevantAnimations().length) {
@@ -831,6 +878,7 @@ async function settleAfterAnimations(run: number, grace = 0) {
         // recomputation per click that the animation-frame passes lean on.
         settled.value = true
         updateGeometry()
+        inheritTransitionInk()
       }
       return
     }
@@ -839,12 +887,34 @@ async function settleAfterAnimations(run: number, grace = 0) {
   }
 }
 
+function isMagicMoveInProgress() {
+  const root = slideRoot() ?? searchRoot()
+  return !!root?.querySelector([
+    '.shiki-magic-move-enter-active',
+    '.shiki-magic-move-leave-active',
+    '.shiki-magic-move-move',
+    '.shiki-magic-move-container-resize',
+    '.shiki-magic-move-container-restyle',
+  ].join(', '))
+}
+
+function settleAfterMagicMove() {
+  if (!magicMoveWasObserved || isMagicMoveInProgress() || !mounted || !isCurrentSlide.value)
+    return
+  magicMoveWasObserved = false
+  settled.value = true
+  updateGeometry()
+  inheritTransitionInk()
+}
+
 /**
  * Marks the annotation as moving again and keeps measuring until it stops.
  * Called on every click, because that is what starts a Magic Move step.
  */
 function unsettle(grace = 0) {
   const run = ++settleRun
+  magicMoveWasObserved = false
+  skipEntranceAnimation.value = false
   // A click can restyle the slide, so measured label sizes and content
   // obstacles go stale here — once per click, which leaves them shared by
   // every frame of the animation.
@@ -1014,6 +1084,9 @@ function updateGeometry() {
 
   geometry.width = width
   geometry.height = height
+  lastMarkTransitionBox = transitionInkBox(marked)
+  if (active.value)
+    lastVisibleMarkTransitionBox = lastMarkTransitionBox
   assignPaths('mark', shapeBoxes.flatMap(box => markPaths(box, sourceMarkType.value)))
 
   paintDestination(root, toLocal, marked)
@@ -1070,6 +1143,37 @@ function markPaths(box: Box, type: MarkType, padding = props.padding): string[] 
 }
 
 /** Draws the leader and positions the label. */
+function transitionInkBox(marked: Box): TransitionInkBox | undefined {
+  const svg = overlay.value
+  const slide = slideRoot()
+  if (!svg || !slide || !geometry.width || !geometry.height)
+    return undefined
+  const overlayBox = svg.getBoundingClientRect()
+  const slideBox = slide.getBoundingClientRect()
+  if (!overlayBox.width || !overlayBox.height || !slideBox.width || !slideBox.height)
+    return undefined
+  const left = overlayBox.left + marked.left / geometry.width * overlayBox.width
+  const top = overlayBox.top + marked.top / geometry.height * overlayBox.height
+  const right = overlayBox.left + marked.right / geometry.width * overlayBox.width
+  const bottom = overlayBox.top + marked.bottom / geometry.height * overlayBox.height
+  return {
+    left: (left - slideBox.left) / slideBox.width,
+    top: (top - slideBox.top) / slideBox.height,
+    right: (right - slideBox.left) / slideBox.width,
+    bottom: (bottom - slideBox.top) / slideBox.height,
+  }
+}
+
+function isCrossSlideMagicMove() {
+  return !!slideRoot()?.querySelector('.magic-move-between')
+}
+
+function inheritTransitionInk() {
+  if (!isCurrentSlide.value || !withinRange.value || !lastMarkTransitionBox || !isCrossSlideMagicMove())
+    return
+  skipEntranceAnimation.value = takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox)
+}
+
 function paintDestination(
   root: HTMLElement,
   toLocal: (rect: DOMRect) => Box,
@@ -1701,21 +1805,31 @@ function connectObservers() {
     resizeObserver.observe(container.value)
   if (overlay.value)
     resizeObserver.observe(overlay.value)
-  const source = container.value?.querySelector(props.selector)
+  const observedRoot = slideRoot() ?? searchRoot()
+  const source = observedRoot?.querySelector<HTMLElement>(props.selector)
   if (source)
     resizeObserver.observe(source)
-  for (const image of Array.from(container.value?.querySelectorAll('img') ?? [])) {
+  for (const image of Array.from(observedRoot?.querySelectorAll('img') ?? [])) {
     image.addEventListener('load', scheduleUpdate)
     watchedImages.push(image)
   }
 
-  // Watch the code blocks only. Observing the whole slot would pick up our own
-  // paths and spin the tracking loop forever.
-  const animated = container.value?.querySelectorAll('.slidev-code, .slidev-code-magic-move, pre.shiki')
+  // Watch code blocks under the concrete slide, not just under this component:
+  // a self-closing annotation points at following sibling fences. Observing
+  // only these blocks avoids picking up our own SVG paths and spinning the
+  // tracking loop forever.
+  const animated = observedRoot?.querySelectorAll('.slidev-code, .slidev-code-magic-move, pre.shiki')
   if (animated?.length) {
-    mutationObserver = new MutationObserver(() => track())
-    for (const element of Array.from(animated))
+    mutationObserver = new MutationObserver(() => {
+      if (isMagicMoveInProgress())
+        magicMoveWasObserved = true
+      track()
+      settleAfterMagicMove()
+    })
+    for (const element of Array.from(animated)) {
+      resizeObserver.observe(element)
       mutationObserver.observe(element, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] })
+    }
   }
 
   window.addEventListener('resize', scheduleUpdate)
@@ -1769,11 +1883,15 @@ watch($clicks, () => {
 // document-level pseudo-elements before the first animation scan.
 watch(isCurrentSlide, (current) => {
   if (current) {
+    lastVisibleMarkTransitionBox = undefined
     connectObservers()
     unsettle(VIEW_TRANSITION_START_GRACE)
     track()
   }
   else {
+    if (lastVisibleMarkTransitionBox && isCrossSlideMagicMove())
+      rememberTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastVisibleMarkTransitionBox)
+    lastVisibleMarkTransitionBox = undefined
     disconnectObservers()
     // Cancel in-flight measurement too: a settle pass or tracking loop begun
     // before navigating away would keep calling updateGeometry on a slide
@@ -2273,7 +2391,7 @@ onBeforeUnmount(() => {
   <div
     ref="container"
     class="drawn-annotation"
-    :class="{ 'is-fading-out': fadingOut }"
+    :class="{ 'is-fading-out': fadingOut, 'skip-entrance-animation': skipEntranceAnimation }"
       >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
@@ -2480,6 +2598,12 @@ onBeforeUnmount(() => {
   transition:
     stroke-dashoffset 1ms linear var(--exit-fade, 300ms),
     opacity var(--exit-fade, 300ms) ease-out;
+}
+
+.skip-entrance-animation .annotation-stroke,
+.skip-entrance-animation .annotation-label {
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
 }
 
 .is-active .annotation-mark {
