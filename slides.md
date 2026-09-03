@@ -4,6 +4,7 @@ highlighter: shiki
 transition: view-transition
 themeConfig:
   kodee: greeting
+  siteUrl: https://nomisrev.github.io/slidev-theme-kotlin/
 ---
 
 <!-- @formatter:off -->
@@ -46,7 +47,7 @@ kodee: false
 
 # Imports fold out of the way
 
-Write the imports; the slide tucks them behind a toggle and the handout keeps them.
+Write the imports; the slide drops them and the handout keeps them.
 
 ```kotlin
 import kotlinx.coroutines.flow.Flow
@@ -55,6 +56,25 @@ import kotlinx.coroutines.flow.map
 
 fun numbers(): Flow<Int> = flowOf(1, 2, 3)
 
+fun doubled(): Flow<Int> = numbers().map { it * 2 }
+```
+
+---
+kodee: false
+---
+
+# Fold the setup, show the example
+
+A `// Example` comment marks where the example starts; everything above it folds with the imports.
+
+```kotlin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+
+fun numbers(): Flow<Int> = flowOf(1, 2, 3)
+
+// Example: reuse the flow above without showing it
 fun doubled(): Flow<Int> = numbers().map { it * 2 }
 ```
 

@@ -16,18 +16,24 @@
  * - `sitemap.xml` (and `robots.txt` when the deck ships none): only when
  *   `themeConfig.siteUrl` gives the deck's public URL.
  *
+ * The built `index.html` (and the `404.html` copied from it) points at these
+ * files with `rel="alternate"` links and a short paragraph of visible links
+ * that the app hides once it has mounted, so a crawler that lands on the
+ * root page finds them even without a sitemap (see `indexHtmlTags`).
+ *
  * Theme-specific markup is translated rather than dropped: a `DrawnAnnotation`
  * label becomes a quoted note about the code it points at, an
  * `InlineCompilerError` becomes its diagnostic, and imports folded on the
  * slides (see `code-imports.ts`) stay in the handout's fences, expanded.
  */
 import type { ResolvedSlidevOptions, SlideInfo } from '@slidev/types'
-import type { Plugin } from 'vite'
+import type { HtmlTagDescriptor, Plugin } from 'vite'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 import MarkdownIt from 'markdown-it'
+import { goatcounterTag, resolveAnalyticsSettings } from './analytics'
 import { codeWindowIcon } from './code-window-icon'
 import { parseFenceInfo } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
@@ -63,7 +69,11 @@ export interface HandoutSlide {
   /** 1-based slide number as shown in the presentation. */
   no: number
   title: string
-  /** Cleaned Markdown (see `cleanSlideMarkdown`), without the title heading. */
+  /**
+   * Cleaned Markdown (see `cleanSlideMarkdown`), without the title heading.
+   * Headings are relative to the slide's title at level 1, so a renderer
+   * that prints the title at depth `d` shifts them by `d - 1` (`shiftHeadings`).
+   */
   markdown: string
   note?: string
 }
@@ -285,8 +295,35 @@ export function translateComponents(content: string): string {
     .replace(/<\/DrawnAnnotation>/g, '')
     .replace(new RegExp(`<InlineCompilerError\\b${ATTRIBUTES}/?>`, 'g'), (_, raw) => compilerErrorNote(raw))
     .replace(/<\/InlineCompilerError>/g, '')
-    .replace(new RegExp(`<(?:Kodee|KodeeWrapper|CodeImports)\\b${ATTRIBUTES}/?>`, 'g'), '')
-    .replace(/<\/(?:Kodee|KodeeWrapper|CodeImports)>/g, '')
+    .replace(new RegExp(`<(?:Kodee|KodeeWrapper)\\b${ATTRIBUTES}/?>`, 'g'), '')
+    .replace(/<\/(?:Kodee|KodeeWrapper)>/g, '')
+}
+
+const ATX_HEADING = /^( {0,3})(#{1,6})(?=[ \t]|$)/gm
+
+/**
+ * Move every ATX heading outside a fence `by` levels down the outline, never
+ * past `######`. The slide Markdown keeps its headings relative to the
+ * slide's title (level 1); the handout and `llms-full.txt` print that title
+ * at different depths and shift the content to match.
+ */
+export function shiftHeadings(markdown: string, by: number): string {
+  if (by <= 0)
+    return markdown
+  return splitFences(markdown)
+    .map(segment => segment.fence
+      ? segment.text
+      : segment.text.replace(ATX_HEADING, (_, indent: string, hashes: string) => `${indent}${'#'.repeat(Math.min(6, hashes.length + by))}`))
+    .join('\n')
+}
+
+/**
+ * Put a slide's headings below its title: a second level-one heading on the
+ * slide (a kicker, a second `#`) becomes `##`, so nothing in the content
+ * outranks the title the handout prints for the slide.
+ */
+function demoteBelowTitle(text: string): string {
+  return text.replace(/^( {0,3})#(?=[ \t]|$)/gm, '$1##')
 }
 
 /** Translate theme and Slidev markup in prose to plain Markdown. */
@@ -333,15 +370,16 @@ export function parseFenceBlock(block: string): ParsedFence {
 
 /**
  * Turn one slide's Markdown into plain Markdown: snippet imports inlined,
- * Magic Move blocks expanded, components translated, and fences reduced to
- * `lang` plus code with a caption for their title or identity.
+ * Magic Move blocks expanded, components translated, fences reduced to
+ * `lang` plus code with a caption for their title or identity, and every
+ * heading placed below the slide's title (see `demoteBelowTitle`).
  */
 export function cleanSlideMarkdown(content: string, ctx: CleanContext): string {
   const expanded = translateComponents(expandMagicMoveBlocks(expandSnippetImports(content, ctx)))
   return splitFences(expanded)
     .map(segment => segment.fence
       ? fenceMarkdown(parseFenceBlock(segment.text))
-      : cleanProse(segment.text, ctx.base))
+      : demoteBelowTitle(cleanProse(segment.text, ctx.base)))
     .filter(Boolean)
     .join('\n\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -354,6 +392,10 @@ export function cleanSlideMarkdown(content: string, ctx: CleanContext): string {
 export interface DeckInfo {
   title: string
   description: string
+  /** `lang` from the headmatter, `en` when unset; the handout's `<html lang>`. */
+  lang: string
+  /** GoatCounter endpoint (`themeConfig.analytics.goatcounter`), when the deck counts pageviews. */
+  analytics?: string
   /** URL of the deck root: `siteUrl` when configured, else the base path. */
   root: string
   /** Whether the deck routes by hash (`#/12`) or by path (`/12`). */
@@ -452,7 +494,7 @@ interface PageOptions {
 function pageShell({ deck, title, description, canonical, body, breadcrumbs }: PageOptions): string {
   const nav = breadcrumbs.map(({ href, label }) => `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>`).join('')
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeHtml(deck.lang)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -460,9 +502,14 @@ function pageShell({ deck, title, description, canonical, body, breadcrumbs }: P
 <meta name="description" content="${escapeHtml(description)}">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="${escapeHtml(canonical)}">
+<meta property="og:type" content="article">
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:description" content="${escapeHtml(description)}">
+<meta property="og:url" content="${escapeHtml(canonical)}">
+<meta property="og:site_name" content="${escapeHtml(deck.title)}">
 <link rel="alternate" type="text/markdown" title="Full text for language models" href="${escapeHtml(`${deck.root}llms-full.txt`)}">
 <meta name="generator" content="slidev-theme-kotlin">
-<style>${HANDOUT_CSS}</style>
+${deck.analytics ? `${goatcounterTag(deck.analytics, false)}\n` : ''}<style>${HANDOUT_CSS}</style>
 </head>
 <body>
 <header class="site"><nav>${nav}</nav></header>
@@ -492,8 +539,9 @@ export async function renderHandout(deck: DeckInfo, sections: HandoutSection[], 
   const indexCrumb = { href: `${deck.root}handout/`, label: 'Handout' }
 
   for (const [index, section] of sections.entries()) {
+    // Slide titles are `<h2>`: content headings start at `<h3>`.
     const slides = await Promise.all(section.slides.map(async slide =>
-      slideSection(deck, slide, await renderMarkdown(slide.markdown, highlight), notes)))
+      slideSection(deck, slide, await renderMarkdown(shiftHeadings(slide.markdown, 1), highlight), notes)))
     const previous = sections[index - 1]
     const next = sections[index + 1]
     const pager = sections.length > 1
@@ -552,19 +600,29 @@ export function renderLlmsTxt(deck: DeckInfo, sections: HandoutSection[]): strin
   return `${lines.join('\n')}\n`
 }
 
-/** llms-full.txt: every slide as Markdown. */
+/**
+ * llms-full.txt: every slide as Markdown, in one outline: the deck, then
+ * (for a multi-section deck) each section, then each slide, with the
+ * slide's own headings below its title. A slide titled like the heading
+ * above it (a section's title slide, the deck's cover) is not repeated.
+ */
 export function renderLlmsFullTxt(deck: DeckInfo, sections: HandoutSection[], notes: boolean): string {
   const lines = [`# ${deck.title}`, '']
   if (deck.description)
     lines.push(`> ${deck.description}`, '')
   lines.push(`Source: ${deck.root}`, '')
+  const multi = sections.length > 1
+  const slideDepth = multi ? 3 : 2
   for (const section of sections) {
-    if (sections.length > 1)
+    if (multi)
       lines.push(`## ${section.title}`, '')
-    for (const slide of section.slides) {
-      lines.push(`${sections.length > 1 ? '###' : '##'} ${slide.title}`, '', `Slide ${slide.no}: ${slideUrl(deck, slide.no)}`, '')
+    const parentTitle = multi ? section.title : deck.title
+    for (const [index, slide] of section.slides.entries()) {
+      if (!(index === 0 && slide.title === parentTitle))
+        lines.push(`${'#'.repeat(slideDepth)} ${slide.title}`, '')
+      lines.push(`Slide ${slide.no}: ${slideUrl(deck, slide.no)}`, '')
       if (slide.markdown)
-        lines.push(slide.markdown, '')
+        lines.push(shiftHeadings(slide.markdown, slideDepth - 1), '')
       if (notes && slide.note)
         lines.push(`> Speaker notes: ${slide.note.replace(/\s+/g, ' ')}`, '')
     }
@@ -608,9 +666,12 @@ export function deckDescription(config: { info?: string | boolean, seoMeta?: { o
 export async function buildStaticContent(options: ResolvedSlidevOptions, base: string, now = new Date()): Promise<Record<string, string>> {
   const settings = resolveStaticContentSettings(options.data.config.themeConfig)
   const config = options.data.config
+  const lang = options.data.headmatter.lang
   const deck: DeckInfo = {
     title: config.title || options.data.headmatter.title as string || 'Slides',
     description: deckDescription(config),
+    lang: typeof lang === 'string' && lang.trim() ? lang.trim() : 'en',
+    analytics: resolveAnalyticsSettings(config.themeConfig)?.goatcounter,
     root: settings.siteUrl ?? base,
     hashRouter: config.routerMode === 'hash',
     generatedAt: now,
@@ -637,14 +698,99 @@ export async function buildStaticContent(options: ResolvedSlidevOptions, base: s
   files['llms-full.txt'] = renderLlmsFullTxt(deck, sections, settings.notes)
   if (settings.siteUrl) {
     files['sitemap.xml'] = renderSitemap(deck, sections)
-    files['robots.txt'] = `User-agent: *\nAllow: /\n\nSitemap: ${settings.siteUrl}sitemap.xml\n`
+    // Crawlers read robots.txt at the root of the host only, so the file is
+    // pointless (and misleading) for a deck served from a sub-path.
+    if (servedFromHostRoot(settings.siteUrl))
+      files['robots.txt'] = `User-agent: *\nAllow: /\n\nSitemap: ${settings.siteUrl}sitemap.xml\n`
   }
   return files
 }
 
+/** Whether `siteUrl` is the root of its host (`https://example.com/`, not `https://example.com/deck/`). */
+export function servedFromHostRoot(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).pathname === '/'
+  }
+  catch {
+    return false
+  }
+}
+
+/** The `Sitemap:` line a host's own robots.txt needs for a deck served from a sub-path. */
+export function robotsSitemapHint(siteUrl: string): string | undefined {
+  if (servedFromHostRoot(siteUrl))
+    return undefined
+  try {
+    return `robots.txt is only read at the root of a host: add \`Sitemap: ${siteUrl}sitemap.xml\` to ${new URL(siteUrl).origin}/robots.txt`
+  }
+  catch {
+    return undefined
+  }
+}
+
+/** The class of the paragraph `indexHtmlTags` adds to the root page. */
+export const STATIC_LINKS_CLASS = 'slidev-theme-kotlin-static-links'
+
+/**
+ * Tags that make the built `index.html` describe its static companions.
+ *
+ * Without JavaScript the deck's root page is empty, so a crawler that lands
+ * on it (or on the `404.html` copied from it) would never learn that a
+ * handout, `llms-full.txt`, or a sitemap exist. These tags point it there:
+ * `rel="alternate"` links in the head, a paragraph at the end of the body
+ * with the same links as visible text, a `<meta name="description">` when
+ * Slidev's headmatter gives one, and, once the public URL is known, the
+ * canonical URL and the sitemap.
+ *
+ * The paragraph is ordinary markup rather than `<noscript>`: text extractors
+ * behind many AI crawlers drop `<noscript>` wholesale, while a paragraph
+ * reaches every reader. A stylesheet rule hides it as soon as the app has
+ * mounted into `#app`, so a visitor with JavaScript never sees it.
+ */
+export function indexHtmlTags(deck: Pick<DeckInfo, 'root' | 'description'>, siteUrl: string | undefined): HtmlTagDescriptor[] {
+  const handout = `${deck.root}handout/`
+  const fullText = `${deck.root}llms-full.txt`
+  const tags: HtmlTagDescriptor[] = [
+    { tag: 'meta', attrs: { name: 'robots', content: 'index, follow' }, injectTo: 'head' },
+  ]
+  if (deck.description)
+    tags.push({ tag: 'meta', attrs: { name: 'description', content: deck.description }, injectTo: 'head' })
+  if (siteUrl) {
+    tags.push(
+      { tag: 'link', attrs: { rel: 'canonical', href: siteUrl }, injectTo: 'head' },
+      { tag: 'link', attrs: { rel: 'sitemap', type: 'application/xml', title: 'Sitemap', href: `${siteUrl}sitemap.xml` }, injectTo: 'head' },
+    )
+  }
+  tags.push(
+    { tag: 'link', attrs: { rel: 'alternate', type: 'text/html', title: 'Handout', href: handout }, injectTo: 'head' },
+    { tag: 'link', attrs: { rel: 'alternate', type: 'text/markdown', title: 'Full text for language models', href: fullText }, injectTo: 'head' },
+    {
+      tag: 'style',
+      injectTo: 'head',
+      children: `.${STATIC_LINKS_CLASS}{font:14px/1.5 system-ui,sans-serif;margin:1rem}#app:not(:empty)~.${STATIC_LINKS_CLASS}{display:none}`,
+    },
+    {
+      tag: 'p',
+      attrs: { class: STATIC_LINKS_CLASS },
+      injectTo: 'body',
+      children: `This presentation runs as a web app and needs JavaScript. Read the <a href="${escapeHtml(handout)}">handout</a> with every slide's text and code, or the <a href="${escapeHtml(fullText)}">full text as Markdown</a> (see <a href="${escapeHtml(`${deck.root}llms.txt`)}">llms.txt</a>).`,
+    },
+  )
+  return tags
+}
+
+/**
+ * Drop the `<meta name="description">` Slidev renders from the raw `info`
+ * Markdown, so the page carries the theme's plain-text one alone.
+ */
+export function withoutSlidevDescription(html: string): string {
+  return html.replace(/[ \t]*<meta name="description" content="[^"]*"\s*\/?>[ \t]*\r?\n?/g, '')
+}
+
 /** Vite plugin writing the static content after a `slidev build`. */
 export function staticContentPlugin(options: ResolvedSlidevOptions): Plugin | undefined {
-  if (!resolveStaticContentSettings(options.data.config.themeConfig).enabled)
+  const settings = resolveStaticContentSettings(options.data.config.themeConfig)
+  if (!settings.enabled)
     return undefined
   let outDir = ''
   let base = '/'
@@ -654,6 +800,13 @@ export function staticContentPlugin(options: ResolvedSlidevOptions): Plugin | un
     configResolved(config) {
       outDir = resolve(config.root, config.build.outDir)
       base = config.base
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        const deck = { root: settings.siteUrl ?? base, description: deckDescription(options.data.config) }
+        return { html: deck.description ? withoutSlidevDescription(html) : html, tags: indexHtmlTags(deck, settings.siteUrl) }
+      },
     },
     async closeBundle() {
       const files = await buildStaticContent(options, base)
@@ -666,6 +819,9 @@ export function staticContentPlugin(options: ResolvedSlidevOptions): Plugin | un
         await writeFile(target, content, 'utf-8')
       }
       console.log(`[slidev-theme-kotlin] static content: ${Object.keys(files).join(', ')}`)
+      const hint = settings.siteUrl && robotsSitemapHint(settings.siteUrl)
+      if (hint)
+        console.log(`[slidev-theme-kotlin] ${hint}`)
     },
   }
 }

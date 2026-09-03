@@ -6,9 +6,14 @@ import {
   deckDescription,
   expandMagicMoveBlocks,
   expandSnippetImports,
+  indexHtmlTags,
   renderHandout,
   renderLlmsFullTxt,
   renderLlmsTxt,
+  robotsSitemapHint,
+  servedFromHostRoot,
+  shiftHeadings,
+  withoutSlidevDescription,
   renderMarkdown,
   renderSitemap,
   resolveStaticContentSettings,
@@ -136,6 +141,11 @@ describe('cleanSlideMarkdown', () => {
     )
   })
 
+  it('puts every heading below the slide title and leaves fences alone', () => {
+    const content = '## Kicker\n\n# Title\n\n# Another\n\n### Deep\n\n```yaml\n# not a heading\n```'
+    expect(cleanSlideMarkdown(content, ctx)).toBe('## Kicker\n\n## Title\n\n## Another\n\n### Deep\n\n```yaml\n# not a heading\n```')
+  })
+
   it('does not caption plain Kotlin or SQL fences', () => {
     expect(cleanSlideMarkdown('```kts gradle\nplugins {}\n```', ctx)).toBe('**Gradle**\n\n```kts\nplugins {}\n```')
     expect(cleanSlideMarkdown('```kotlin\nval x = 1\n```', ctx)).toBe('```kotlin\nval x = 1\n```')
@@ -188,9 +198,17 @@ describe('collectSections', () => {
   })
 })
 
+describe('shiftHeadings', () => {
+  it('moves headings down the outline outside fences, capped at six', () => {
+    expect(shiftHeadings('## Sub\n\n```sh\n## keep\n```\n\n###### Six\n#no', 2)).toBe('#### Sub\n\n```sh\n## keep\n```\n\n###### Six\n#no')
+    expect(shiftHeadings('## Sub', 0)).toBe('## Sub')
+  })
+})
+
 const deck: DeckInfo = {
   title: 'Exposed Fundamentals',
   description: 'From relational model to Kotlin queries',
+  lang: 'en',
   root: 'https://example.com/deck/',
   hashRouter: true,
   generatedAt: new Date('2026-09-03T00:00:00Z'),
@@ -199,7 +217,7 @@ const deck: DeckInfo = {
 const sections: HandoutSection[] = [
   { slug: 'slides', title: 'Exposed Fundamentals', file: 'slides.md', slides: [{ no: 1, title: 'Exposed Fundamentals', markdown: 'Welcome' }] },
   { slug: 'lesson-1', title: 'Lesson 1', file: 'lessons/lesson-1.md', slides: [
-    { no: 2, title: 'Tables', markdown: '```kotlin\nobject Talks : Table()\n```', note: 'Mention *DSL*' },
+    { no: 2, title: 'Tables', markdown: '## Columns\n\n```kotlin\nobject Talks : Table()\n```', note: 'Mention *DSL*' },
   ] },
 ]
 
@@ -241,6 +259,14 @@ describe('renderHandout', () => {
     expect(lesson).toContain('<section class="slide" id="slide-2">')
     expect(lesson).toContain('href="https://example.com/deck/#/2">slide 2 ↗</a>')
     expect(lesson).toContain('<code class="language-kotlin">object Talks : Table()</code>')
+    // Slide titles are h2, so a slide's own `##` renders one level below.
+    expect(lesson).toContain('<h3>Columns</h3>')
+    expect(lesson).not.toContain('<h2>Columns</h2>')
+    expect(lesson).toContain('<html lang="en">')
+    expect(lesson).toContain('<meta property="og:type" content="article">')
+    expect(lesson).toContain('<meta property="og:title" content="Lesson 1 · Exposed Fundamentals">')
+    expect(lesson).toContain('<meta property="og:url" content="https://example.com/deck/handout/lesson-1.html">')
+    expect(lesson).toContain('<meta property="og:site_name" content="Exposed Fundamentals">')
     expect(lesson).toContain('<strong>Speaker notes</strong> Mention <em>DSL</em>')
     expect(lesson).toContain('← Exposed Fundamentals')
     expect(files['handout/index.html']).toContain('href="https://example.com/deck/handout/lesson-1.html#slide-2">Tables</a>')
@@ -252,6 +278,18 @@ describe('renderHandout', () => {
     expect(files['handout/lesson-1.html']).not.toContain('Speaker notes')
     expect(files['handout/lesson-1.html']).toContain('<h1>Exposed Fundamentals</h1>')
   })
+
+  it('adds the GoatCounter tag when the deck counts pageviews', async () => {
+    const files = await renderHandout({ ...deck, analytics: 'https://x.goatcounter.com/count' }, [sections[1]], undefined, false)
+    expect(files['handout/lesson-1.html']).toContain('<script data-goatcounter="https://x.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>')
+    const plain = await renderHandout(deck, [sections[1]], undefined, false)
+    expect(plain['handout/lesson-1.html']).not.toContain('goatcounter')
+  })
+
+  it('takes the language from the deck', async () => {
+    const files = await renderHandout({ ...deck, lang: 'nl' }, [sections[1]], undefined, false)
+    expect(files['handout/lesson-1.html']).toContain('<html lang="nl">')
+  })
 })
 
 describe('llms and sitemap', () => {
@@ -262,9 +300,25 @@ describe('llms and sitemap', () => {
     expect(text).toContain('- [Full text](https://example.com/deck/llms-full.txt)')
   })
 
-  it('renders llms-full.txt with every slide and its code', () => {
+  it('renders llms-full.txt as one outline: deck, section, slide, then the slide\'s headings', () => {
     const text = renderLlmsFullTxt(deck, sections, true)
-    expect(text).toContain('## Lesson 1\n\n### Tables\n\nSlide 2: https://example.com/deck/#/2\n\n```kotlin\nobject Talks : Table()\n```\n\n> Speaker notes: Mention *DSL*')
+    expect(text).toContain('## Lesson 1\n\n### Tables\n\nSlide 2: https://example.com/deck/#/2\n\n#### Columns\n\n```kotlin\nobject Talks : Table()\n```\n\n> Speaker notes: Mention *DSL*')
+  })
+
+  it('does not repeat a title slide under the heading it came from', () => {
+    const multi = renderLlmsFullTxt(deck, sections, false)
+    expect(multi).toContain('## Exposed Fundamentals\n\nSlide 1: https://example.com/deck/#/1\n\nWelcome')
+    expect(multi).not.toContain('### Exposed Fundamentals')
+    const single = renderLlmsFullTxt(deck, [{ ...sections[0], slides: [...sections[0].slides, { no: 2, title: 'Next', markdown: '## Sub' }] }], false)
+    expect(single).toContain('# Exposed Fundamentals\n\n> From relational model to Kotlin queries\n\nSource: https://example.com/deck/\n\nSlide 1: https://example.com/deck/#/1\n\nWelcome\n\n## Next\n\nSlide 2: https://example.com/deck/#/2\n\n### Sub')
+  })
+
+  it('writes robots.txt only for a deck at the root of its host', () => {
+    expect(servedFromHostRoot('https://example.com/')).toBe(true)
+    expect(servedFromHostRoot('https://example.com/deck/')).toBe(false)
+    expect(servedFromHostRoot('not a url')).toBe(false)
+    expect(robotsSitemapHint('https://example.com/')).toBeUndefined()
+    expect(robotsSitemapHint('https://user.github.io/deck/')).toBe('robots.txt is only read at the root of a host: add `Sitemap: https://user.github.io/deck/sitemap.xml` to https://user.github.io/robots.txt')
   })
 
   it('renders a sitemap of the deck and handout pages', () => {
@@ -281,5 +335,38 @@ describe('deckDescription', () => {
     expect(deckDescription({ info: '## Intro\n\nA *deck* about [Exposed](https://x)\n\nMore' })).toBe('Intro')
     expect(deckDescription({ info: 'A *deck* about [Exposed](https://x)' })).toBe('A deck about Exposed')
     expect(deckDescription({ info: false })).toBe('')
+  })
+})
+
+describe('indexHtmlTags', () => {
+  const attrs = (tags: ReturnType<typeof indexHtmlTags>) => tags.map(tag => ({ tag: tag.tag, injectTo: tag.injectTo, ...tag.attrs }))
+
+  it('points the root page at the handout and llms-full.txt with visible links the app hides', () => {
+    const tags = indexHtmlTags({ root: '/deck/', description: '' }, undefined)
+    expect(attrs(tags)).toEqual([
+      { tag: 'meta', injectTo: 'head', name: 'robots', content: 'index, follow' },
+      { tag: 'link', injectTo: 'head', rel: 'alternate', type: 'text/html', title: 'Handout', href: '/deck/handout/' },
+      { tag: 'link', injectTo: 'head', rel: 'alternate', type: 'text/markdown', title: 'Full text for language models', href: '/deck/llms-full.txt' },
+      { tag: 'style', injectTo: 'head' },
+      { tag: 'p', injectTo: 'body', class: 'slidev-theme-kotlin-static-links' },
+    ])
+    expect(tags.at(-2)?.children).toContain('#app:not(:empty)~.slidev-theme-kotlin-static-links{display:none}')
+    const links = tags.at(-1)?.children as string
+    expect(links).toContain('<a href="/deck/handout/">handout</a>')
+    expect(links).toContain('<a href="/deck/llms-full.txt">full text as Markdown</a>')
+    expect(links).toContain('<a href="/deck/llms.txt">llms.txt</a>')
+  })
+
+  it('removes the description Slidev rendered from the raw info', () => {
+    const html = '<head>\n<meta name="description" content="*Raw* info">\n<meta property="og:title" content="T"></head>'
+    expect(withoutSlidevDescription(html)).toBe('<head>\n<meta property="og:title" content="T"></head>')
+  })
+
+  it('adds the description, canonical URL, and sitemap once the public URL is known', () => {
+    const tags = attrs(indexHtmlTags({ root: 'https://example.com/deck/', description: 'From relational model to Kotlin queries' }, 'https://example.com/deck/'))
+    expect(tags).toContainEqual({ tag: 'meta', injectTo: 'head', name: 'description', content: 'From relational model to Kotlin queries' })
+    expect(tags).toContainEqual({ tag: 'link', injectTo: 'head', rel: 'canonical', href: 'https://example.com/deck/' })
+    expect(tags).toContainEqual({ tag: 'link', injectTo: 'head', rel: 'sitemap', type: 'application/xml', title: 'Sitemap', href: 'https://example.com/deck/sitemap.xml' })
+    expect(tags).toContainEqual({ tag: 'link', injectTo: 'head', rel: 'alternate', type: 'text/markdown', title: 'Full text for language models', href: 'https://example.com/deck/llms-full.txt' })
   })
 })

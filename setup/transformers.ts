@@ -219,16 +219,13 @@ export default defineTransformersSetup(() => ({
     const source = s.toString()
     // Fold imports first: `overwrite` discards content appended inside its
     // range, so this pass must not run after the ordinal markers below. All
-    // three edit sets address disjoint ranges of the original source.
-    if (foldImportsEnabled(transformerOptions.data.config.themeConfig)) {
-      for (const edit of foldImportEdits(source)) {
-        if (edit.start === edit.end)
-          s.appendLeft(edit.start, edit.text)
-        else if (edit.text)
-          s.overwrite(edit.start, edit.end, edit.text)
-        else
-          s.remove(edit.start, edit.end)
-      }
+    // three edit sets address disjoint ranges of the original source. The
+    // theme's fence flags are stripped even when folding is off.
+    for (const edit of foldImportEdits(source, { fold: foldImportsEnabled(transformerOptions.data.config.themeConfig) })) {
+      if (edit.text)
+        s.overwrite(edit.start, edit.end, edit.text)
+      else
+        s.remove(edit.start, edit.end)
     }
     // `pre` is a MarkdownTransformer and therefore runs before Slidev parses
     // this slide into codeblock contexts. Only linked slides need markers.

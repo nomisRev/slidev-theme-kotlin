@@ -6,14 +6,20 @@
  * such as Knit can verify it, and a reader of the deck's handout (or a coding
  * agent reading `llms-full.txt`) learns which package every symbol comes
  * from. This module lets a fence keep its imports in the Markdown source
- * while the rendered slide hides them behind a small toggle.
+ * while the rendered slide simply leaves them out.
  *
  * The markdown transformer in `transformers.ts` applies `foldImportEdits` to
- * each slide before Slidev parses it: the import lines leave the fence, and a
- * `<CodeImports>` component carrying them is inserted right before it. The
- * component keeps the imports in the DOM, collapsed, so nothing about the
- * code window changes: line numbers, `{1|2-3}` highlight ranges, and
- * annotation targets all count from the first line of real code.
+ * each slide before Slidev parses it: the import lines leave the fence, and
+ * nothing else about the code window changes, so line numbers, `{1|2-3}`
+ * highlight ranges, and annotation targets all count from the first line of
+ * real code. The slide shows no trace of the fold; the handout, `llms-full.txt`,
+ * and the generated Kotlin sources keep the fence complete.
+ *
+ * A fence can fold more than its imports. A `// Example` comment line marks
+ * where the example starts: everything above it — imports, but also the
+ * helper declarations the example relies on — leaves the slide along with
+ * the marker line. The comment is valid Kotlin, so the fence still compiles
+ * as written; the handout prints it in full.
  *
  * Add `show-imports` to the fence info to keep the imports visible on a slide
  * that is about them, or set `themeConfig.foldImports: false` to turn the
@@ -26,29 +32,83 @@ export const FOLDABLE_LANGS = new Set(['kotlin', 'kt', 'kts', 'java', 'scala'])
 /** Fence info flag that keeps the imports of one fence visible. */
 export const SHOW_IMPORTS_FLAG = 'show-imports'
 
+/** Fence info flag that keeps a fence out of the generated Kotlin sources (see `kotlin-snippets.ts`). */
+export const NO_COMPILE_FLAG = 'no-compile'
+
+/**
+ * Flags the theme reads off a fence's info line and removes before Slidev
+ * or Shiki see it, so they never shadow the first word of the meta (which
+ * `code-window-icon.ts` reads as the code window's identity).
+ */
+export const THEME_FENCE_FLAGS = [SHOW_IMPORTS_FLAG, NO_COMPILE_FLAG]
+
 const IMPORT_LINE = /^import[ \t]+(\S.*?)[ \t]*;?[ \t]*$/
+/**
+ * The comment that marks where the example starts: `// Example`, optionally
+ * followed by a colon and a description. Only the first one in a fence
+ * counts, and only when there is code above it.
+ */
+export const EXAMPLE_MARKER = /^[ \t]*\/\/[ \t]*[Ee]xample(?:[ \t]*:.*)?[ \t]*$/
 const PRELUDE_LINE = /^(?:package[ \t]+\S|@file:)/
 const SHOW_IMPORTS = /(?:^|\s)show-imports(?=\s|$)/
+const THEME_FLAGS = new RegExp(`(?:^|\\s)(?:${THEME_FENCE_FLAGS.join('|')})(?=\\s|$)`, 'g')
 
 export interface SplitImports {
-  /** Import targets in source order, without the `import` keyword or `;`. */
+  /** Import targets in the folded region, in source order, without the `import` keyword or `;`. */
   imports: string[]
-  /** The code with the import block (and the blank lines after it) removed. */
+  /** The code with the folded region (and the blank lines after it) removed. */
   body: string
-  /** Zero-based index of the first import line, when there are imports. */
-  importStartLine?: number
-  /** Zero-based index of the first line kept after the import block. */
+  /**
+   * The code above a `// Example` marker, when the fence has one: the whole
+   * folded region, imports included, without the marker line.
+   */
+  prefix?: string
+  /** Zero-based index of the first folded line, when something folds. */
+  foldStartLine?: number
+  /** Zero-based index of the first line kept after the folded region. */
   bodyStartLine?: number
 }
 
 /**
- * Split a leading import block off a snippet. A `package` line or `@file:`
- * annotation before the imports stays in the body. Blank lines are allowed
- * between imports; the blank lines that separate the last import from the
- * code are removed along with the block.
+ * Split the folded region off a snippet: everything above a `// Example`
+ * marker when the snippet has one, otherwise its leading import block.
+ *
+ * Without a marker, a `package` line or `@file:` annotation before the
+ * imports stays in the body. Blank lines are allowed between imports; the
+ * blank lines that separate the last import from the code are removed along
+ * with the block. With a marker, the prelude folds too.
  */
 export function splitLeadingImports(code: string): SplitImports {
   const lines = code.split(/\r?\n/)
+  return splitAtExampleMarker(lines) ?? splitImportBlock(code, lines)
+}
+
+/** The marker split, or `undefined` when there is no marker or nothing above it. */
+function splitAtExampleMarker(lines: string[]): SplitImports | undefined {
+  const marker = lines.findIndex(line => EXAMPLE_MARKER.test(line))
+  if (marker < 0)
+    return undefined
+  const above = lines.slice(0, marker)
+  const first = above.findIndex(line => line.trim() !== '')
+  // A marker with nothing above it is an ordinary comment.
+  if (first < 0)
+    return undefined
+  let last = marker - 1
+  while (last > first && above[last].trim() === '')
+    last--
+  let end = marker + 1
+  while (end < lines.length && lines[end].trim() === '')
+    end++
+  const prefix = lines.slice(first, last + 1)
+  const imports = prefix.flatMap((line) => {
+    const match = line.match(IMPORT_LINE)
+    return match ? [match[1]] : []
+  })
+  return { imports, body: lines.slice(end).join('\n'), prefix: prefix.join('\n'), foldStartLine: 0, bodyStartLine: end }
+}
+
+/** Split only the leading import block off a snippet, ignoring any `// Example` marker. */
+export function splitImportBlock(code: string, lines: string[] = code.split(/\r?\n/)): SplitImports {
   let start = 0
   while (start < lines.length && (lines[start].trim() === '' || PRELUDE_LINE.test(lines[start])))
     start++
@@ -77,7 +137,7 @@ export function splitLeadingImports(code: string): SplitImports {
   return {
     imports,
     body: [...kept, ...lines.slice(end)].join('\n'),
-    importStartLine: start,
+    foldStartLine: start,
     bodyStartLine: end,
   }
 }
@@ -90,22 +150,15 @@ export function shouldFoldImports(info: string): boolean {
   return FOLDABLE_LANGS.has(lang) && !SHOW_IMPORTS.test(info)
 }
 
-/** Remove the `show-imports` flag from a fence info line. */
-export function stripShowImportsFlag(info: string): string {
-  return info.replace(SHOW_IMPORTS, ' ').replace(/\s{2,}/g, ' ').trim()
+/** Split the theme's flags off a fence info line: the flags found, and the line without them. */
+export function takeThemeFlags(info: string): { info: string, flags: string[] } {
+  const flags = [...info.matchAll(THEME_FLAGS)].map(match => match[0].trim())
+  return { info: info.replace(THEME_FLAGS, ' ').replace(/\s{2,}/g, ' ').trim(), flags }
 }
 
-/**
- * Escape a value for a single-quoted HTML attribute. Vue's template compiler
- * decodes entities in attribute values, so the JSON survives intact.
- */
-function attributeValue(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/'/g, '&#39;')
-}
-
-/** The component markup that carries a fence's folded imports. */
-export function codeImportsMarkup(imports: string[]): string {
-  return `<CodeImports :imports='${attributeValue(JSON.stringify(imports))}' />`
+/** Remove the theme's flags (`show-imports`, `no-compile`) from a fence info line. */
+export function stripThemeFlags(info: string): string {
+  return takeThemeFlags(info).info
 }
 
 /** A source edit: replace `[start, end)` with `text` (empty text removes). */
@@ -153,42 +206,52 @@ function findFenceClose(lines: Line[], open: number, marker: string): number {
 }
 
 /**
- * Edits for one fence: strip its import lines, drop a `show-imports` flag,
- * and report the imports so the caller can place a `<CodeImports>`.
+ * Edits for one fence: drop the theme's flags and, with `fold`, strip its
+ * folded region. Returns whether anything folded.
  */
-function foldFence(lines: Line[], open: number, close: number, info: string, edits: SourceEdit[]): string[] {
-  const flagged = SHOW_IMPORTS.test(info)
-  if (flagged) {
-    // The flag is the theme's, not Slidev's: take it out of the info line.
+function foldFence(lines: Line[], open: number, close: number, info: string, edits: SourceEdit[], fold: boolean): boolean {
+  const stripped = stripThemeFlags(info)
+  if (stripped !== info) {
+    // The flags are the theme's, not Slidev's: take them out of the info line.
     const line = lines[open]
     const infoStart = line.start + line.text.indexOf(info)
-    edits.push({ start: infoStart, end: infoStart + info.length, text: stripShowImportsFlag(info) })
+    edits.push({ start: infoStart, end: infoStart + info.length, text: stripped })
   }
-  if (!shouldFoldImports(info) || close <= open + 1)
-    return []
+  if (!fold || !shouldFoldImports(info) || close <= open + 1)
+    return false
 
   const body = lines.slice(open + 1, close)
   const split = splitLeadingImports(body.map(line => line.text).join('\n'))
-  if (!split.imports.length)
-    return []
+  if (split.foldStartLine === undefined)
+    return false
 
-  const removeFrom = body[split.importStartLine!].start
+  const removeFrom = body[split.foldStartLine].start
   const removeTo = split.bodyStartLine! < body.length ? body[split.bodyStartLine!].start : lines[close].start
   edits.push({ start: removeFrom, end: removeTo, text: '' })
-  return split.imports
+  return true
+}
+
+export interface FoldOptions {
+  /**
+   * Fold the imports (or the `// Example` prefix) of each fence. `false`
+   * (`themeConfig.foldImports: false`) leaves the code as written; the
+   * theme's flags still leave the info line, since Slidev must never see them.
+   */
+  fold?: boolean
 }
 
 /**
- * Compute the edits that fold the imports of every code fence in a slide's
- * Markdown. Top-level three-backtick fences each get their own
- * `<CodeImports>`; the steps of a classic ````md magic-move```` block share
- * one, placed before the block, listing the union of their imports. Fences
- * nested in any other four-plus-backtick or tilde block are left alone.
+ * Compute the edits that strip the theme's flags from, and fold the imports
+ * (or the `// Example` prefix) of, every code fence in a slide's Markdown:
+ * top-level three-backtick fences and the steps of a classic
+ * ````md magic-move```` block. Fences nested in any other four-plus-backtick
+ * or tilde block are left alone.
  *
  * Edits never overlap and are returned in source order, so they can be
  * applied to a MagicString alongside the theme's other slide edits.
  */
-export function foldImportEdits(source: string): SourceEdit[] {
+export function foldImportEdits(source: string, options: FoldOptions = {}): SourceEdit[] {
+  const fold = options.fold !== false
   const lines = scanLines(source)
   const edits: SourceEdit[] = []
   for (let i = 0; i < lines.length; i++) {
@@ -203,12 +266,9 @@ export function foldImportEdits(source: string): SourceEdit[] {
       break
 
     if (marker === '```' && info) {
-      const imports = foldFence(lines, i, close, info, edits)
-      if (imports.length)
-        edits.push({ start: lines[i].start, end: lines[i].start, text: `\n${codeImportsMarkup(imports)}\n\n` })
+      foldFence(lines, i, close, info, edits, fold)
     }
     else if (marker.startsWith('````') && MAGIC_MOVE_BLOCK.test(info)) {
-      const imports = new Set<string>()
       for (let j = i + 1; j < close; j++) {
         const inner = lines[j].text.match(BACKTICK_FENCE)
         if (!inner || inner[1] !== '```' || !inner[2].trim())
@@ -216,12 +276,9 @@ export function foldImportEdits(source: string): SourceEdit[] {
         const innerClose = findFenceClose(lines, j, '```')
         if (innerClose < 0 || innerClose >= close)
           break
-        for (const target of foldFence(lines, j, innerClose, inner[2].trim(), edits))
-          imports.add(target)
+        foldFence(lines, j, innerClose, inner[2].trim(), edits, fold)
         j = innerClose
       }
-      if (imports.size)
-        edits.push({ start: lines[i].start, end: lines[i].start, text: `\n${codeImportsMarkup([...imports])}\n\n` })
     }
     i = close
   }
