@@ -13,6 +13,10 @@
 - Annotation editing is a frozen session: entering the editor locks Slidev navigation (shortcuts, click-to-navigate, nav controls, swipes) on the current slide and click, every drag and arrow-key nudge stays a local draft, and **Done editing annotations** commits all changed drafts in one write phase; a failed write keeps the drafts and the session. **Esc** cancels in stages (drag, selection, then the session after a confirmation).
 - Quadratic connector editing: the first edit of an automatic leader keeps its visible curve as a persisted control point, which renders as a draggable, keyboard-nudgeable handle with a dashed control-polygon guide. **Curve connector** and **Straighten connector** add or remove the control point from the toolbar, and the connector's hit target follows the rendered curve.
 
+### Fixed
+
+- The development-only **Edit annotations** launcher no longer appears in PNG exports: `slidev export` renders through a development server, and the launcher only hid itself for print media. It now also stays out of the presenter view.
+
 ### Changed
 
 - Default code windows to 80 monospace columns instead of 68. Decks keep overriding `--code-window-columns` from their stylesheet.

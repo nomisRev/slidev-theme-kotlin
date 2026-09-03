@@ -1,11 +1,16 @@
 <script setup lang="ts">
+import { useNav } from '@slidev/client'
 import { computed } from 'vue'
 import editIcon from '../assets/edit-3-svgrepo-com.svg'
 import { annotationEditorRegistryVersion, hasRegisteredAnnotationEditors } from './drawn-annotation/editor-store'
 
+// `slidev export` renders through a development server, so the launcher would
+// otherwise land in every exported PNG: the `@media print` rule below only
+// covers PDF export. Presenter view has no editable slide either.
+const { isPresenter, isPrintMode } = useNav()
 const hasAnnotations = computed(() => {
   annotationEditorRegistryVersion.value
-  return hasRegisteredAnnotationEditors()
+  return hasRegisteredAnnotationEditors() && !isPrintMode.value && !isPresenter.value
 })
 
 function openAnnotationEditor() {
