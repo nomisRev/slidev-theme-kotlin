@@ -4,16 +4,37 @@
 
 ### Added
 
+- Folded imports: a leading block of `import` lines in a Kotlin, Java, or Scala fence leaves the code window and becomes a small "N imports" toggle in its top-right corner, on ordinary fences, cross-slide Magic Move chains, and classic Magic Move blocks alike. Line numbers, highlight ranges, and annotation targets count from the first line of real code. `show-imports` on a fence or `themeConfig.foldImports: false` keeps imports visible.
+- Static content on every `slidev build`: a crawlable `handout/` (one page per source file, with highlighted code and links back to each slide), `llms.txt` and `llms-full.txt`, plus `sitemap.xml` and `robots.txt` when `themeConfig.siteUrl` is set. `themeConfig.handout: false` disables it; `handout.notes: false` leaves presenter notes out.
+- Hash-mode builds (`slidev build --router-mode hash`) get a script forwarding old history-mode deep links such as `/deck/12` to `/deck/#/12`, so links shared before the switch keep working on hosts without a single-page-app rewrite.
+
+### Changed
+
+- Default code windows to 80 monospace columns instead of 68. Decks keep overriding `--code-window-columns` from their stylesheet.
+
+## 0.12.1
+
+### Fixed
+
+- Preserve visible `DrawnAnnotation` marks and `InlineCompilerError` diagnostics across adjacent cross-slide Magic Move transitions when their targets remain in place. Matching ink now hands off without replaying its entrance animation, while moved or unrelated targets still animate normally.
+
+## 0.12.0
+
+### Added
+
 - Support Magic Move between slides: a `magic-move` separator (or `magicMove: true` frontmatter) links consecutive slides, and their top-level code fences morph across the slide boundary in both navigation directions. Code windows pair up by position, so parallel snippets (for example Kotlin next to SQL) animate independently, and decks using `transition: view-transition` pair the code windows through the View Transitions API instead of cross-fading them.
 - Support per-click line highlighting (`{1|2-3}`) and fence options (`{lines:true, at:2}`) on chained fences: the ranges register as clicks on their slide and step through before navigation moves on, matching classic Magic Move behaviour.
 - Add a development-only visual annotation editor: `drawnAnnotationEditor()` (exported as `slidev-theme-kotlin/annotation-editor`) injects transient source locators while serving, and persists dragged label, width, and connector geometry as a normalized `:geometry` binding on exactly the edited `DrawnAnnotation` tag — with keyboard nudging, undo, revision-conflict detection, and reset controls. Builds and exports carry no editor code.
 - Add the `geometry` prop to `DrawnAnnotation`: normalized source-local label and connector geometry, including quadratic Bézier connectors, that overrides automatic placement.
+- Add `DrawnAnnotation`'s passive mode for observing a click already owned by nearby `v-click` / `v-clicks` content without registering an extra click step.
+- Add JDBC and R2DBC identity badges and border colours for Kotlin code fences with the `jdbc` and `r2dbc` modifiers.
 
 ### Changed
 
 - Make automatic `DrawnAnnotation` label placement deterministic: candidates prefer the requested side and stay clear of the slide's laid-out content (including still-hidden v-click content, so a label never sits where the slide is about to grow), of the annotation's own mark, of labels placed by earlier annotations, and of `avoid-selector` matches (kept at `clearance` distance), wrapping into free space when needed.
 - **Breaking**: replace `DrawnAnnotation`'s `label-x` / `label-y` / `label-width` props with the normalized `geometry.label` binding.
 - **Breaking**: a `DrawnAnnotation` without `at`/`on` is now part of the initial slide state instead of taking the next automatic click; give `at` or `on` for a reveal.
+- Render `DrawnAnnotation` labels as safe Markdown; inline code and block quotes use the theme's local-first JetBrains Mono stack.
 
 ### Fixed
 
@@ -26,6 +47,7 @@
 - Escape quotes in cross-slide Magic Move fence titles and options, so titles like `[Bob's file.kt]` and options like `{at:"+2"}` no longer break the slide markup.
 - Morph cross-slide Magic Move from the correct step when a chain slide contributes no fence at a position, and give duplicate identical fences on one slide their own animation identity.
 - Decode annotation source locators as UTF-8 in the browser, so decks with non-ASCII filenames can save geometry.
+- Do not apply the code-chip background to inline Markdown code in `DrawnAnnotation` labels.
 
 ## 0.11.0
 

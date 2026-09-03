@@ -116,6 +116,7 @@ native `v-click` click-ordering semantics.
 | `on` | – | `at` and `until` in one, for an annotation that belongs to a single click |
 | `sequential` | `true` | nested annotations sharing a click draw one after the other |
 | `insert` | `false` | give the annotation [a click of its own](#inside-a-magic-move-block) inside a Magic Move block |
+| `passive` | `false` | observe an existing `v-click` / `v-clicks` step at `at` without registering an additional click |
 | `wait` | `true` | hold the drawing back until the annotated element has stopped moving |
 | `track` | `true` | keep the annotation glued to elements that move |
 
@@ -184,6 +185,10 @@ one click; `on` next to an explicit `at` or `until` wins, and is reported as a
 mistake.
 
 ## Inside a Magic Move block
+
+Set `passive` when nearby `v-click` or `v-clicks` content already owns the
+annotation's `at` step. The annotation observes that existing step and does not
+register another click marker, so it draws only after the reveal has settled.
 
 By default an annotation shares its click with whatever else that click does,
 so on a Magic Move block it is drawn on the very step that morphs into place.

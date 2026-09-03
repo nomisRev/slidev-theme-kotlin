@@ -18,7 +18,7 @@ This theme provides a professional presentation template tailored for Kotlin dev
 
 ## Requirements
 
-- **Node.js**: >= 18.0.0
+- **Node.js**: >= 20.12.0
 - **Package Manager**: npm (or pnpm with shamefully-hoist=true)
 
 ## Installation
@@ -105,10 +105,11 @@ SELECT * FROM presentations;
 ```
 ````
 
-`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle` modifier
-uses the Gradle icon. `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the
-Amper, Java, Terminal, Maven, and PostgreSQL icons respectively. All other fences
-remain plain code surfaces.
+`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle`, `jdbc`,
+or `r2dbc` modifier uses the Gradle, JDBC, or R2DBC identity respectively.
+`yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the Amper, Java,
+Terminal, Maven, and PostgreSQL icons respectively. All other fences remain plain
+code surfaces.
 
 The identity border colours are exposed as theme variables and can be
 customized from a deck stylesheet. Each variable has a light and dark-mode
@@ -123,6 +124,8 @@ value:
   --code-window-terminal-color: #6c707e;
   --code-window-maven-color: #3574f0;
   --code-window-postgresql-color: #336791;
+  --code-window-jdbc-color: #f59e0b;
+  --code-window-r2dbc-color: #06b6d4;
 }
 
 html.dark {
@@ -131,11 +134,48 @@ html.dark {
 }
 ```
 
+### Folded imports
+
+A snippet on a slide reads best without its imports, but a snippet that
+carries them is complete: it compiles as written, a snippet checker such as
+Knit can verify it, and the deck's handout (see below) shows a reader which
+package every symbol comes from. So write the imports, and the theme folds
+them away:
+
+````md
+```kotlin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+
+fun numbers(): Flow<Int> = flowOf(1, 2, 3)
+```
+````
+
+On the slide, the code window shows only `fun numbers()…` plus a small
+"2 imports" toggle in its top-right corner that reveals the import lines. The
+imports stay in the page as text, and the handout and `llms-full.txt` print
+the fence in full.
+
+Details:
+
+- Kotlin, Java, and Scala fences (`kotlin`, `kt`, `kts`, `java`, `scala`)
+  fold. Only a block of `import` lines at the top of the fence counts; a
+  `package` line or `@file:` annotation before it stays visible.
+- Line numbers, `{1|2-3}` highlight ranges, and annotation targets all
+  count from the first line of real code, so folding never shifts them.
+- Cross-slide Magic Move chains and classic ````md magic-move```` blocks fold
+  too; the steps of a classic block share one toggle listing every import
+  they use between them.
+- Add `show-imports` to a fence (`` ```kotlin show-imports ``) when the slide
+  is about the imports themselves, or set `themeConfig: { foldImports: false }`
+  in the headmatter to keep every import visible.
+- Exports and print hide the toggle and keep the imports folded.
+
 ### Code sizing
 
 Every code window uses one font size calculated from the slide canvas width. By
-default, a full-width window fits 68 monospace characters. Override the column
-count once in the deck's stylesheet:
+default, a full-width window fits 80 monospace characters. Override the column
+count once in the deck's stylesheet, or narrower on a single slide class:
 
 ```css
 :root {
@@ -320,6 +360,55 @@ theme: kotlin
 
 The theme's example deck includes this guard.
 
+## Static handout, `llms.txt`, and hash-mode links
+
+A Slidev build is a single-page app: without JavaScript its `index.html`
+contains nothing but the title. Search engines render JavaScript for the root
+URL at best, and AI crawlers (GPTBot, ClaudeBot, CCBot, …) render none, so the
+code on your slides never reaches them. Every `slidev build` on this theme
+therefore also writes, next to the app:
+
+- `handout/index.html` and `handout/<section>.html` — one page per source
+  file (`src:` lesson), with every slide's title, prose, and highlighted code,
+  each linking back to the live slide. A single-file deck gets one page.
+- `llms.txt` and `llms-full.txt` — the [llmstxt.org](https://llmstxt.org)
+  convention that coding agents and AI crawlers look for: an index, and the
+  full Markdown of the deck with complete code snippets (folded imports
+  expanded).
+- `sitemap.xml` and `robots.txt` — only when the deck's public URL is known,
+  and `robots.txt` only when `public/` ships none.
+
+Theme markup is translated, not dropped: a `DrawnAnnotation` with a `label`
+becomes a quoted note about the code it points at, an `InlineCompilerError`
+becomes its diagnostic, Magic Move blocks become their steps, and
+`<<< @/file#region` snippet imports are inlined.
+
+Give the deck its public URL so links, the sitemap, and `llms.txt` are
+absolute, and opt out of notes or the whole feature if you need to:
+
+```yaml
+themeConfig:
+  siteUrl: https://example.github.io/my-deck/
+  handout:
+    notes: false   # leave presenter notes out (default: included)
+  # handout: false # disable the static content entirely
+```
+
+### Deep links on GitHub Pages
+
+GitHub Pages has no single-page-app rewrite, so a history-mode deep link such
+as `/my-deck/12` is answered by the copied `404.html` with a 404 status. Build
+with Slidev's hash router instead:
+
+```bash
+slidev build --base /my-deck/ --router-mode hash
+```
+
+Links then look like `/my-deck/#/12` and always resolve. The theme adds a small
+script to hash-mode builds that forwards old `/my-deck/12` links (and
+`presenter/…`, `overview`, `notes`, `print`, `export`) to their hash
+equivalent, so links shared before the switch keep working.
+
 ## Development
 
 ### Available Scripts
@@ -376,6 +465,7 @@ This will open the example presentation in your browser with hot-reload enabled.
 ```
 .
 ├── components/                   # Vue components
+│   ├── CodeImports.vue            # Toggle revealing a fence's folded imports
 │   ├── DrawnAnnotation.vue        # Hand-drawn marks, labels, and connectors
 │   ├── InlineCompilerError.vue    # Inline code diagnostics
 │   ├── Kodee.vue                  # Main Kodee mascot component with animations
@@ -390,7 +480,12 @@ This will open the example presentation in your browser with hot-reload enabled.
 ├── public/             # Static assets
 │   └── kotlin-logo*.svg # Kotlin logos (light/dark modes)
 ├── setup/              # Slidev setup files
-│   └── shiki.ts        # Syntax highlighting configuration for Kotlin
+│   ├── shiki.ts        # Syntax highlighting configuration for Kotlin
+│   ├── transformers.ts # Cross-slide Magic Move and import folding passes
+│   ├── code-imports.ts # Folded imports: fence scanning and source edits
+│   ├── static-content.ts       # Handout, llms.txt, sitemap generation
+│   ├── hash-route-redirect.ts  # Old history-mode links → hash routes
+│   └── vite-plugins.ts # Registers the two build plugins above
 ├── styles/             # Theme styles
 │   ├── index.ts        # Style entry point
 │   └── layout.css      # Layout styles
@@ -489,11 +584,12 @@ layout: cover
 ## Dependencies
 
 ### Runtime Dependencies
-- `@slidev/types` (^52.2.5) - Slidev type definitions
-- `roughjs` (^4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
+- `@shikijs/magic-move` (4.4.3) - Code-token morphing for Magic Move
+- `@slidev/types` (52.19.1) - Slidev type definitions
+- `roughjs` (4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
 
 ### Development Dependencies
-- `@slidev/cli` (^52.2.5) - Slidev command-line interface
+- `@slidev/cli` (52.19.1) - Slidev command-line interface
 
 ## Contributing
 

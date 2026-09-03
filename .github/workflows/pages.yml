@@ -38,7 +38,7 @@ jobs:
       - name: Build slides
         run: |
           npm run lint
-          npx slidev build slides.md --base "${{ steps.pages.outputs.base_path }}/"
+          npx slidev build slides.md --base "${{ steps.pages.outputs.base_path }}/" --router-mode hash
           node scripts/assert-production-annotation-editor.mjs
 
       - name: Upload Pages artifact
