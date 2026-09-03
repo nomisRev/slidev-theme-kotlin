@@ -150,7 +150,7 @@ export interface AnnotationAuthoringProblem {
   page: number
 }
 export const annotationAuthoringProblems = reactive(new Map<string, AnnotationAuthoringProblem>())
-function authoringProblemKey(reporter: string, message: string) { return `${reporter} ${message}` }
+function authoringProblemKey(reporter: string, message: string) { return `${reporter}\u0000${message}` }
 export function reportAnnotationAuthoringProblem(reporter: string, problem: AnnotationAuthoringProblem) {
   const key = authoringProblemKey(reporter, problem.message)
   if (!annotationAuthoringProblems.has(key))
