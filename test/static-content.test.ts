@@ -170,6 +170,11 @@ describe('collectSections', () => {
     expect(section.slides[0].markdown).toBe('> Same code')
   })
 
+  it('drops the title heading even below a kicker', () => {
+    const [section] = collectSections([slide(0, '/deck/slides.md', 'SQL DSL', '<div class="lesson-number">Topic 2</div>\n\n# SQL DSL\n\n## Write queries deliberately')], root, 'Deck', ctx)
+    expect(section.slides[0].markdown).toBe('Topic 2\n\n## Write queries deliberately')
+  })
+
   it('uses a single index section for a single-file deck', () => {
     const sections = collectSections([slide(0, '/deck/slides.md', 'Only', 'x')], root, 'Only', ctx)
     expect(sections).toHaveLength(1)

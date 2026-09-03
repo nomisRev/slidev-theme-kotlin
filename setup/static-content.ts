@@ -137,10 +137,15 @@ export function plainTitle(title: string | undefined): string {
   return decodeEntities((title ?? '').replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
 }
 
+/**
+ * Drop the heading the slide's title came from, wherever it sits: a section
+ * slide often puts a kicker (`Topic 2`) above it. The handout renders the
+ * title itself, so keeping the heading would print it twice.
+ */
 function withoutTitleHeading(markdown: string, title: string): string {
-  const match = markdown.match(/^\s*#{1,6}\s+(.+?)\s*#*\s*(?:\r?\n|$)/)
+  const match = markdown.match(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*(?:\r?\n|$)/m)
   if (match && plainTitle(match[1]) === title)
-    return markdown.slice(match[0].length).replace(/^\s+/, '')
+    return (markdown.slice(0, match.index) + markdown.slice(match.index! + match[0].length)).replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '')
   return markdown
 }
 
