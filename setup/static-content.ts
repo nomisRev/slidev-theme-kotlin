@@ -119,7 +119,8 @@ export function collectSections(slides: SectionSlide[], userRoot: string, deckTi
   const list = [...sections.values()]
   const usedSlugs = new Set<string>()
   for (const section of list) {
-    section.title = section.slides.find(slide => !/^Slide \d+$/.test(slide.title))?.title ?? section.slug
+    section.title = section.slides.find(slide => !/^Slide \d+$/.test(slide.title))?.title
+      ?? section.slug.replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
     let slug = list.length === 1 ? 'index' : section.slug
     for (let n = 2; usedSlugs.has(slug); n++)
       slug = `${section.slug}-${n}`
@@ -210,11 +211,22 @@ export function expandMagicMoveBlocks(markdown: string): string {
   return markdown.replace(MAGIC_MOVE_BLOCK, (_, __, body: string) => body)
 }
 
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+
+/** Decode the entities an attribute value needs in slide markup (`&quot;` for a quote in `text`). */
+export function decodeEntities(value: string): string {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, body: string) => {
+    if (body[0] === '#')
+      return String.fromCodePoint(body[1].toLowerCase() === 'x' ? Number.parseInt(body.slice(2), 16) : Number(body.slice(1)))
+    return ENTITIES[body.toLowerCase()] ?? entity
+  })
+}
+
 function parseAttributes(raw: string): Record<string, string> {
   const attributes: Record<string, string> = {}
   for (const match of raw.matchAll(/([:@\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g)) {
     const name = match[1].replace(/^:/, '')
-    attributes[name] = match[2] ?? match[3] ?? match[4] ?? ''
+    attributes[name] = decodeEntities(match[2] ?? match[3] ?? match[4] ?? '')
   }
   return attributes
 }
@@ -506,7 +518,8 @@ export function renderLlmsTxt(deck: DeckInfo, sections: HandoutSection[]): strin
     '',
   )
   for (const section of sections) {
-    const titles = section.slides.map(slide => slide.title).filter(title => !/^Slide \d+$/.test(title))
+    // Chains repeat a title across slides; list each once.
+    const titles = [...new Set(section.slides.map(slide => slide.title).filter(title => !/^Slide \d+$/.test(title)))]
     lines.push(`- [${section.title}](${sectionUrl(deck, section)})${titles.length ? `: ${titles.slice(0, 8).join(', ')}${titles.length > 8 ? ', …' : ''}` : ''}`)
   }
   lines.push('', '## Optional', '', `- [Full text](${deck.root}llms-full.txt): every slide as Markdown, with complete code snippets`)

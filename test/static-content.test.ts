@@ -92,6 +92,11 @@ describe('cleanProse', () => {
     expect(cleanProse(prose, base)).toBe('> **`where`** — Filters **rows**')
   })
 
+  it('decodes entities in attribute values', () => {
+    const prose = '<DrawnAnnotation text="Table(&quot;profiles&quot;)" label="Lower &amp; plural" />'
+    expect(cleanProse(prose, base)).toBe('> **`Table("profiles")`** — Lower & plural')
+  })
+
   it('renders a compiler error with its target', () => {
     const prose = '<InlineCompilerError text="Talks.id" message="Unresolved reference: id" at="1" />'
     expect(cleanProse(prose, base)).toBe('> ⚠ **Compiler error** at `Talks.id`: Unresolved reference: id')

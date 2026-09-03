@@ -84,7 +84,9 @@ export function splitLeadingImports(code: string): SplitImports {
 
 /** Whether a fence should fold its imports, given its info line. */
 export function shouldFoldImports(info: string): boolean {
-  const lang = info.trim().split(/\s/, 1)[0]
+  // The language ends where Slidev's does: at whitespace or a `{`/`[` group
+  // (`kotlin{1,5-9}` is a Kotlin fence with a highlight range).
+  const lang = info.trim().match(/^[\w'-]+/)?.[0] ?? ''
   return FOLDABLE_LANGS.has(lang) && !SHOW_IMPORTS.test(info)
 }
 

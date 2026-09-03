@@ -55,6 +55,8 @@ describe('shouldFoldImports', () => {
     expect(shouldFoldImports('kotlin')).toBe(true)
     expect(shouldFoldImports('kts gradle')).toBe(true)
     expect(shouldFoldImports('java')).toBe(true)
+    expect(shouldFoldImports('kotlin{1,5-9}')).toBe(true)
+    expect(shouldFoldImports('kotlin{5-7} jdbc')).toBe(true)
     expect(shouldFoldImports('sql')).toBe(false)
     expect(shouldFoldImports('ts')).toBe(false)
   })
