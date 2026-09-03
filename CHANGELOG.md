@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- Folded imports: a leading block of `import` lines in a Kotlin, Java, or Scala fence leaves the code window and becomes a small "N imports" toggle in its top-right corner, on ordinary fences, cross-slide Magic Move chains, and classic Magic Move blocks alike. Line numbers, highlight ranges, and annotation targets count from the first line of real code. `show-imports` on a fence or `themeConfig.foldImports: false` keeps imports visible.
+- Static content on every `slidev build`: a crawlable `handout/` (one page per source file, with highlighted code and links back to each slide), `llms.txt` and `llms-full.txt`, plus `sitemap.xml` and `robots.txt` when `themeConfig.siteUrl` is set. `themeConfig.handout: false` disables it; `handout.notes: false` leaves presenter notes out.
+- Hash-mode builds (`slidev build --router-mode hash`) get a script forwarding old history-mode deep links such as `/deck/12` to `/deck/#/12`, so links shared before the switch keep working on hosts without a single-page-app rewrite.
+
+### Changed
+
+- Default code windows to 80 monospace columns instead of 68. Decks keep overriding `--code-window-columns` from their stylesheet.
+
+## 0.12.1
+
+### Fixed
+
+- Preserve visible `DrawnAnnotation` marks and `InlineCompilerError` diagnostics across adjacent cross-slide Magic Move transitions when their targets remain in place. Matching ink now hands off without replaying its entrance animation, while moved or unrelated targets still animate normally.
+
 ## 0.12.0
 
 ### Added

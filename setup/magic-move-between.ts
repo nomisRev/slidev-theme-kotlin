@@ -17,6 +17,7 @@
  * the same position on the neighbouring slides.
  */
 import { parseSync } from '@slidev/parser'
+import { shouldFoldImports, splitLeadingImports, stripShowImportsFlag } from './code-imports'
 
 export interface ParsedFence {
   /** The Shiki language, i.e. the first word of the fence info. */
@@ -33,8 +34,15 @@ export interface ParsedFence {
   ranges: string[]
   /** A `{...}` options object literal from the meta (e.g. `{lines:true, at:2}`), if any. */
   optionsRaw?: string
-  /** The fenced code with the trailing newline removed. */
+  /** The fenced code with the trailing newline removed, and its leading imports folded away. */
   code: string
+  /** Import targets folded off the top of `code` (see `code-imports.ts`). */
+  imports: string[]
+}
+
+export interface FenceParseOptions {
+  /** Fold leading imports out of the code (`themeConfig.foldImports`). Default true. */
+  foldImports?: boolean
 }
 
 const FENCE_OPEN = /^ {0,3}(`{3,})\s*([^\r\n`]*)$/
@@ -124,8 +132,12 @@ export function resolveChain(
 }
 
 /** Parse the info line of a fence (```kotlin foo [Main.kt] {1|2-3} {lines:true}). */
-export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
-  const info = rawInfo.replace(FENCE_ORDINAL_MARKER, ' ').trim()
+export function parseFenceInfo(rawInfo: string, code: string, options: FenceParseOptions = {}): ParsedFence {
+  const markerless = rawInfo.replace(FENCE_ORDINAL_MARKER, ' ')
+  // The transformer strips the flag from the rendered fence, so strip it here
+  // too: a chain step must describe the same fence the slide renders.
+  const fold = options.foldImports !== false && shouldFoldImports(markerless)
+  const info = stripShowImportsFlag(markerless)
   const spaceIndex = info.search(/\s/)
   const lang = spaceIndex < 0 ? info : info.slice(0, spaceIndex)
   let rest = spaceIndex < 0 ? '' : info.slice(spaceIndex + 1)
@@ -157,7 +169,9 @@ export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
   const lines = /\blines: *true\b/.test(optionsRaw ?? '')
     ? true
     : /\blines: *false\b/.test(optionsRaw ?? '') ? false : undefined
-  return { lang, meta, info, title, lines, ranges, optionsRaw, code: code.replace(/\r?\n$/, '') }
+  const trimmed = code.replace(/\r?\n$/, '')
+  const { imports, body } = fold ? splitLeadingImports(trimmed) : { imports: [], body: trimmed }
+  return { lang, meta, info, title, lines, ranges, optionsRaw, code: body, imports }
 }
 
 /**
@@ -165,7 +179,7 @@ export function parseFenceInfo(rawInfo: string, code: string): ParsedFence {
  * with four or more backticks (e.g. classic `md magic-move` blocks) and
  * tilde fences are skipped along with their contents.
  */
-export function extractTopLevelFences(content: string): ParsedFence[] {
+export function extractTopLevelFences(content: string, options: FenceParseOptions = {}): ParsedFence[] {
   const lines = content.split(/\r?\n/)
   const fences: ParsedFence[] = []
   for (let i = 0; i < lines.length; i++) {
@@ -184,7 +198,7 @@ export function extractTopLevelFences(content: string): ParsedFence[] {
       break
     }
     if (marker === '```' && open[2]?.trim())
-      fences.push(parseFenceInfo(open[2], lines.slice(i + 1, j).join('\n')))
+      fences.push(parseFenceInfo(open[2], lines.slice(i + 1, j).join('\n'), options))
     i = j
   }
   return fences

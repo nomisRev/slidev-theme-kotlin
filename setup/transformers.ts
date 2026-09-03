@@ -2,6 +2,7 @@ import type { CodeblockTransformContext } from '@slidev/types'
 import { defineCodeblockTransformer, defineTransformersSetup } from '@slidev/types'
 import { toKeyedTokens } from '@shikijs/magic-move/core'
 import lz from 'lz-string'
+import { foldImportEdits } from './code-imports'
 import { codeWindowIcon } from './code-window-icon'
 import { extractTopLevelFences, resolveChain } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
@@ -122,8 +123,9 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
     return
 
   const fencesPerSlide = [] as ParsedFence[][]
+  const fenceOptions = { foldImports: foldImportsEnabled(options.data.config?.themeConfig) }
   for (let i = chain.start; i <= chain.end; i++)
-    fencesPerSlide.push(extractTopLevelFences(slides[i].content))
+    fencesPerSlide.push(extractTopLevelFences(slides[i].content, fenceOptions))
 
   // Locate the fence being rendered among this slide's fences. Its position
   // decides which fences of the neighbouring slides it morphs to and from.
@@ -206,10 +208,28 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
   return `<MagicMoveBetween ${attrs.join(' ')} />`
 })
 
+/** `themeConfig.foldImports: false` keeps every import visible. */
+function foldImportsEnabled(themeConfig: unknown): boolean {
+  return (themeConfig as { foldImports?: unknown } | undefined)?.foldImports !== false
+}
+
 export default defineTransformersSetup(() => ({
   codeblocks: [magicMoveBetween],
   pre: [({ s, slide, options: transformerOptions }) => {
     const source = s.toString()
+    // Fold imports first: `overwrite` discards content appended inside its
+    // range, so this pass must not run after the ordinal markers below. All
+    // three edit sets address disjoint ranges of the original source.
+    if (foldImportsEnabled(transformerOptions.data.config.themeConfig)) {
+      for (const edit of foldImportEdits(source)) {
+        if (edit.start === edit.end)
+          s.appendLeft(edit.start, edit.text)
+        else if (edit.text)
+          s.overwrite(edit.start, edit.end, edit.text)
+        else
+          s.remove(edit.start, edit.end)
+      }
+    }
     // `pre` is a MarkdownTransformer and therefore runs before Slidev parses
     // this slide into codeblock contexts. Only linked slides need markers.
     // Ordinal markers land on top-level three-backtick fences and icon classes

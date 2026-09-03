@@ -20,8 +20,10 @@
     /* Size every code window for the same number of monospace columns. The
        calculation uses the slide canvas, not the individual code block, so a
        deck gets one consistent font size. 8rem + 2px accounts for the default
-       layout padding, code padding, and border. */
-    --code-window-columns: 68;
+       layout padding, code padding, and border. A deck overrides the count
+       from its own stylesheet: `:root { --code-window-columns: 72; }`, or
+       narrower, on one slide class. */
+    --code-window-columns: 80;
     --code-window-inline-space: calc(8rem + 2px);
     /* JetBrains Mono is nominally .6em; the small allowance also covers
        fallback monospace fonts without putting the last glyph on the border. */
@@ -325,4 +327,84 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
 .slidev-layout:has(.drawn-annotation.is-fading-out)
   .slidev-vclick-target.slidev-vclick-current:not(.slidev-vclick-anim-none) {
     transition-delay: 300ms;
+}
+
+/* Folded imports (setup/code-imports.ts). The component is a zero-height
+   sibling placed right before its code window, so the toggle floats in the
+   window's top-right corner without moving anything in the window itself. */
+.code-imports {
+    --code-imports-keyword: #0033b3;
+    position: relative;
+    z-index: 3;
+    height: 0;
+    /* Slidev's code margin sits between this element and the window. */
+    --code-imports-offset: 4px;
+}
+
+html.dark .code-imports {
+    --code-imports-keyword: #cc7832;
+}
+
+.code-imports__toggle {
+    position: absolute;
+    top: calc(var(--code-imports-offset) + 0.65rem);
+    right: 0.6rem;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--code-window-border, var(--editor-border));
+    border-radius: 999px;
+    background: var(--editor-bg);
+    color: var(--editor-fg);
+    font: 600 0.65rem / 1 var(--font-sans, sans-serif);
+    letter-spacing: 0.02em;
+    opacity: 0.65;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.code-imports__toggle:hover,
+.code-imports--open .code-imports__toggle {
+    opacity: 1;
+}
+
+/* Leave room for the identity mark of the window that follows. (`:has()`
+   cannot nest, hence the two selectors.) */
+.code-imports:has(+ .slidev-code-wrapper[class*='code-window-icon--']) .code-imports__toggle,
+.code-imports:has(+ .slidev-code-wrapper code[class*='code-window-icon--']) .code-imports__toggle {
+    right: 3.1rem;
+}
+
+.code-imports__panel {
+    position: absolute;
+    top: calc(var(--code-imports-offset) + 2.2rem);
+    right: 0.6rem;
+    max-width: calc(100% - 1.2rem);
+    padding: 0.5rem 0.8rem;
+    overflow-x: auto;
+    border: 1px solid var(--code-window-border, var(--editor-border));
+    border-radius: 0.5rem;
+    background: var(--editor-bg);
+    color: var(--editor-fg);
+    box-shadow: 0 0.4rem 1.2rem var(--editor-shadow);
+    font-family: var(--slidev-code-font-family, 'JetBrains Mono Local', 'JetBrains Mono', ui-monospace, monospace);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.code-imports__keyword {
+    color: var(--code-imports-keyword);
+}
+
+/* Exports and print show the slide as presented: imports stay folded, and
+   there is nothing to click. */
+.print-slide-container .code-imports,
+.slidev-print .code-imports {
+    display: none;
+}
+
+@media print {
+    .code-imports {
+        display: none;
+    }
 }
