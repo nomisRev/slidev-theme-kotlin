@@ -12,10 +12,13 @@ const editorChunks = []
 for (const file of jsFiles) {
   const contents = await readFile(join(assets, file), 'utf8')
   // The endpoint is the write capability; these UI strings ensure the global
-  // development toolbar was not merely hidden with a production v-if.
+  // development toolbar and the authoring-problem chips were not merely hidden
+  // with a production v-if.
   if (contents.includes('/__drawn-annotation-source')
     || contents.includes('drawn-annotation-toolbar')
-    || contents.includes('Edit annotations'))
+    || contents.includes('Edit annotations')
+    || contents.includes('drawn-annotation-problem')
+    || contents.includes('Annotation problems on this slide'))
     editorChunks.push(file)
 }
 
@@ -24,4 +27,4 @@ if (writerChunks.length || editorChunks.length) {
   throw new Error(`production build contains DrawnAnnotation editor code: ${leaked.join(', ')}`)
 }
 
-console.log('✔ production build contains no DrawnAnnotation writer or toolbar')
+console.log('✔ production build contains no DrawnAnnotation writer, toolbar, or problem chips')

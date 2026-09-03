@@ -34,9 +34,9 @@ import type { TransitionInkBox } from './transition-ink'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationAuthoringProblems, clearAnnotationSelection, clearLabelDraft, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, recordAnnotationUndoOnce, registerAnnotationEditorActions, releaseAnnotationSelection, reportAnnotationAuthoringProblem, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import type { AnnotationUndoSession } from './drawn-annotation/editor-store'
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useSlots, watch, watchEffect } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useId, useSlots, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
 // development-only editing to Vite's explicit serve mode so published decks
@@ -278,11 +278,23 @@ const atClick = computed(() => props.on ?? props.at)
 // something on the slide moves, and a mistake in the markup should read as one
 // clear message, not a stream of identical ones.
 const warned = new Set<string>()
-function warn(message: string) {
+// While serving, each warning is also shown as a chip on its slide (see
+// DrawnAnnotationProblems.vue), because an author looks at the slide and not at
+// the console. Missing-target warnings are reported under their own reporter so
+// they can be withdrawn once the text or element turns up after all.
+const problemReporter = useId()
+const missingProblemReporter = `${problemReporter}/missing`
+const { $page: problemPage } = useSlideContext()
+function warn(message: string, reporter = problemReporter) {
   if (warned.has(message))
     return
   warned.add(message)
   console.warn(`[DrawnAnnotation] ${message}`)
+  if (isAnnotationEditorDevelopment)
+    reportAnnotationAuthoringProblem(reporter, { component: 'DrawnAnnotation', message, page: problemPage.value })
+}
+function warnMissing(message: string) {
+  warn(message, missingProblemReporter)
 }
 
 // The types arrive from Markdown, so a typo is a string TypeScript never saw.
@@ -1000,13 +1012,13 @@ function explainMissing(match?: { range?: Range, matches: number }) {
   if (everFound || !missingIsAnError.value)
     return
   if (!props.text)
-    warn(`Selector "${props.selector}" matched nothing inside ${searchScope()}. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
+    warnMissing(`Selector "${props.selector}" matched nothing inside ${searchScope()}. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
   else if (!match || match.matches === 0)
-    warn(`Text "${props.text}" was not found in ${searchScope()}. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
+    warnMissing(`Text "${props.text}" was not found in ${searchScope()}. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
   else if (match.matches < Math.max(1, Number(props.occurrence)))
-    warn(`Text "${props.text}" ${match.matches === 1 ? 'matches only once' : `matches only ${match.matches} times`}, but \`occurrence\` asks for match ${props.occurrence}.`)
+    warnMissing(`Text "${props.text}" ${match.matches === 1 ? 'matches only once' : `matches only ${match.matches} times`}, but \`occurrence\` asks for match ${props.occurrence}.`)
   else
-    warn(`Text "${props.text}" was found, but has no size on screen right now, so there is nothing to draw around.`)
+    warnMissing(`Text "${props.text}" was found, but has no size on screen right now, so there is nothing to draw around.`)
 }
 
 function updateGeometry() {
@@ -1060,7 +1072,13 @@ function updateGeometry() {
     explainMissing(match)
     return
   }
-  everFound = true
+  if (!everFound) {
+    everFound = true
+    // A Magic Move step or a late reveal brought the text after all: the
+    // missing-text chip was a false alarm. Cleared once, here, before any
+    // connector target below can report its own missing element.
+    clearAnnotationAuthoringProblems(missingProblemReporter)
+  }
 
   // A text Range is frequently fragmented by Shiki token spans. Treat only
   // fragments of this requested range on the same visual line as one box before
@@ -1200,7 +1218,7 @@ function paintDestinationInto(
   const markBox = padBox(marked, sourceMarkType.value === 'none' ? 4 : props.padding + 6)
   const targetEl = props.target ? (root.querySelector<HTMLElement>(props.target) ?? document.querySelector<HTMLElement>(props.target)) : undefined
   if (props.target && !targetEl && missingIsAnError.value)
-    warn(`Target "${props.target}" matched nothing on the slide, so there is no element to connect to.`)
+    warnMissing(`Target "${props.target}" matched nothing on the slide, so there is no element to connect to.`)
   const targetBox = targetEl ? toLocal(targetEl.getBoundingClientRect()) : undefined
 
   let destination: Box | undefined
@@ -1852,6 +1870,8 @@ onBeforeUnmount(() => {
   mounted = false
   unregisterEditorActions?.()
   unregisterEditorActions = undefined
+  clearAnnotationAuthoringProblems(problemReporter)
+  clearAnnotationAuthoringProblems(missingProblemReporter)
   if (locator.value)
     releaseAnnotationSelection(locator.value)
   placedLabelRegistry.delete(placementToken)

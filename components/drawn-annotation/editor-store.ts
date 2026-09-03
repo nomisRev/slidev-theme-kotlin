@@ -135,3 +135,32 @@ export function clearAllAnnotationDrafts() {
   annotationLabelLayoutChange.value = undefined
   annotationGeometryVersion.value++
 }
+
+/**
+ * Authoring mistakes an annotation wants shown on the slide while the deck is
+ * being written: a `text` that no longer matches its fence, a `target` that
+ * selects nothing. The console warning stays; this is what makes it visible to
+ * an author who is looking at the slide. Keyed by reporter and message, so a
+ * component that re-measures every animation frame holds one entry.
+ */
+export interface AnnotationAuthoringProblem {
+  component: 'DrawnAnnotation' | 'InlineCompilerError'
+  message: string
+  /** The slide the reporter sits on; only the current slide's problems are shown. */
+  page: number
+}
+export const annotationAuthoringProblems = reactive(new Map<string, AnnotationAuthoringProblem>())
+function authoringProblemKey(reporter: string, message: string) { return `${reporter} ${message}` }
+export function reportAnnotationAuthoringProblem(reporter: string, problem: AnnotationAuthoringProblem) {
+  const key = authoringProblemKey(reporter, problem.message)
+  if (!annotationAuthoringProblems.has(key))
+    annotationAuthoringProblems.set(key, problem)
+}
+/** Drops everything a reporter holds: its match succeeded after all, or it unmounted. */
+export function clearAnnotationAuthoringProblems(reporter: string) {
+  const prefix = authoringProblemKey(reporter, '')
+  for (const key of Array.from(annotationAuthoringProblems.keys())) {
+    if (key.startsWith(prefix))
+      annotationAuthoringProblems.delete(key)
+  }
+}
