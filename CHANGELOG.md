@@ -10,10 +10,14 @@
 - GoatCounter analytics: `themeConfig.analytics.goatcounter` (an endpoint or a site code) adds `count.js` to the built deck and its handout pages, and the theme sends one pageview per slide (`<base>/<slide number>` with the slide's title) instead of one per load, skipping clicks, presenter, overview, notes, print, and export views.
 - Hash-mode builds (`slidev build --router-mode hash`) get a script forwarding old history-mode deep links such as `/deck/12` to `/deck/#/12`, so links shared before the switch keep working on hosts without a single-page-app rewrite.
 - Development-only problem chips: while Vite serves the deck, a `DrawnAnnotation` whose `text`, `selector`, `occurrence`, or `target` matches nothing, and an `InlineCompilerError` whose diagnostic is not shown, put a red chip in the top-left corner of their slide next to the console warning they already print. The chip follows the warning's timing (current slide, settled, click reached), withdraws when the target turns up, and never appears in builds, exports, the presenter view, or print mode. `InlineCompilerError`'s console warnings now gate on Vite's explicit development mode like `DrawnAnnotation`'s editor, instead of `import.meta.env.DEV`.
+- Annotation editing is a frozen session: entering the editor locks Slidev navigation (shortcuts, click-to-navigate, nav controls, swipes) on the current slide and click, every drag and arrow-key nudge stays a local draft, and **Done editing annotations** commits all changed drafts in one write phase; a failed write keeps the drafts and the session. **Esc** cancels in stages (drag, selection, then the session after a confirmation).
+- Quadratic connector editing: the first edit of an automatic leader keeps its visible curve as a persisted control point, which renders as a draggable, keyboard-nudgeable handle with a dashed control-polygon guide. **Curve connector** and **Straighten connector** add or remove the control point from the toolbar, and the connector's hit target follows the rendered curve.
 
 ### Changed
 
 - Default code windows to 80 monospace columns instead of 68. Decks keep overriding `--code-window-columns` from their stylesheet.
+- The annotation editor's **Cmd/Ctrl+Z** undoes the previous gesture locally instead of writing the source; the restored state is committed or discarded with the session.
+- The editor toolbar's **Reset connector** button is gone: **Use automatic connector** is the one way back to the automatic route and removes the whole `connector` geometry, control point included. **Reset selected** is now **Reset label & connector**. Resets, **Use automatic connector**, and **Straighten connector** on a saved control point still write immediately, since a draft cannot remove saved geometry.
 
 ## 0.12.1
 

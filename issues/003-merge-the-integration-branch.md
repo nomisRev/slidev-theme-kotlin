@@ -1,6 +1,6 @@
 # Merge the integration branch: frozen edit sessions and quadratic connector editing
 
-**Status:** open
+**Status:** merged into main (2026-09-03); follow-ups open
 **Branch:** `integration-sync-main` (`integration` with `main` merged in, last on 2026-09-03)
 **Components:** `DrawnAnnotation`, `DrawnAnnotationEditorToolbar`, `drawn-annotation/*`, `scripts/test-annotation-editor.mjs`
 
@@ -84,18 +84,18 @@ Code observations, none blocking:
 - [ ] Have the script find the fixture slide by content (the tag with
       `text="fun main"`) instead of a pinned number, so the next slide added
       in front of it does not break the test again.
-- [ ] Add the "Unreleased" CHANGELOG entries for the three commits.
+- [x] Add the "Unreleased" CHANGELOG entries for the three commits.
 - [ ] Decide on the automatic-route hit path (use `connectorAutoControl`) and
       on clearing clean drafts once the source catches up, or record them as
       follow-up issues.
-- [ ] Fast-forward `main` to `integration-sync-main`, then delete
+- [x] Fast-forward `main` to `integration-sync-main`. Still to do: delete
       `integration`, `integration-sync-main`, and the three feature branches.
 
 ## Acceptance
 
-- [ ] `main` contains `7b585b6`, `24af31b`, and `477ea06` (via the merges) and
+- [x] `main` contains `7b585b6`, `24af31b`, and `477ea06` (via the merges) and
       `git diff main integration-sync-main` is empty.
-- [ ] `npm test`, `npm run build`, and `npm run test:annotation-editor` pass
+- [x] `npm test`, `npm run build`, and `npm run test:annotation-editor` pass
       on `main`.
-- [ ] The CHANGELOG "Unreleased" section describes the frozen edit session and
+- [x] The CHANGELOG "Unreleased" section describes the frozen edit session and
       the connector controls.
