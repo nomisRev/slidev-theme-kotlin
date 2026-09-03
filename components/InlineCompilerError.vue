@@ -7,6 +7,12 @@ import { useMutationObserver, useResizeObserver } from '@vueuse/core'
 import { findTextInSegments } from './code-text-match'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
+import { clearAnnotationAuthoringProblems, reportAnnotationAuthoringProblem } from './drawn-annotation/editor-store'
+
+// Slidev's build renderer can leave `import.meta.env.DEV` true. Authoring
+// warnings and the on-slide chips that repeat them belong to Vite's explicit
+// serve mode only, the same boundary DrawnAnnotation's editor uses.
+const isDevelopment = import.meta.env.MODE === 'development'
 
 const props = defineProps<{
   /** One-based source line number inside the single fenced code block this component wraps. Optional when `text` identifies the target. */
@@ -78,7 +84,7 @@ function isFromStart(at?: number | string) {
 // `on` that shows from the start is gone at the first click.
 // Deliberately read once, not reactively: the clicks register at mount, like
 // Slidev's own components, so changing these props requires a remount.
-if (import.meta.env.DEV && props.on !== undefined && (props.at !== undefined || props.until !== undefined))
+if (isDevelopment && props.on !== undefined && (props.at !== undefined || props.until !== undefined))
   console.warn('[InlineCompilerError] `on` is `at` and `until` in one, so the separate `at` / `until` given here are ignored. Use either `on` alone, or `at` and `until`.')
 const at = props.on ?? props.at
 const until = props.on === undefined ? props.until : isFromStart(props.on) ? 1 : '+1'
@@ -419,7 +425,7 @@ function sync() {
     || targets.value.some((el, index) => el !== nextTargets[index])
   if (targetsChanged) {
     // Magic Move replaces its rendered code after this component has mounted.
-    if (import.meta.env.DEV && isMagicMove && targets.value.length)
+    if (isDevelopment && isMagicMove && targets.value.length)
       stepSwaps++
     targets.value = nextTargets
   }
@@ -440,7 +446,7 @@ function sync() {
   }
   if (animating.value)
     sawAnimating = true
-  if (import.meta.env.DEV && !warnedClassDrift && !isPrintMode.value && stepSwaps >= 2 && !sawAnimating) {
+  if (isDevelopment && !warnedClassDrift && !isPrintMode.value && stepSwaps >= 2 && !sawAnimating) {
     warnedClassDrift = true
     console.warn('[InlineCompilerError] Magic Move steps changed but its animation classes were never observed — the private class names in MAGIC_MOVE_ANIMATING may have been renamed by a @shikijs/magic-move upgrade, which would let the message reveal mid-animation.')
   }
@@ -557,6 +563,8 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(magicMoveFrame)
   clearTimeout(revealTimer)
   clearTimeout(missingTargetWarning)
+  if (isDevelopment)
+    clearAnnotationAuthoringProblems(id)
 })
 watch([() => props.line, () => props.text, () => props.occurrence], sync)
 watch(visible, sync)
@@ -619,29 +627,39 @@ watch(isCurrentSlide, (current) => {
 // so the diagnostic stays hidden. Silent in production, but tell the slide
 // author after the longest Magic Move transition has had time to finish.
 let missingTargetWarning: ReturnType<typeof setTimeout> | undefined
+// The warning is also shown as a chip on the slide while serving (see
+// DrawnAnnotationProblems.vue) and, unlike the console line, withdrawn as soon
+// as the target turns up or the props change.
+function warnMissingTarget(message: string) {
+  console.warn(`[InlineCompilerError] ${message}`)
+  reportAnnotationAuthoringProblem(id, { component: 'InlineCompilerError', message, page: slideContext.$page.value })
+}
 watch([visible, hasTarget, () => props.line, () => props.text, () => props.occurrence, textMatches], ([isVisible, found]) => {
   clearTimeout(missingTargetWarning)
-  if (import.meta.env.DEV && isVisible && !found) {
+  if (!isDevelopment)
+    return
+  clearAnnotationAuthoringProblems(id)
+  if (isVisible && !found) {
     missingTargetWarning = setTimeout(() => {
       if (props.text !== undefined) {
         const scope = props.line === undefined ? '' : ` on line ${props.line}`
         if (!props.text)
-          console.warn(`[InlineCompilerError] \`text\` must be non-empty for "${props.message}" — the diagnostic is not shown.`)
+          warnMissingTarget(`\`text\` must be non-empty for "${props.message}" — the diagnostic is not shown.`)
         else if (props.line !== undefined && (!Number.isInteger(props.line) || props.line < 1))
-          console.warn(`[InlineCompilerError] \`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
+          warnMissingTarget(`\`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
         else if (textMatches.value > 0)
-          console.warn(`[InlineCompilerError] Text "${props.text}" only matched ${textMatches.value} time${textMatches.value === 1 ? '' : 's'}${scope}, but \`occurrence\` asks for match ${requestedOccurrence()} — the diagnostic is not shown.`)
+          warnMissingTarget(`Text "${props.text}" only matched ${textMatches.value} time${textMatches.value === 1 ? '' : 's'}${scope}, but \`occurrence\` asks for match ${requestedOccurrence()} — the diagnostic is not shown.`)
         else
-          console.warn(`[InlineCompilerError] Text "${props.text}" was not found${scope} for "${props.message}" — it must match the rendered code exactly.`)
+          warnMissingTarget(`Text "${props.text}" was not found${scope} for "${props.message}" — it must match the rendered code exactly.`)
       }
       else if (props.line === undefined) {
-        console.warn(`[InlineCompilerError] Give either \`line\` or \`text\` for "${props.message}" — the diagnostic is not shown.`)
+        warnMissingTarget(`Give either \`line\` or \`text\` for "${props.message}" — the diagnostic is not shown.`)
       }
       else if (!Number.isInteger(props.line) || props.line < 1) {
-        console.warn(`[InlineCompilerError] \`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
+        warnMissingTarget(`\`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
       }
       else {
-        console.warn(`[InlineCompilerError] No code tokens on line ${props.line} for "${props.message}" — the diagnostic is not shown. Empty lines cannot be annotated; check the \`line\` prop.`)
+        warnMissingTarget(`No code tokens on line ${props.line} for "${props.message}" — the diagnostic is not shown. Empty lines cannot be annotated; check the \`line\` prop.`)
       }
     }, 1500)
   }

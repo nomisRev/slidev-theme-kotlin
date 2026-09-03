@@ -4,3 +4,4 @@
   - node scripts/export-slide.mjs --entry talk.md --slide 7 --click 0
 - You can find Slidev SKILLS here, node_modules/@slidev/cli/skills/slidev/SKILL.md
 - In doubt read code in node_modules to understand the libraries you need to work with
+- Visual configuration (colours, sizes, column counts, fonts) is exposed as a CSS custom property that a deck overrides from its own stylesheet, never as a `themeConfig` or frontmatter key. Frontmatter is only for things CSS cannot express, such as the Kodee variant.

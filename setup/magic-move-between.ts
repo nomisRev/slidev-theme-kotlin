@@ -17,15 +17,17 @@
  * the same position on the neighbouring slides.
  */
 import { parseSync } from '@slidev/parser'
-import { shouldFoldImports, splitLeadingImports, stripShowImportsFlag } from './code-imports'
+import { shouldFoldImports, splitLeadingImports, takeThemeFlags } from './code-imports'
 
 export interface ParsedFence {
   /** The Shiki language, i.e. the first word of the fence info. */
   lang: string
   /** Everything after the language, with the `magic-move` flag, `[title]`, and brace groups removed. */
   meta: string
-  /** The full fence info line as written (trimmed). */
+  /** The full fence info line as written (trimmed), without the theme's flags. */
   info: string
+  /** The theme's flags found on the info line (`show-imports`, `no-compile`). */
+  flags: string[]
   /** `[title]` extracted from the meta, if any. */
   title?: string
   /** Explicit `lines: true/false` option from the meta, if any. */
@@ -34,10 +36,12 @@ export interface ParsedFence {
   ranges: string[]
   /** A `{...}` options object literal from the meta (e.g. `{lines:true, at:2}`), if any. */
   optionsRaw?: string
-  /** The fenced code with the trailing newline removed, and its leading imports folded away. */
+  /** The fenced code with the trailing newline removed, and its folded region taken off. */
   code: string
   /** Import targets folded off the top of `code` (see `code-imports.ts`). */
   imports: string[]
+  /** The code folded above a `// Example` marker, imports included, if the fence has one. */
+  prefix?: string
 }
 
 export interface FenceParseOptions {
@@ -134,13 +138,14 @@ export function resolveChain(
 /** Parse the info line of a fence (```kotlin foo [Main.kt] {1|2-3} {lines:true}). */
 export function parseFenceInfo(rawInfo: string, code: string, options: FenceParseOptions = {}): ParsedFence {
   const markerless = rawInfo.replace(FENCE_ORDINAL_MARKER, ' ')
-  // The transformer strips the flag from the rendered fence, so strip it here
-  // too: a chain step must describe the same fence the slide renders.
+  // The transformer strips the theme's flags from the rendered fence, so strip
+  // them here too: a chain step must describe the same fence the slide renders.
   const fold = options.foldImports !== false && shouldFoldImports(markerless)
-  const info = stripShowImportsFlag(markerless)
-  const spaceIndex = info.search(/\s/)
-  const lang = spaceIndex < 0 ? info : info.slice(0, spaceIndex)
-  let rest = spaceIndex < 0 ? '' : info.slice(spaceIndex + 1)
+  const { info, flags } = takeThemeFlags(markerless)
+  // The language ends where Slidev's does: at whitespace or a `{`/`[` group
+  // (`kotlin{1,5-9}` is a Kotlin fence with a highlight range).
+  const lang = info.match(/^[\w'-]+/)?.[0] ?? ''
+  let rest = info.slice(lang.length).trim()
 
   let title: string | undefined
   const titleMatch = rest.match(/\[([^\]]*)\]/)
@@ -170,8 +175,8 @@ export function parseFenceInfo(rawInfo: string, code: string, options: FencePars
     ? true
     : /\blines: *false\b/.test(optionsRaw ?? '') ? false : undefined
   const trimmed = code.replace(/\r?\n$/, '')
-  const { imports, body } = fold ? splitLeadingImports(trimmed) : { imports: [], body: trimmed }
-  return { lang, meta, info, title, lines, ranges, optionsRaw, code: body, imports }
+  const { imports, body, prefix } = fold ? splitLeadingImports(trimmed) : { imports: [], body: trimmed, prefix: undefined }
+  return { lang, meta, info, flags, title, lines, ranges, optionsRaw, code: body, imports, ...(prefix !== undefined && { prefix }) }
 }
 
 /**

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyEdits,
-  codeImportsMarkup,
+  EXAMPLE_MARKER,
   foldImportEdits,
   shouldFoldImports,
   splitLeadingImports,
-  stripShowImportsFlag,
+  stripThemeFlags,
+  takeThemeFlags,
 } from '../setup/code-imports'
 import { extractTopLevelFences, parseFenceInfo } from '../setup/magic-move-between'
 
@@ -45,8 +46,58 @@ describe('splitLeadingImports', () => {
 
   it('reports the line span of the block', () => {
     const split = splitLeadingImports('package p\nimport a.A\n\nclass C')
-    expect(split.importStartLine).toBe(1)
+    expect(split.foldStartLine).toBe(1)
     expect(split.bodyStartLine).toBe(3)
+  })
+})
+
+describe('splitLeadingImports with an Example marker', () => {
+  const snippet = [
+    'import a.A',
+    'import b.B',
+    '',
+    'fun helper(): A = A()',
+    '',
+    '// Example: the helper stays out of sight',
+    'val x = helper()',
+  ].join('\n')
+
+  it('folds everything above the marker and drops the marker line', () => {
+    const split = splitLeadingImports(snippet)
+    expect(split.prefix).toBe('import a.A\nimport b.B\n\nfun helper(): A = A()')
+    expect(split.imports).toEqual(['a.A', 'b.B'])
+    expect(split.body).toBe('val x = helper()')
+    expect(split.foldStartLine).toBe(0)
+    expect(split.bodyStartLine).toBe(6)
+  })
+
+  it('accepts the marker with or without a description, in either case', () => {
+    for (const marker of ['// Example', '//Example', '// example: lower case', '  // Example :  spaced  '])
+      expect(EXAMPLE_MARKER.test(marker)).toBe(true)
+    for (const line of ['// Examples of usage', '// An Example', 'val example = 1', '/* Example */'])
+      expect(EXAMPLE_MARKER.test(line)).toBe(false)
+  })
+
+  it('folds a prelude too, and code without imports', () => {
+    const split = splitLeadingImports('package demo\n\nobject Talks\n\n// Example\nTalks.selectAll()')
+    expect(split.prefix).toBe('package demo\n\nobject Talks')
+    expect(split.imports).toEqual([])
+    expect(split.body).toBe('Talks.selectAll()')
+  })
+
+  it('treats a marker with nothing above it as an ordinary comment', () => {
+    const code = '// Example: nothing to fold\nimport a.A\n\nval x = A()'
+    const split = splitLeadingImports(code)
+    expect(split.prefix).toBeUndefined()
+    // The leading-imports rule does not apply either: the comment comes first.
+    expect(split.imports).toEqual([])
+    expect(split.body).toBe(code)
+  })
+
+  it('only honours the first marker', () => {
+    const split = splitLeadingImports('val a = 1\n// Example\nval b = a\n// Example: again\nval c = b')
+    expect(split.prefix).toBe('val a = 1')
+    expect(split.body).toBe('val b = a\n// Example: again\nval c = b')
   })
 })
 
@@ -68,15 +119,17 @@ describe('shouldFoldImports', () => {
   })
 
   it('strips the flag from the info', () => {
-    expect(stripShowImportsFlag('kotlin show-imports {1|2}')).toBe('kotlin {1|2}')
-    expect(stripShowImportsFlag('kotlin jdbc')).toBe('kotlin jdbc')
+    expect(stripThemeFlags('kotlin show-imports {1|2}')).toBe('kotlin {1|2}')
+    expect(stripThemeFlags('kotlin jdbc')).toBe('kotlin jdbc')
+    expect(stripThemeFlags('kotlin no-compile jdbc')).toBe('kotlin jdbc')
+    expect(takeThemeFlags('kotlin no-compile show-imports')).toEqual({ info: 'kotlin', flags: ['no-compile', 'show-imports'] })
   })
 })
 
 describe('foldImportEdits', () => {
   const fold = (source: string) => applyEdits(source, foldImportEdits(source))
 
-  it('moves the imports of a fence into a CodeImports component before it', () => {
+  it('removes the imports of a fence and leaves no trace on the slide', () => {
     const source = [
       '# Title',
       '',
@@ -89,9 +142,6 @@ describe('foldImportEdits', () => {
     ].join('\n')
     expect(fold(source)).toBe([
       '# Title',
-      '',
-      '',
-      codeImportsMarkup(['a.A', 'b.B']),
       '',
       '```kotlin',
       'val x = A()',
@@ -117,18 +167,15 @@ describe('foldImportEdits', () => {
 
   it('handles a fence whose imports are followed directly by the closing fence', () => {
     const source = '```kotlin\nimport a.A\n```'
-    expect(fold(source)).toBe(`\n${codeImportsMarkup(['a.A'])}\n\n\`\`\`kotlin\n\`\`\``)
+    expect(fold(source)).toBe('```kotlin\n```')
   })
 
   it('folds each top-level fence separately', () => {
     const source = '```kotlin\nimport a.A\n\nval a = A()\n```\n\n```kotlin\nimport b.B\n\nval b = B()\n```'
-    const result = fold(source)
-    expect(result).toContain(codeImportsMarkup(['a.A']))
-    expect(result).toContain(codeImportsMarkup(['b.B']))
-    expect(result).not.toContain('import ')
+    expect(fold(source)).toBe('```kotlin\nval a = A()\n```\n\n```kotlin\nval b = B()\n```')
   })
 
-  it('shares one component across the steps of a classic magic-move block', () => {
+  it('folds every step of a classic magic-move block', () => {
     const source = [
       '````md magic-move',
       '```kotlin',
@@ -145,9 +192,6 @@ describe('foldImportEdits', () => {
       '````',
     ].join('\n')
     expect(fold(source)).toBe([
-      '',
-      codeImportsMarkup(['a.A', 'b.B']),
-      '',
       '````md magic-move',
       '```kotlin',
       'val a = A()',
@@ -164,13 +208,70 @@ describe('foldImportEdits', () => {
     expect(fold(source)).toBe(source)
   })
 
-  it('preserves CRLF sources', () => {
-    const source = '```kotlin\r\nimport a.A\r\n\r\nval x = A()\r\n```'
-    expect(fold(source)).toBe(`\n${codeImportsMarkup(['a.A'])}\n\n\`\`\`kotlin\r\nval x = A()\r\n\`\`\``)
+  it('strips the theme flags even when folding is off', () => {
+    const source = '```kotlin no-compile jdbc\nimport a.A\n\nval x = A()\n```'
+    expect(applyEdits(source, foldImportEdits(source, { fold: false }))).toBe('```kotlin jdbc\nimport a.A\n\nval x = A()\n```')
   })
 
-  it('escapes the JSON for a single-quoted attribute', () => {
-    expect(codeImportsMarkup(['a.b as `weird\'name`'])).toBe(`<CodeImports :imports='["a.b as \`weird&#39;name\`"]' />`)
+  it('preserves CRLF sources', () => {
+    const source = '```kotlin\r\nimport a.A\r\n\r\nval x = A()\r\n```'
+    expect(fold(source)).toBe('```kotlin\r\nval x = A()\r\n```')
+  })
+
+  it('removes an Example prefix together with the marker line', () => {
+    const source = [
+      '```kotlin {2}',
+      'import a.A',
+      '',
+      'fun helper() = A()',
+      '',
+      '// Example: description',
+      'val x = helper()',
+      'val y = x',
+      '```',
+    ].join('\n')
+    expect(fold(source)).toBe([
+      '```kotlin {2}',
+      'val x = helper()',
+      'val y = x',
+      '```',
+    ].join('\n'))
+  })
+
+  it('removes the Example prefix of every step of a classic magic-move block', () => {
+    const source = [
+      '````md magic-move',
+      '```kotlin',
+      'object A',
+      '// Example',
+      'A',
+      '```',
+      '```kotlin',
+      'object A',
+      '// Example',
+      'A.toString()',
+      '```',
+      '```kotlin',
+      'import b.B',
+      'object A',
+      '// Example',
+      'A.toString() + B',
+      '```',
+      '````',
+    ].join('\n')
+    expect(fold(source)).toBe([
+      '````md magic-move',
+      '```kotlin',
+      'A',
+      '```',
+      '```kotlin',
+      'A.toString()',
+      '```',
+      '```kotlin',
+      'A.toString() + B',
+      '```',
+      '````',
+    ].join('\n'))
   })
 })
 
@@ -188,6 +289,15 @@ describe('magic-move fences fold imports the same way', () => {
     expect(fence.imports).toEqual([])
     expect(fence.info).toBe('kotlin [Main.kt]')
     expect(fence.title).toBe('Main.kt')
+  })
+
+  it('reports an Example prefix on a chain step', () => {
+    const [fence] = extractTopLevelFences('```kotlin\nimport a.A\nval a = A()\n// Example\nval b = a\n```')
+    expect(fence.code).toBe('val b = a')
+    expect(fence.imports).toEqual(['a.A'])
+    expect(fence.prefix).toBe('import a.A\nval a = A()')
+    const [plain] = extractTopLevelFences('```kotlin\nval b = 1\n```')
+    expect(plain).not.toHaveProperty('prefix')
   })
 
   it('can be disabled per deck', () => {
