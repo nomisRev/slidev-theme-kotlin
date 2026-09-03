@@ -16,6 +16,7 @@
 ### Fixed
 
 - The development-only **Edit annotations** launcher no longer appears in PNG exports: `slidev export` renders through a development server, and the launcher only hid itself for print media. It now also stays out of the presenter view.
+- The launcher drops keyboard focus after a click: Slidev ignores its shortcuts while a button is focused, so leaving the editor with **Esc** used to leave the arrow keys dead until the author clicked somewhere else.
 
 ### Changed
 

@@ -13,7 +13,11 @@ const hasAnnotations = computed(() => {
   return hasRegisteredAnnotationEditors() && !isPrintMode.value && !isPresenter.value
 })
 
-function openAnnotationEditor() {
+function openAnnotationEditor(event: MouseEvent) {
+  // Slidev ignores its keyboard shortcuts while a button has focus, so a
+  // launcher that kept focus after a click would leave the arrow keys dead
+  // once the author leaves the editor with Escape.
+  ;(event.currentTarget as HTMLElement | null)?.blur()
   window.dispatchEvent(new Event('drawn-annotation-editor-toggle'))
 }
 </script>
