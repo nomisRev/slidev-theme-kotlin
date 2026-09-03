@@ -54,6 +54,16 @@ saved geometry** is chosen. The locator, toolbar, and write endpoint exist only
 while Vite serves the deck; builds and exports render saved geometry without
 editor code.
 
+While serving, an annotation that cannot find what it should mark (a `text`
+that no longer matches the fence, an unmatched `selector` or `target`, an
+`occurrence` past the last match, or an `InlineCompilerError` whose diagnostic
+is not shown) also puts a red chip in the top-left corner of its slide, next to
+the warning it prints on the console. Hover the chip for the full message. The
+chip appears only once the annotation's click has been reached and the slide
+has settled, so a Magic Move step that does not yet contain the text never
+flags one, and it disappears again when the target turns up. Builds, exports,
+the presenter view, and print mode never render it.
+
 ### Basic Setup
 
 Add the theme to your slides' frontmatter:
@@ -141,25 +151,44 @@ fun numbers(): Flow<Int> = flowOf(1, 2, 3)
 ```
 ````
 
-On the slide, the code window shows only `fun numbers()…` plus a small
-"2 imports" toggle in its top-right corner that reveals the import lines. The
-imports stay in the page as text, and the handout and `llms-full.txt` print
-the fence in full.
+On the slide, the code window shows only `fun numbers()…`; the handout and
+`llms-full.txt` print the fence in full.
+
+When an example needs more than imports — a table definition, a helper the
+example calls — put a `// Example` comment where the example starts.
+Everything above it leaves the slide, and so does the marker line itself:
+
+````md
+```kotlin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+
+fun numbers(): Flow<Int> = flowOf(1, 2, 3)
+
+// Example: reuse the flow above without showing it
+fun doubled(): Flow<Int> = numbers().map { it * 2 }
+```
+````
+
+The window shows `fun doubled()…`. The comment is ordinary Kotlin, so the
+fence still compiles as written (see the snippet checker below), and the
+handout keeps it. A description after the colon is optional.
 
 Details:
 
 - Kotlin, Java, and Scala fences (`kotlin`, `kt`, `kts`, `java`, `scala`)
-  fold. Only a block of `import` lines at the top of the fence counts; a
-  `package` line or `@file:` annotation before it stays visible.
+  fold. Without a marker, only a block of `import` lines at the top of the
+  fence counts, and a `package` line or `@file:` annotation before it stays
+  visible. With a marker, everything above it folds. Only the first
+  `// Example` line in a fence counts, and only when there is code above it.
 - Line numbers, `{1|2-3}` highlight ranges, and annotation targets all
   count from the first line of real code, so folding never shifts them.
 - Cross-slide Magic Move chains and classic ````md magic-move```` blocks fold
-  too; the steps of a classic block share one toggle listing every import
-  they use between them.
+  too, step by step.
 - Add `show-imports` to a fence (`` ```kotlin show-imports ``) when the slide
   is about the imports themselves, or set `themeConfig: { foldImports: false }`
   in the headmatter to keep every import visible.
-- Exports and print hide the toggle and keep the imports folded.
 
 ### Code sizing
 
@@ -365,8 +394,27 @@ therefore also writes, next to the app:
   convention that coding agents and AI crawlers look for: an index, and the
   full Markdown of the deck with complete code snippets (folded imports
   expanded).
-- `sitemap.xml` and `robots.txt` — only when the deck's public URL is known,
-  and `robots.txt` only when `public/` ships none.
+- `sitemap.xml` — only when the deck's public URL is known.
+- `robots.txt` — only when that URL is the root of its host and `public/`
+  ships none. Crawlers read `robots.txt` at the host root alone, so a deck
+  served from a sub-path (a GitHub project page, a folder of your blog) gets
+  no file; add `Sitemap: <siteUrl>sitemap.xml` to the host's own
+  `robots.txt` instead, as the build reminds you.
+
+The handout and `llms-full.txt` form one outline: the deck, then each
+section, then each slide, with a slide's own headings placed below its
+title. The handout pages carry a description, canonical URL, Open Graph
+tags, and the deck's `lang` from the headmatter (`en` when unset).
+
+The built `index.html` (and the `404.html` copied from it) is made
+self-describing too: `rel="alternate"` links to the handout and
+`llms-full.txt`, a plain-text `<meta name="description">` from the headmatter
+`info` (replacing the one Slidev renders from the raw Markdown), and a short
+paragraph linking to the same files as visible text, hidden as soon as the
+app has mounted. That paragraph is ordinary markup rather than `<noscript>`,
+which many text extractors drop, so a crawler that renders no JavaScript
+still finds the content from the root URL. With `siteUrl` set the page also
+carries the canonical URL and a `rel="sitemap"` link.
 
 Theme markup is translated, not dropped: a `DrawnAnnotation` with a `label`
 becomes a quoted note about the code it points at, an `InlineCompilerError`
@@ -382,6 +430,88 @@ themeConfig:
   handout:
     notes: false   # leave presenter notes out (default: included)
   # handout: false # disable the static content entirely
+```
+
+## Analytics
+
+Decks can count pageviews with [GoatCounter](https://www.goatcounter.com),
+which sets no cookies and stores no personal data, so it needs no consent
+banner. Give the headmatter the endpoint of your GoatCounter site, or just
+its code:
+
+```yaml
+themeConfig:
+  analytics:
+    goatcounter: https://mysite.goatcounter.com/count   # or: mysite
+```
+
+Every `slidev build` then adds `count.js` to the deck, and the theme sends
+one pageview per slide, recorded as `<base>/<slide number>` with the slide's
+title, so the dashboard's path list doubles as a per-slide drop-off curve.
+Clicks within a slide, the presenter and overview views, notes, print, and
+export are never counted. Handout pages carry the tag too and count under
+their own URL. `slidev dev`, exports, and screenshots send nothing:
+`count.js` ignores localhost and headless browsers by itself.
+
+Every deck on one host can share one GoatCounter site, since paths carry the
+deck's base. Add `#toggle-goatcounter` to a deck's URL to stop counting your
+own visits in that browser.
+
+## Compiling the snippets
+
+A Kotlin fence on a slide is a fragment: it carries its imports (folded away,
+see above) but no package, and it may mix declarations with bare statements.
+`slidev-kotlin-snippets` turns every Kotlin fence of a deck into one Kotlin
+file, in the spirit of [KotlinX Knit](https://github.com/Kotlin/kotlinx-knit),
+so a Gradle module can compile the deck's code against the real libraries and
+a stale slide fails the build instead of the talk.
+
+Turn it on in the headmatter and run the CLI from the deck:
+
+```yaml
+themeConfig:
+  snippets:
+    dir: src/main/kotlin/presentation/snippets   # default: src/main/kotlin/snippets
+    package: presentation.snippets               # default: snippets
+    imports:                                     # added to every file
+      - presentation.support.*
+```
+
+```bash
+npx slidev-kotlin-snippets            # writes the files, removes stale ones
+npx slidev-kotlin-snippets --check    # exits 1 when they are out of date (CI)
+npx slidev-kotlin-snippets talk.md    # another entry than slides.md
+```
+
+Each fence becomes `<dir>/<section>/<slide>-<title>.kt` in its own package,
+`<package>.<section>.slide<n>`, so every step of a Magic Move chain can
+declare its own `object Talks`. Inside the file:
+
+- the fence's imports come first, after the `imports` from the config. Keep
+  the tables, types, and values the slides use without defining them in a
+  hand-written package and star-import it; a fence that defines its own
+  `Talks` shadows the shared one, because a declaration in the file's own
+  package wins over a star import.
+- top-level declarations (`fun`, `val`, `object`, `class`, ... with their
+  annotations, modifiers, and `context(...)` lines) stay top-level, and bare
+  statements such as `Talks.selectAll()` are wrapped in `suspend fun main()`.
+  A `package` line is dropped; `@file:` annotations move above the package.
+- a slide with several Kotlin fences tells them apart by their first meta
+  word (`jdbc`, `r2dbc`) or a letter.
+
+Not every fence is meant to compile. Add `no-compile` to a fence that sketches
+library internals or an intermediate step (`` ```kotlin no-compile ``); the flag
+is stripped before Slidev sees it. Fences inside an `InlineCompilerError` are
+skipped automatically, since the slide shows the diagnostic on purpose, and so
+are `gradle` build-script fences.
+
+Wire it into Gradle so `./gradlew check` also fails on stale sources:
+
+```kotlin
+val snippetsCheck by tasks.registering(Exec::class) {
+    commandLine("npx", "slidev-kotlin-snippets", "--check")
+}
+tasks.check { dependsOn(snippetsCheck) }
 ```
 
 ### Deep links on GitHub Pages
@@ -455,7 +585,6 @@ This will open the example presentation in your browser with hot-reload enabled.
 ```
 .
 ├── components/                   # Vue components
-│   ├── CodeImports.vue            # Toggle revealing a fence's folded imports
 │   ├── DrawnAnnotation.vue        # Hand-drawn marks, labels, and connectors
 │   ├── InlineCompilerError.vue    # Inline code diagnostics
 │   ├── Kodee.vue                  # Main Kodee mascot component with animations
@@ -472,6 +601,7 @@ This will open the example presentation in your browser with hot-reload enabled.
 ├── setup/              # Slidev setup files
 │   ├── shiki.ts        # Syntax highlighting configuration for Kotlin
 │   ├── transformers.ts # Cross-slide Magic Move and import folding passes
+│   ├── analytics.ts    # GoatCounter tag and per-slide pageviews
 │   ├── code-imports.ts # Folded imports: fence scanning and source edits
 │   ├── static-content.ts       # Handout, llms.txt, sitemap generation
 │   ├── hash-route-redirect.ts  # Old history-mode links → hash routes
