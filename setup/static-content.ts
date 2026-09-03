@@ -107,7 +107,7 @@ export function collectSections(slides: SectionSlide[], userRoot: string, deckTi
       sections.set(file, section)
     }
     const no = slide.index + 1
-    const title = slide.title?.trim() || `Slide ${no}`
+    const title = plainTitle(slide.title) || `Slide ${no}`
     section.slides.push({
       no,
       title,
@@ -132,9 +132,14 @@ export function collectSections(slides: SectionSlide[], userRoot: string, deckTi
   return list
 }
 
+/** A slide title as plain text: Slidev keeps inline HTML such as `<span>` in it. */
+export function plainTitle(title: string | undefined): string {
+  return decodeEntities((title ?? '').replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
+}
+
 function withoutTitleHeading(markdown: string, title: string): string {
   const match = markdown.match(/^\s*#{1,6}\s+(.+?)\s*#*\s*(?:\r?\n|$)/)
-  if (match && match[1].trim() === title)
+  if (match && plainTitle(match[1]) === title)
     return markdown.slice(match[0].length).replace(/^\s+/, '')
   return markdown
 }
@@ -251,22 +256,38 @@ function annotationNote(raw: string): string {
   return `\n\n> ${target}${label.replace(/\r?\n/g, ' ')}\n\n`
 }
 
-function compilerErrorNote(raw: string, slot: string | undefined): string {
+function compilerErrorNote(raw: string): string {
   const { text, message } = parseAttributes(raw)
-  const diagnostic = (message || slot || '').replace(/\s+/g, ' ').trim()
+  const diagnostic = (message || '').replace(/\s+/g, ' ').trim()
   if (!diagnostic)
     return ''
   const target = text ? ` at \`${text.replace(/`/g, '')}\`` : ''
   return `\n\n> ⚠ **Compiler error**${target}: ${diagnostic}\n\n`
 }
 
+// Attribute lists may hold `<` and `>` inside quotes (`text="Column<Long>"`),
+// so a tag ends at the first `>` outside a quoted value.
+const ATTRIBUTES = String.raw`((?:"[^"]*"|'[^']*'|[^>"'])*)`
+
+/**
+ * Translate the theme's components into Markdown notes and drop the wrappers
+ * that only exist for the slide. This runs on the whole slide, before fences
+ * are split off, because an `InlineCompilerError` wraps the fence it marks.
+ */
+export function translateComponents(content: string): string {
+  return content
+    .replace(new RegExp(`<DrawnAnnotation\\b${ATTRIBUTES}/?>`, 'g'), (_, raw) => annotationNote(raw))
+    .replace(/<\/DrawnAnnotation>/g, '')
+    .replace(new RegExp(`<InlineCompilerError\\b${ATTRIBUTES}/?>`, 'g'), (_, raw) => compilerErrorNote(raw))
+    .replace(/<\/InlineCompilerError>/g, '')
+    .replace(new RegExp(`<(?:Kodee|KodeeWrapper|CodeImports)\\b${ATTRIBUTES}/?>`, 'g'), '')
+    .replace(/<\/(?:Kodee|KodeeWrapper|CodeImports)>/g, '')
+}
+
 /** Translate theme and Slidev markup in prose to plain Markdown. */
 export function cleanProse(text: string, base: string): string {
-  let result = text
+  let result = translateComponents(text)
     .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<DrawnAnnotation\b([^>]*?)(?:\/>|>[\s\S]*?<\/DrawnAnnotation>)/g, (_, raw) => annotationNote(raw))
-    .replace(/<InlineCompilerError\b([^>]*?)(?:\/>|>([\s\S]*?)<\/InlineCompilerError>)/g, (_, raw, slot) => compilerErrorNote(raw, slot))
-    .replace(/<(?:Kodee|KodeeWrapper|CodeImports)\b[^>]*?(?:\/>|>[\s\S]*?<\/(?:Kodee|KodeeWrapper|CodeImports)>)/g, '')
     .replace(/<br\s*\/?>/gi, '\n')
   result = outsideInlineCode(result, prose => prose
     .replace(/<\/?[A-Za-z][^<>]*>/g, '')
@@ -311,7 +332,7 @@ export function parseFenceBlock(block: string): ParsedFence {
  * `lang` plus code with a caption for their title or identity.
  */
 export function cleanSlideMarkdown(content: string, ctx: CleanContext): string {
-  const expanded = expandMagicMoveBlocks(expandSnippetImports(content, ctx))
+  const expanded = translateComponents(expandMagicMoveBlocks(expandSnippetImports(content, ctx)))
   return splitFences(expanded)
     .map(segment => segment.fence
       ? fenceMarkdown(parseFenceBlock(segment.text))

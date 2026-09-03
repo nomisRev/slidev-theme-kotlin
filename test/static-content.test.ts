@@ -102,9 +102,9 @@ describe('cleanProse', () => {
     expect(cleanProse(prose, base)).toBe('> ⚠ **Compiler error** at `Talks.id`: Unresolved reference: id')
   })
 
-  it('uses the slot when there is no message attribute', () => {
-    const prose = '<InlineCompilerError text="x">\n  Type mismatch\n</InlineCompilerError>'
-    expect(cleanProse(prose, base)).toBe('> ⚠ **Compiler error** at `x`: Type mismatch')
+  it('keeps generics inside attribute values', () => {
+    const prose = '<DrawnAnnotation text="Column<Long>" label="Every column is typed" />\n<DrawnAnnotation text="IdTable<Long>" color="red" />'
+    expect(cleanProse(prose, base)).toBe('> **`Column<Long>`** — Every column is typed')
   })
 
   it('removes comments, Kodee, and click wrappers but keeps their content', () => {
@@ -123,6 +123,12 @@ describe('cleanProse', () => {
 })
 
 describe('cleanSlideMarkdown', () => {
+  it('translates a compiler error that wraps a fence', () => {
+    const content = '<InlineCompilerError text="previews" occurrence=2 message="No context argument found">\n\n```kotlin\nfun example() = previews()\n```\n\n</InlineCompilerError>'
+    expect(cleanSlideMarkdown(content, ctx)).toBe('> ⚠ **Compiler error** at `previews`: No context argument found\n\n```kotlin\nfun example() = previews()\n```')
+  })
+
+
   it('captions fences by identity and title, and keeps imports in the code', () => {
     const content = '```kotlin jdbc [Talks.kt] {1|2-3}\nimport a.A\n\nval x = A()\n```\n\n```sql\nSELECT 1\n```'
     expect(cleanSlideMarkdown(content, ctx)).toBe(
@@ -156,6 +162,12 @@ describe('collectSections', () => {
     ])
     expect(sections[1].slides[1].markdown).toBe('```kotlin\nobject T : Table()\n```')
     expect(sections[0].slides[0].markdown).toBe('Welcome')
+  })
+
+  it('strips inline HTML from titles and drops the matching heading', () => {
+    const [section] = collectSections([slide(0, '/deck/slides.md', '<span color="#f59e0b">JDBC</span> ~ <span>R2DBC</span>', '# <span color="#f59e0b">JDBC</span> ~ <span>R2DBC</span>\n\n> Same code')], root, 'Deck', ctx)
+    expect(section.slides[0].title).toBe('JDBC ~ R2DBC')
+    expect(section.slides[0].markdown).toBe('> Same code')
   })
 
   it('uses a single index section for a single-file deck', () => {
