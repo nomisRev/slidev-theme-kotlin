@@ -11,6 +11,13 @@ describe('transition ink hand-off', () => {
     expect(takeTransitionInk('identical', 11, box)).toBe(false)
   })
 
+  it('carries ink left behind on the same page to the instance replacing it', () => {
+    rememberTransitionInk('remount', 10, box)
+
+    expect(takeTransitionInk('remount', 10, box)).toBe(true)
+    expect(takeTransitionInk('remount', 10, box)).toBe(false)
+  })
+
   it('does not carry ink from a non-adjacent page or to a moved target', () => {
     rememberTransitionInk('non-adjacent', 10, box)
     expect(takeTransitionInk('non-adjacent', 12, box)).toBe(false)

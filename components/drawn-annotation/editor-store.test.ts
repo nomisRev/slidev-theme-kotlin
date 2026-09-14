@@ -11,8 +11,8 @@ import {
   clearAnnotationSelection,
   clearLabelDraftFields,
   endAnnotationDraftGesture,
+  annotationEditorLocatorsOn,
   migrateAnnotationLocator,
-  recordAnnotationUndo,
   registerAnnotationEditorActions,
   releaseAnnotationSelection,
   replaceLabelDraft,
@@ -20,12 +20,14 @@ import {
   selectedAnnotationId,
   selectedAnnotationPart,
   setLabelDraft,
-  takeAnnotationUndo,
 } from './editor-store'
 import type { AnnotationEditorActions } from './editor-store'
 
-function actions(): AnnotationEditorActions {
+function actions(page = 1): AnnotationEditorActions {
   return {
+    page,
+    connected: () => true,
+    defaultConnected: () => true,
     isManualConnector: () => false,
     toggleConnectorAttachment: async () => {},
     hasConnectorControl: () => false,
@@ -36,13 +38,11 @@ function actions(): AnnotationEditorActions {
 }
 
 describe('annotation editor store', () => {
-  it('moves selection, draft, undo history and actions to a changed locator', () => {
+  it('moves selection, draft and actions to a changed locator', () => {
     const registered = actions()
     const unregister = registerAnnotationEditorActions('old', registered)
     selectAnnotation('old', 'width')
     setLabelDraft('old', { x: .1, y: .2 })
-    recordAnnotationUndo('old', { x: .3, y: .4 })
-    recordAnnotationUndo('other', null)
     const drafts = annotationGeometryVersion.value
     const registry = annotationEditorRegistryVersion.value
 
@@ -56,9 +56,6 @@ describe('annotation editor store', () => {
     expect(annotationEditorActionsFor('old')).toBeUndefined()
     expect(annotationEditorActionsFor('new')).toBe(registered)
     expect(annotationEditorRegistryVersion.value).toBe(registry + 1)
-    expect(takeAnnotationUndo('old')).toBeUndefined()
-    expect(takeAnnotationUndo('new')).toEqual({ locator: 'new', geometry: { x: .3, y: .4 } })
-    expect(takeAnnotationUndo('other')).toEqual({ locator: 'other', geometry: null })
 
     // Unmounting after a migration still removes the component's actions.
     unregister()
@@ -122,8 +119,8 @@ describe('annotation editor store', () => {
   it('replaces a draft with an exact snapshot instead of merging, and null clears it', () => {
     setLabelDraft('tag', { x: .1, y: .2, width: .3 })
     replaceLabelDraft('tag', { x1: 0, y1: 0, x2: 1, y2: 1 })
-    // No label fields survive the replacement: Undo restores the snapshot as
-    // it was recorded, not a merge of old and new.
+    // No label fields survive the replacement: a cancelled drag restores the
+    // snapshot as it was recorded, not a merge of old and new.
     expect(annotationDrafts.get('tag')).toEqual({ x1: 0, y1: 0, x2: 1, y2: 1 })
     replaceLabelDraft('tag', null)
     expect(annotationDrafts.get('tag')).toBeUndefined()
@@ -134,28 +131,23 @@ describe('annotation editor store', () => {
     setLabelDraft('tag', { x: .1, y: .2, x1: 0, y1: 0, x2: 1, y2: 1, cx: .5, cy: .5 })
     clearLabelDraftFields('tag', 'connector')
     expect(annotationDrafts.get('tag')).toEqual({ x: .1, y: .2 })
-    clearLabelDraftFields('tag', 'label')
+    setLabelDraft('tag', { x1: 0, y1: 0, x2: 1, y2: 1, cx: .5, cy: .5 })
+    clearLabelDraftFields('tag', 'control')
+    expect(annotationDrafts.get('tag')).toEqual({ x: .1, y: .2, x1: 0, y1: 0, x2: 1, y2: 1 })
     // A draft with nothing left disappears entirely.
-    expect(annotationDrafts.get('tag')).toBeUndefined()
-    clearLabelDraftFields('tag', 'label')
-    expect(annotationDrafts.get('tag')).toBeUndefined()
+    setLabelDraft('only', { cx: .5, cy: .5 })
+    clearLabelDraftFields('only', 'control')
+    expect(annotationDrafts.get('only')).toBeUndefined()
+    clearLabelDraftFields('only', 'control')
+    expect(annotationDrafts.get('only')).toBeUndefined()
     annotationDrafts.clear()
   })
 
-  it('restores undo snapshots as local drafts', () => {
-    setLabelDraft('tag', { x: .5, y: .5 })
-    recordAnnotationUndo('tag', null)
-    setLabelDraft('tag', { x: .6 })
-    recordAnnotationUndo('tag', { x: .5, y: .5 })
-
-    const last = takeAnnotationUndo('tag')!
-    replaceLabelDraft(last.locator, last.geometry)
-    expect(annotationDrafts.get('tag')).toEqual({ x: .5, y: .5 })
-
-    const first = takeAnnotationUndo('tag')!
-    replaceLabelDraft(first.locator, first.geometry)
-    expect(annotationDrafts.get('tag')).toBeUndefined()
-    annotationDrafts.clear()
+  it('lists the editable annotations of one slide', () => {
+    const unregister = [registerAnnotationEditorActions('a', actions(3)), registerAnnotationEditorActions('b', actions(4)), registerAnnotationEditorActions('c', actions(3))]
+    expect(annotationEditorLocatorsOn(3)).toEqual(['a', 'c'])
+    expect(annotationEditorLocatorsOn(5)).toEqual([])
+    for (const remove of unregister) remove()
   })
 
   it('does not let a stale unregister remove a newer registration', () => {

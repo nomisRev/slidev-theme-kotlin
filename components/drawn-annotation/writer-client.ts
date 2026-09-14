@@ -1,6 +1,5 @@
 import type { PersistedAnnotationGeometry } from './geometry'
 
-type GeometryReset = 'label' | 'connector'
 interface WriterResponse { geometry?: { label?: { x: number, y: number, width?: number }, connector?: { start: { x: number, y: number }, control?: { x: number, y: number }, end: { x: number, y: number } } }, revision?: string, revisions?: Record<string, string>, error?: string, recovery?: string }
 /** Source revisions by Markdown file. A locator names a tag, never a revision. */
 const revisions = new Map<string, string>()
@@ -60,27 +59,21 @@ export async function loadAnnotationGeometry() { return response(await fetch('/_
 /** The geometry this tab last saved for a locator, or `null` when the source binding is the only known state. */
 export function cachedAnnotationGeometry(locator: string) { const value = cachedGeometry.get(locator); return value ? { ...value } : null }
 function enqueue<T>(operation: () => Promise<T>) { const result = pendingWrite.then(operation, operation); pendingWrite = result.then(() => undefined, () => undefined); return result }
-async function write(locator: string, geometry: PersistedAnnotationGeometry | null) {
+async function post(locator: string, patch: { geometry?: ReturnType<typeof documentGeometry>, connect?: boolean | null }) {
   const file = locatorFile(locator)
   // The first write to a file needs its revision; every response refreshes it.
   if (!revisions.has(file)) await loadAnnotationGeometry()
   const revision = revisions.get(file)
   if (!revision) throw new Error(`unknown source revision for ${file}: reload saved geometry before saving`)
-  const result = await response(await fetch('/__drawn-annotation-source', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ locator, expectedRevision: revision, geometry: documentGeometry(geometry) }) }), file)
+  return response(await fetch('/__drawn-annotation-source', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ locator, expectedRevision: revision, ...patch }) }), file)
+}
+async function write(locator: string, geometry: PersistedAnnotationGeometry | null) {
+  const result = await post(locator, { geometry: documentGeometry(geometry) })
   const persisted = flatten(result.geometry)
   cachedGeometry.set(locator, persisted)
   return { geometry: { [locator]: persisted }, revision: result.revision }
 }
+/** Replace the tag's whole `:geometry` binding; `null` removes it. */
 export function saveLabelGeometry(locator: string, geometry: PersistedAnnotationGeometry | null) { return enqueue(() => write(locator, geometry)) }
-/** Remove one part from `current`, the geometry the source holds now, and save the rest. */
-export function resetAnnotationGeometry(locator: string, part: GeometryReset, current: PersistedAnnotationGeometry | null) {
-  // Both resets are expressed through the label field set, which is closed
-  // (x, y, width), rather than by deleting connector fields one by one.
-  // Resetting the connector therefore drops the whole connector object —
-  // endpoints and any control-point field the connector may carry — which is
-  // exactly what switching back to the automatic route must remove.
-  const { x, y, width, ...connectorFields } = current ?? {}
-  const next: PersistedAnnotationGeometry = part === 'label' ? connectorFields : { x, y, width }
-  return enqueue(() => write(locator, next))
-}
-export function restoreAnnotationGeometry(locator: string, geometry: PersistedAnnotationGeometry | null) { return enqueue(() => write(locator, geometry)) }
+/** Show or hide the leader line: a boolean writes that `:connect` literal into the tag, `null` removes the binding so the slide or deck default applies. */
+export function saveConnect(locator: string, connect: boolean | null) { return enqueue(() => post(locator, { connect })) }

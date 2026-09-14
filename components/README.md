@@ -49,11 +49,35 @@ annotation stays hidden.
 | `target-radius` | `3` | size of the mark at that point, as a percentage of the target's width |
 | `target-type` | `circle` | target shape, independently set to `underline`, `circle`, `box`, `strike-through`, or `none` |
 | `target-mark` | `true` | show the default target circle when `target-type` is omitted |
-| `connect` | `true` | draw the leader line between the mark and its destination |
+| `connect` | `true` | draw the leader line between the mark and its destination; unset, the slide's `drawnAnnotation.connect` frontmatter decides, then `themeConfig.drawnAnnotation.connect` |
 | `arrow` | `false` | arrow head at the end of the leader line |
 | `curve` | `0.12` | curvature of the leader line, as a fraction of its length |
 
 Percentages keep annotations on screenshots independent of the rendered size.
+
+A deck that places most labels by hand rarely wants a leader line. Turn it off
+once in the headmatter instead of writing `:connect="false"` on every tag, and
+override per slide or per tag where a line does help:
+
+```yaml
+---
+theme: kotlin
+themeConfig:
+  drawnAnnotation:
+    connect: false
+---
+```
+
+```yaml
+---
+drawnAnnotation:
+  connect: true   # this slide draws its leaders again
+---
+```
+
+```html
+<DrawnAnnotation text="suspend" label="pauses here" :connect="true" />
+```
 Giving both a `target` and a `label` connects the mark to the target and writes
 the label next to it.
 
@@ -232,7 +256,8 @@ nested annotation canvas:
 No annotation ID or generated stylesheet is used. Enable
 `drawnAnnotationEditor()` in the consuming deck's `vite.config.ts`; while
 serving it injects a transient source locator and the editor rewrites only this
-opening tag's `:geometry` binding. The locator is not part of authored Markdown
+opening tag's `:geometry` binding and its `:connect` binding. The
+locator is not part of authored Markdown
 or production output. With the writer configured, press **Alt+Shift+A** (or use
 the global **Edit annotations** toolbar) in a development deck.
 
@@ -252,7 +277,12 @@ arrow keys to nudge it (`Shift` for larger steps) — arrow keys always edit the
 selected control and never navigate while the session is active. The width
 handle adjusts maximum width; connector endpoints, its quadratic control
 point, and its body can likewise be dragged (a body drag or nudge translates
-endpoints and control point as one rigid polygon). One toolbar control
+endpoints and control point as one rigid polygon). **Hide connector** and
+**Show connector** write a `:connect` binding only where the wanted state
+differs from the slide's or deck's `drawnAnnotation.connect` default, and
+remove the binding when it matches, so a deck that hides leaders by default
+gets `:connect="true"` on the one tag that shows one; the routing and curve
+controls below act on a drawn connector only. One toolbar control
 switches the selected connector between its two states: the first connector
 drag (or the **Make connector manual** button) materializes the currently
 automatic route — endpoints and the control point that preserves its visible
@@ -274,15 +304,15 @@ press Done again, or **Reload saved geometry** to deliberately discard the
 drafts and adopt the saved source). **Esc** cancels in stages: an active drag
 first (restoring the pre-drag draft), then the current selection, then — after
 a confirmation whenever unsaved changes exist — the whole session, discarding
-its drafts without writing. **Cmd/Ctrl+Z** undoes the previous gesture for the
-selected annotation locally; the restored state is committed or discarded with
-the rest of the session. Removing saved geometry is the one exception to
-draft-only editing — a draft can only overlay the source, not delete from it —
-so **Reset label**, **Reset label & connector**, **Use automatic connector**,
-and **Straighten connector** (when the source holds the control point) write
-immediately; Undo restores what they removed as an ordinary draft. A deck
-without the writer plugin reports its configuration error instead of entering
-an editor that cannot save.
+its drafts without writing. There is no undo: re-drag what went wrong, or
+reset. Removing saved geometry is the one exception to draft-only editing — a
+draft can only overlay the source, not delete from it — so **Reset
+annotation** (the selected tag loses its `:geometry` binding), **Reset slide**
+(every annotation on the current slide does, after a confirmation), **Use
+automatic connector**, **Straighten connector** (when the source holds the
+control point), and the **Hide/Show connector** toggle write immediately. A
+deck without the writer plugin reports its configuration error instead of
+entering an editor that cannot save.
 
 ## How it looks
 
@@ -434,3 +464,67 @@ mode it is shown synchronously so exports capture it.
 
 Both are read where they are used, so any scope can redefine them — a single
 slide's class as well as `:root`.
+
+# `SmartCast`
+
+`<SmartCast>` paints IntelliJ's smart-cast green behind an exact piece of code
+— the receiver a null check or `is` check just narrowed, from `String?` to
+`String` or `Supertype` to `Subtype`. Wrap exactly one fenced code block; the
+component supports ordinary Shiki fences and `magic-move` blocks, and stays
+off the slide when its target is not part of the current step.
+
+````md
+<SmartCast text="nullable.length">
+
+```kotlin
+val nullable: String? = null
+val length =
+  if (nullable != null) nullable.length
+  else -1
+```
+
+</SmartCast>
+````
+
+Unlike `DrawnAnnotation` and `InlineCompilerError`, which draw an independent
+mark positioned over the code, `SmartCast` paints the background of the
+matched token elements themselves. A same element's background always renders
+behind its own text, so this needs no position tracking, and it travels with
+Magic Move for free — the highlight is the moving token's own style, not a box
+following it.
+
+## Target
+
+Give `text` to mark an exact rendered fragment, even when Shiki split it
+across syntax-token spans. `occurrence` selects its one-based occurrence
+(default `1`). Add `line` to limit the text search to that one-based source
+line.
+
+| prop | required | meaning |
+| --- | --- | --- |
+| `text` | yes | exact rendered code text to paint green |
+| `line` | no | one-based line number that narrows a `text` search |
+| `occurrence` | no | one-based match of `text` to paint; defaults to `1` |
+
+In development, a missing, ambiguous, or invalid target produces a console
+warning after Magic Move has had time to settle.
+
+## Click timing
+
+The timing props match Slidev's click ranges. No timing prop (or `at="0"`)
+shows the highlight from the initial slide state. `at` reveals it, and `until`
+hides it at its first exclusive click. Relative values such as `"+1"` are
+supported.
+
+Use `on` for a highlight that belongs to one click: `:on="2"` is equivalent to
+`:at="2" :until="3"`; `:on="0"` shows it only before the first click. `on`
+takes precedence over `at` and `until` when both forms are supplied.
+
+## Styling
+
+| CSS variable | default | meaning |
+| --- | --- | --- |
+| `--smart-cast-color` | IntelliJ's smart-cast green (`#dcf8df`) | highlight background colour |
+
+Read where it is used, so any scope can redefine it — a single slide's class
+as well as `:root`.

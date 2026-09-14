@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 
 // Labels come from deck-authored Markdown, but still disable embedded HTML so
 // rendering a prop never creates executable or arbitrary DOM.
@@ -10,7 +11,7 @@ const markdown = new MarkdownIt({
 
 /** Render the small Markdown subset accepted by a DrawnAnnotation label. */
 export function renderAnnotationLabel(source: string): string {
-  return markdown.render(source)
+  return markdown.render(normalizeAnnotationLineBreaks(source))
 }
 
 /**
@@ -18,7 +19,7 @@ export function renderAnnotationLabel(source: string): string {
  * the Markdown-free equivalent instead of announcing backticks and `>`.
  */
 export function annotationLabelText(source: string): string {
-  return markdown.parse(source, {})
+  return markdown.parse(normalizeAnnotationLineBreaks(source), {})
     .flatMap((token) => {
       if (token.type === 'inline') return token.children ?? []
       // Fenced and indented code have no inline child tokens.

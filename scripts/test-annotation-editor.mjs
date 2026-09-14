@@ -8,9 +8,10 @@
  * frozen edit session end to end — that dragging and arrow-key nudging change
  * only the local draft (no source write, no HMR) while Slidev navigation
  * stays locked, that "Done editing annotations" commits every change of the
- * session in one write phase, and that a conflicting commit and an Escape
- * cancel behave. The server runs against a throwaway copy of `slides.md`, so
- * the checked-in deck is never modified.
+ * session in one write phase, that a conflicting commit and an Escape cancel
+ * behave, and that the immediate-write toolbar actions (connector toggle,
+ * resets) rewrite exactly the fixture tag. The server runs against a
+ * throwaway copy of `slides.md`, so the checked-in deck is never modified.
  */
 import { spawn } from 'node:child_process'
 import { randomInt } from 'node:crypto'
@@ -74,7 +75,10 @@ async function fixtureSource() {
   const binding = /:geometry="([^"]*)"/.exec(tag)
   // The writer serializes a plain object literal; evaluate it the way Vue would.
   const geometry = binding ? new Function(`return (${binding[1]})`)() : undefined
-  return { tag, geometry }
+  const connect = /:connect="(true|false)"/.exec(tag)
+  // The deck authors `:connect="false"` elsewhere; the toggle must never touch those.
+  const otherConnectBindings = tags.filter(other => other !== tag && /:connect=/.test(other)).length
+  return { tag, geometry, connect: connect ? connect[1] === 'true' : undefined, otherConnectBindings }
 }
 
 async function waitFor(condition) {
@@ -310,16 +314,7 @@ async function run() {
     }
     await assertNoWrite('Body-nudging the curved connector', sessionStart, sessionHot)
 
-    // 6. Undo is local too: it restores the pre-gesture draft without a write.
-    const undoModifier = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Meta' : 'Control')
-    await page.keyboard.press(`${undoModifier}+z`)
-    if (!await waitFor(async () => /undone/i.test(await status.textContent() ?? '')))
-      fail(`Cmd/Ctrl+Z did not undo locally. Toolbar status: ${JSON.stringify(await status.textContent())}`)
-    await assertNoWrite('Undo', sessionStart, sessionHot)
-    // Redo the connector edit so the commit below carries every change kind.
-    await drag(page, handles.first(), 18, 12)
-
-    // 7. One commit persists the whole session: label position, width and the
+    // 6. One commit persists the whole session: label position, width and the
     // quadratic connector land in a single write phase on this tag only. The
     // materialized route keeps its curve: the committed connector carries the
     // control point, not a collapsed straight segment (issue 001).
@@ -334,7 +329,7 @@ async function run() {
     if (!/:geometry="\{ label: \{ x: 0\.\d{4}, y: 0\.\d{4}, width: 0\.\d{4} \}, connector: \{ type: 'quadratic', start: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, control: \{ x: 0\.\d{4}, y: 0\.\d{4} \}, end: \{ x: 0\.\d{4}, y: 0\.\d{4} \} \} \}"/.test(committed.tag))
       fail(`The written binding is not the compact four-decimal literal the writer promises:\n${committed.tag}`)
 
-    // 7b. The toolbar's single connector state control (issue 003): switching
+    // 6b. The toolbar's single connector state control (issue 003): switching
     // back to automatic removes saved endpoints, which a draft cannot express,
     // so it is one of the documented immediate-write exceptions. It removes
     // the whole connector object — not individual fields — while the label
@@ -357,20 +352,20 @@ async function run() {
     await page.getByRole('button', { name: 'Make connector manual' }).waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
       .catch(() => fail('The connector state control did not offer "Make connector manual" after switching to automatic.'))
 
-    // 7c. Undo restores the manual connector the switch removed — as an
-    // ordinary uncommitted draft, so nothing is written until Done commits it.
+    // 6c. "Make connector manual" materializes the automatic route again, curve
+    // included, as an ordinary draft: nothing is written until Done commits it.
     await label.click()
     await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
-    const hotBeforeAutomaticUndo = hotUpdates
-    await page.keyboard.press(`${undoModifier}+z`)
-    if (!await waitFor(async () => /undone/i.test(await status.textContent() ?? '')))
-      fail(`Cmd/Ctrl+Z after switching to automatic did not undo locally. Toolbar status: ${JSON.stringify(await status.textContent())}`)
-    await assertNoWrite('Cmd/Ctrl+Z after switching to automatic', afterAutomatic, hotBeforeAutomaticUndo)
-    const restored = await commitSession('Committing the undone automatic switch')
-    if (!same(restored.geometry, committed.geometry))
-      fail(`Undo did not restore the manual connector the automatic switch removed.\nExpected ${JSON.stringify(committed.geometry)}\nReceived ${JSON.stringify(restored.geometry)}`)
+    const hotBeforeManual = hotUpdates
+    await page.getByRole('button', { name: 'Make connector manual' }).click()
+    await controlHandle.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+      .catch(() => fail('Making the connector manual did not show the control handle.'))
+    await assertNoWrite('Making the connector manual', afterAutomatic, hotBeforeManual)
+    const restored = await commitSession('Committing the manual connector')
+    if (typeof restored.geometry?.connector?.control?.x !== 'number' || !same(restored.geometry.label, committed.geometry.label))
+      fail(`Making the connector manual should persist a quadratic connector next to the untouched label; the tag holds ${JSON.stringify(restored.geometry)}.`)
 
-    // 7d. Straightening a saved curve (issue 001): the source's control point
+    // 6d. Straightening a saved curve (issue 001): the source's control point
     // cannot be removed by a draft either, so "Straighten connector" is the
     // same kind of immediate-write exception. Only the control point goes:
     // endpoints and label survive it untouched.
@@ -392,7 +387,7 @@ async function run() {
     if (!same(afterStraighten.geometry?.label, restored.geometry.label))
       fail('Straightening changed the label geometry.')
 
-    // 7e. "Curve connector" adds a chord-midpoint control point back, so the
+    // 6e. "Curve connector" adds a chord-midpoint control point back, so the
     // rendered route does not jump when the handle appears — an ordinary
     // draft, committed with the session like any other geometry edit.
     const hotBeforeCurve = hotUpdates
@@ -409,7 +404,7 @@ async function run() {
     if (Math.abs(curved.control.x - (curved.start.x + curved.end.x) / 2) > 5e-3 || Math.abs(curved.control.y - (curved.start.y + curved.end.y) / 2) > 5e-3)
       fail(`A straightened connector's new control point should sit on its chord midpoint; the tag holds ${JSON.stringify(curved)}.`)
 
-    // 8. A conflicting commit fails without losing drafts: the session stays
+    // 7. A conflicting commit fails without losing drafts: the session stays
     // open, the file keeps the other author's revision, and "Reload saved
     // geometry" is the documented recovery.
     await enterEditMode()
@@ -435,7 +430,7 @@ async function run() {
     if (same(afterRecovery.geometry.label, curveCommitted.geometry.label))
       fail('The commit after conflict recovery did not move the label.')
 
-    // 9. Escape cancels the session: the first press clears the selection,
+    // 8. Escape cancels the session: the first press clears the selection,
     // the second asks for confirmation and discards the session's drafts.
     await enterEditMode()
     await drag(page, label, 40, 0)
@@ -457,7 +452,73 @@ async function run() {
     })
     if (!cancelled) fail('Escape did not discard the session drafts; the label kept its cancelled position.')
 
-    // 10. Navigation works again once the session is over.
+    // 9. Hiding the connector is a prop, not geometry, so it writes at once:
+    // `:connect="false"` lands on the fixture tag only, the geometry stays,
+    // the connector controls disappear, and Show removes the binding again.
+    await enterEditMode()
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    const hotBeforeHide = hotUpdates
+    await page.getByRole('button', { name: 'Hide connector' }).click()
+    const hidden = await waitFor(async () => { const now = await fixtureSource(); return now.tag === afterRecovery.tag ? undefined : now })
+    if (!hidden)
+      fail(`Hiding the connector did not write the source. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+    if (hidden.connect !== false || !hidden.tag.endsWith(' :connect="false">'))
+      fail(`Hiding the connector should append :connect="false" to the tag; it holds ${hidden.tag}.`)
+    if (!same(hidden.geometry, afterRecovery.geometry))
+      fail('Hiding the connector changed the geometry binding.')
+    if (hidden.otherConnectBindings !== sessionStart.otherConnectBindings)
+      fail('Hiding the connector touched a `:connect` binding on another tag.')
+    if (!await waitFor(async () => hotUpdates > hotBeforeHide))
+      fail('Hiding the connector rewrote the source, but Slidev never hot-updated the browser.')
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    if (await annotation.locator('.annotation-connector-editor').count())
+      fail('A hidden connector still shows its editing controls.')
+    const routing = page.getByRole('button', { name: /Use automatic connector|Make connector manual/ })
+    if (!await routing.isDisabled())
+      fail('The connector routing control stayed enabled while the connector is hidden.')
+    await page.getByRole('button', { name: 'Show connector' }).click()
+    const shown = await waitFor(async () => { const now = await fixtureSource(); return now.tag === hidden.tag ? undefined : now })
+    if (!shown || shown.tag !== afterRecovery.tag)
+      fail(`Showing the connector should restore the tag exactly; it holds ${shown?.tag}.`)
+    await doneButton.click()
+    await doneButton.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT })
+
+    // 10. "Reset annotation" removes the whole binding at once.
+    await enterEditMode()
+    await label.click()
+    await selectedLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await page.getByRole('button', { name: 'Reset annotation' }).click()
+    const reset = await waitFor(async () => { const now = await fixtureSource(); return now.geometry === undefined ? now : undefined })
+    if (!reset)
+      fail(`Reset annotation did not remove the geometry binding. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+    if (/:geometry=/.test(reset.tag) || reset.tag !== sessionStart.tag)
+      fail(`Reset annotation should restore the authored tag exactly; it holds ${reset.tag}.`)
+    await doneButton.click()
+    await doneButton.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT })
+
+    // 11. "Reset slide" does the same for every annotation on the slide, after
+    // a confirmation, and skips tags that hold no geometry.
+    await enterEditMode()
+    await drag(page, label, 30, 12)
+    const beforeSlideReset = await commitSession('Committing a drag before resetting the slide')
+    if (beforeSlideReset.geometry === undefined) fail('The drag before the slide reset did not persist.')
+    await enterEditMode()
+    let confirmation
+    page.once('dialog', (dialog) => { confirmation = dialog.message(); dialog.accept() })
+    await page.getByRole('button', { name: 'Reset slide' }).click()
+    const slideReset = await waitFor(async () => { const now = await fixtureSource(); return now.geometry === undefined ? now : undefined })
+    if (!slideReset)
+      fail(`Reset slide did not remove the geometry binding. Toolbar status: ${JSON.stringify(await status.textContent().catch(() => undefined))}`)
+    if (!/^Remove the saved geometry of all \d+ annotations on this slide\?$/.test(confirmation ?? ''))
+      fail(`Reset slide should ask for confirmation naming the annotation count; it asked ${JSON.stringify(confirmation)}.`)
+    if (slideReset.tag !== sessionStart.tag)
+      fail(`Reset slide should restore the authored tag exactly; it holds ${slideReset.tag}.`)
+    await doneButton.click()
+    await doneButton.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT })
+
+    // 12. Navigation works again once the session is over.
     await page.keyboard.press('ArrowLeft')
     if (await waitFor(async () => !(await activeLabel.count())) === undefined)
       fail('Arrow-key navigation did not come back after leaving the edit session.')

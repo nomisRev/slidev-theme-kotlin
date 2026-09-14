@@ -1,5 +1,5 @@
 /**
- * Compilable Kotlin sources from the deck's snippets.
+ * Compilable Kotlin and Java sources from the deck's snippets.
  *
  * A Kotlin fence on a slide is a fragment: it carries its imports (see
  * `code-imports.ts`) but not a package, and it may mix declarations with
@@ -9,13 +9,16 @@
  * slide fails the build instead of the talk:
  *
  * - each file gets its own package (`<package>.<section>.slide<n>`), so
- *   the steps of a Magic Move chain can all declare `object Talks`;
+ *   the steps of a Magic Move chain can all declare `object Talks`. A Java
+ *   fence and a Kotlin fence on the same slide share that package, allowing
+ *   them to demonstrate Java ↔ Kotlin interop;
  * - the imports written in the fence are kept, as is anything folded above
  *   a `// Example` marker, and the deck can add shared imports
  *   (`themeConfig.snippets.imports`) for tables and types the slides use
  *   without defining, kept in a hand-written support package;
- * - top-level declarations stay top-level and bare statements are wrapped
- *   in `suspend fun main()`, where a Kotlin file allows them.
+ * - Kotlin top-level declarations stay top-level and bare statements are
+ *   wrapped in `suspend fun main()`. Java fences are emitted as Java
+ *   compilation units, so they must contain declarations.
  *
  * Fences with `no-compile` in their info (prose-like sketches, library
  * internals), `gradle` build-script fences, and fences an
@@ -39,15 +42,22 @@ export interface SnippetSettings {
   dir: string
   /** Base package; every file gets a sub-package of it. */
   package: string
-  /** Import targets added to every file, e.g. `presentation.support.*`. */
+  /** Import targets added to every generated source, e.g. `presentation.support.*`. */
   imports: string[]
+  /** Java output directory, relative to the deck root. */
+  javaDir: string
 }
 
-const DEFAULT_SETTINGS: SnippetSettings = { dir: 'src/main/kotlin/snippets', package: 'snippets', imports: [] }
+const DEFAULT_SETTINGS: SnippetSettings = {
+  dir: 'src/main/kotlin/snippets',
+  javaDir: 'src/main/java/snippets',
+  package: 'snippets',
+  imports: [],
+}
 
 /**
  * `themeConfig.snippets`: `true` for the defaults, an object to override
- * `dir`, `package`, and `imports`, or unset to leave the feature off.
+ * `dir`, `javaDir`, `package`, and `imports`, or unset to leave the feature off.
  */
 export function resolveSnippetSettings(themeConfig: unknown): SnippetSettings | undefined {
   const raw = (themeConfig as { snippets?: unknown } | undefined)?.snippets
@@ -63,6 +73,7 @@ export function resolveSnippetSettings(themeConfig: unknown): SnippetSettings | 
     : typeof config.imports === 'string' ? [config.imports] : []
   return {
     dir: (typeof config.dir === 'string' && config.dir.trim()) || DEFAULT_SETTINGS.dir,
+    javaDir: (typeof config.javaDir === 'string' && config.javaDir.trim()) || DEFAULT_SETTINGS.javaDir,
     package: (typeof config.package === 'string' && config.package.trim()) || DEFAULT_SETTINGS.package,
     imports,
   }
@@ -298,6 +309,11 @@ function identifier(slug: string): string {
   return /^\d/.test(id) ? `s${id}` : id
 }
 
+/** Java requires a public top-level type to have the same name as its source file. */
+function javaCompilationUnitName(code: string): string | undefined {
+  return code.match(/^\s*public\s+(?:class|interface|enum|record|@interface)\s+(\w+)/m)?.[1]
+}
+
 // Attribute lists may hold `>` inside quotes (`message="a > b"`), so a tag
 // ends at the first `>` outside a quoted value.
 const INLINE_COMPILER_ERROR = /<InlineCompilerError\b(?:"[^"]*"|'[^']*'|[^>"'])*(?<!\/)>[\s\S]*?<\/InlineCompilerError>/g
@@ -310,9 +326,9 @@ export function withoutCompilerErrorFences(content: string): string {
   return content.replace(INLINE_COMPILER_ERROR, '')
 }
 
-/** Whether a fence should become a Kotlin file. */
+/** Whether a fence should become a generated Kotlin or Java source file. */
 export function isCompilable(fence: ParsedFence): boolean {
-  if (!['kotlin', 'kt'].includes(fence.lang))
+  if (!['kotlin', 'kt', 'java'].includes(fence.lang))
     return false
   if (fence.flags.includes(NO_COMPILE_FLAG))
     return false
@@ -357,8 +373,29 @@ export function renderSnippetFile(fence: ParsedFence, pkg: string, source: Snipp
   return `${sections.join('\n\n')}\n`
 }
 
+/** The Java source for one fence. Java snippets must be compilation units. */
+export function renderJavaSnippetFile(fence: ParsedFence, pkg: string, source: SnippetSource, settings: SnippetSettings): string {
+  const marked = fence.prefix === undefined ? splitLeadingImports(fence.code) : undefined
+  const written = fence.prefix !== undefined
+    ? `${fence.prefix}\n\n${fence.code}`
+    : marked?.prefix !== undefined ? `${marked.prefix}\n\n${marked.body}` : fence.code
+  const shown = splitImportBlock(written)
+  // A generated source owns its package, just as Kotlin generated sources do.
+  const body = shown.body.replace(/^\s*package\s+[\w.]+\s*;?\s*$/gm, '').trim()
+  const imports = [...new Set([...settings.imports, ...fence.imports, ...shown.imports])]
+  const sections = [
+    `// Generated by slidev-theme-kotlin from ${source.file}, slide ${source.slide} "${source.title.replace(/"/g, "'")}".\n// Do not edit: change the slide and run \`slidev-kotlin-snippets\` again.`,
+    `package ${pkg};`,
+  ]
+  if (imports.length)
+    sections.push(imports.map(target => `import ${target};`).join('\n'))
+  if (body)
+    sections.push(body)
+  return `${sections.join('\n\n')}\n`
+}
+
 /**
- * One Kotlin file per compilable fence of the deck. Files are grouped by
+ * One Kotlin or Java file per compilable fence of the deck. Files are grouped by
  * source Markdown file and named after the slide; a slide with several
  * fences tells them apart by their first meta word (`jdbc`, `r2dbc`) or a
  * letter.
@@ -375,23 +412,32 @@ export function collectSnippetFiles(slides: SnippetSlide[], userRoot: string, se
     const no = slide.index + 1
     const title = plainTitle(slide.title) || `Slide ${no}`
     const source: SnippetSource = { file, slide: no, title }
-    const labels = fences.map(fence => fence.meta.split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || '')
-    fences.forEach((fence, index) => {
-      let suffix = ''
-      if (fences.length > 1) {
-        const label = labels[index]
-        suffix = label && labels.indexOf(label) === index && labels.lastIndexOf(label) === index
-          ? label
-          : String.fromCharCode('a'.charCodeAt(0) + index)
-      }
-      const base = `${String(no).padStart(3, '0')}-${slugify(title) || 'slide'}${suffix ? `-${suffix}` : ''}`
-      let path = `${settings.dir.replace(/\/+$/, '')}/${section}/${base}.kt`
-      for (let n = 2; usedPaths.has(path); n++)
-        path = `${settings.dir.replace(/\/+$/, '')}/${section}/${base}-${n}.kt`
-      usedPaths.add(path)
-      const pkg = `${settings.package}.${identifier(section)}.slide${no}${identifier(suffix)}`
-      files.push({ path, package: pkg, content: renderSnippetFile(fence, pkg, source, settings), source })
-    })
+    for (const language of ['kotlin', 'java'] as const) {
+      const languageFences = fences.filter(fence => language === 'kotlin' ? ['kotlin', 'kt'].includes(fence.lang) : fence.lang === 'java')
+      const labels = languageFences.map(fence => fence.meta.split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || '')
+      languageFences.forEach((fence, index) => {
+        let suffix = ''
+        if (languageFences.length > 1) {
+          const label = labels[index]
+          suffix = label && labels.indexOf(label) === index && labels.lastIndexOf(label) === index
+            ? label
+            : String.fromCharCode('a'.charCodeAt(0) + index)
+        }
+        const base = `${String(no).padStart(3, '0')}-${slugify(title) || 'slide'}${suffix ? `-${suffix}` : ''}`
+        const extension = language === 'java' ? 'java' : 'kt'
+        const filename = language === 'java' ? javaCompilationUnitName(fence.code) || base : base
+        const dir = (language === 'java' ? settings.javaDir : settings.dir).replace(/\/+$/, '')
+        let path = `${dir}/${section}/${filename}.${extension}`
+        for (let n = 2; usedPaths.has(path); n++)
+          path = `${dir}/${section}/${base}-${n}.${extension}`
+        usedPaths.add(path)
+        const pkg = `${settings.package}.${identifier(section)}.slide${no}${identifier(suffix)}`
+        const content = language === 'java'
+          ? renderJavaSnippetFile(fence, pkg, source, settings)
+          : renderSnippetFile(fence, pkg, source, settings)
+        files.push({ path, package: pkg, content, source })
+      })
+    }
   }
   return files
 }
@@ -415,7 +461,7 @@ function generatedFilesUnder(dir: string): string[] {
     const path = join(dir, entry)
     if (statSync(path).isDirectory())
       found.push(...generatedFilesUnder(path))
-    else if (entry.endsWith('.kt') && readFileSync(path, 'utf-8').startsWith(GENERATED_MARKER))
+    else if ((entry.endsWith('.kt') || entry.endsWith('.java')) && readFileSync(path, 'utf-8').startsWith(GENERATED_MARKER))
       found.push(path)
   }
   return found
@@ -441,12 +487,14 @@ export function syncSnippetFiles(root: string, settings: SnippetSettings, files:
       writeFileSync(path, content, 'utf-8')
     }
   }
-  for (const path of generatedFilesUnder(join(root, settings.dir))) {
-    if (expected.has(path))
-      continue
-    result.removed.push(relative(root, path))
-    if (!options.check)
-      rmSync(path)
+  for (const dir of new Set([settings.dir, settings.javaDir])) {
+    for (const path of generatedFilesUnder(join(root, dir))) {
+      if (expected.has(path))
+        continue
+      result.removed.push(relative(root, path))
+      if (!options.check)
+        rmSync(path)
+    }
   }
   return result
 }

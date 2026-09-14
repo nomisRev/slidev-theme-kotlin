@@ -5,6 +5,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId,
 import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { useMutationObserver, useResizeObserver } from '@vueuse/core'
 import { findTextInSegments } from './code-text-match'
+import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { clearAnnotationAuthoringProblems, reportAnnotationAuthoringProblem } from './drawn-annotation/editor-store'
@@ -21,6 +22,7 @@ const props = defineProps<{
   text?: string
   /** Which occurrence of `text` to underline, 1-based. */
   occurrence?: number | string
+  /** Diagnostic text. Use `\\n` (or a literal newline in a bound string) for a line break. */
   message: string
   /** Slidev click at which to reveal the diagnostic. Supports relative values like "+1". Omit (or pass 0) to show it from the start. */
   at?: number | string
@@ -34,6 +36,11 @@ const props = defineProps<{
    */
   on?: number | string
 }>()
+
+// Markdown attributes cannot conveniently contain a literal line break, so
+// accept both a real newline (including one from a bound Vue string) and the
+// explicit `\\n` escape.
+const message = computed(() => normalizeAnnotationLineBreaks(props.message))
 
 const slideContext = useSlideContext()
 const { $clicksContext, $clicks, $scale, $zoom } = slideContext
@@ -191,6 +198,37 @@ function inheritTransitionInk(host: HTMLElement) {
   if (!visible.value || !lastTargetTransitionBox || !isCrossSlideMagicMove(host))
     return
   skipEntranceAnimation.value = takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTargetTransitionBox)
+}
+
+/**
+ * Slidev sometimes unmounts and remounts the slide it is showing: its
+ * slideshow container changes shape on the first click after a view
+ * transition, and every slide inside it is rebuilt. The previous instance
+ * hands its visible diagnostic over on unmount (see onBeforeUnmount); the
+ * one that replaces it takes it back on its first measurement that finds the
+ * target while the diagnostic is due, and reveals at once instead of fading
+ * in after the usual delay. A diagnostic that was not on screen before has
+ * nothing to take and animates in as usual.
+ *
+ * The first measurement runs right after mount, still inside the same render
+ * pass, so that nothing is missing from the frame that follows. Slidev's
+ * click count reads as 0 until the slide's `v-click` elements have
+ * registered again, so a click-gated diagnostic may only become due a tick
+ * later; `sync` keeps the hand-off pending until then.
+ */
+let restorePending = false
+function restoreTransitionInk() {
+  // A failed take keeps the hand-off pending: the target may have been
+  // measured against a layout that is still filling in (a Magic Move block
+  // paints its tokens one tick after mounting). The `revealed` watch ends it
+  // once the diagnostic has been revealed normally.
+  if (!restorePending || !lastTargetTransitionBox
+    || !takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTargetTransitionBox))
+    return
+  restorePending = false
+  clearTimeout(revealTimer)
+  skipEntranceAnimation.value = true
+  revealed.value = true
 }
 
 function findCodeHost(host: HTMLElement): HTMLElement | null {
@@ -518,6 +556,7 @@ function sync() {
     width: `${(right - left) / scale}px`,
   }
   lastTargetTransitionBox = transitionInkBox(left, top, right, bottom, slideBox)
+  restoreTransitionInk()
   if (revealed.value)
     lastVisibleTargetTransitionBox = lastTargetTransitionBox
 }
@@ -551,11 +590,18 @@ useResizeObserver(() => [container.value, ...targets.value], scheduleSync)
 
 onMounted(async () => {
   await nextTick()
+  restorePending = isCurrentSlide.value
   sync()
   document.fonts?.ready.then(scheduleSync)
 })
 
 onBeforeUnmount(() => {
+  // A remount of the current slide (see restoreTransitionInk) must not read
+  // as a redraw: leave the visible diagnostic for the instance that takes
+  // over. Leaving the slide is not this case; the `isCurrentSlide` watch has
+  // already handed it to the neighbouring page and hidden it by then.
+  if (isCurrentSlide.value && revealed.value && lastTargetTransitionBox)
+    rememberTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTargetTransitionBox)
   $clicksContext?.unregister(id)
   if (pendingSync !== undefined)
     cancelAnimationFrame(pendingSync)
@@ -603,10 +649,16 @@ watch([visible, hasTarget, animating], ([isVisible, targetPresent, isAnimating])
 })
 
 watch(revealed, (isRevealed) => {
+  if (isRevealed)
+    restorePending = false
   if (isRevealed && lastTargetTransitionBox)
     lastVisibleTargetTransitionBox = lastTargetTransitionBox
   else if (isCurrentSlide.value)
     lastVisibleTargetTransitionBox = undefined
+  // Handed-over ink skips its entrance only. Once that reveal has rendered,
+  // the transitions come back for whatever happens next, the exit included.
+  if (isRevealed && skipEntranceAnimation.value)
+    nextTick(() => skipEntranceAnimation.value = false)
 })
 
 watch(isCurrentSlide, (current) => {
@@ -667,13 +719,16 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 </script>
 
 <template>
-  <div ref="container" class="inline-compiler-error-host" :class="{ 'skip-entrance-animation': skipEntranceAnimation }">
+  <div ref="container" class="inline-compiler-error-host">
     <slot />
     <!-- Screen readers only announce a live region reliably when its content
          changes while it is already mounted, so this one exists permanently
          and only its text swaps on reveal. -->
-    <span class="inline-compiler-error-status" role="status" aria-live="polite" aria-atomic="true">{{ revealed ? props.message : '' }}</span>
-    <Transition name="compiler-error" :css="!isPrintMode">
+    <span class="inline-compiler-error-status" role="status" aria-live="polite" aria-atomic="true">{{ revealed ? message : '' }}</span>
+    <!-- Handed-over ink (see restoreTransitionInk and inheritTransitionInk)
+         must appear complete in its first frame; a zero-length transition
+         would still show Vue's enter-from frame, so it is left out entirely. -->
+    <Transition name="compiler-error" :css="!isPrintMode && !skipEntranceAnimation">
       <span
         v-if="revealed"
         class="inline-compiler-error-underline"
@@ -681,13 +736,13 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
         aria-hidden="true"
       />
     </Transition>
-    <Transition name="compiler-error" :css="!isPrintMode">
+    <Transition name="compiler-error" :css="!isPrintMode && !skipEntranceAnimation">
       <span
         v-if="revealed"
         class="inline-compiler-error-message"
         :style="position"
         aria-hidden="true"
-      ><i>●</i>{{ props.message }}</span>
+      ><i>●</i>{{ message }}</span>
     </Transition>
   </div>
 </template>
@@ -698,12 +753,11 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 /* Themeable like the other annotation colours: a deck recolours the whole
    diagnostic by defining `--inline-compiler-error-color`, at :root or any
    narrower scope; the fallbacks are IntelliJ's error reds. */
-.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: var(--inline-compiler-error-color, #e95757); font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
+.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: var(--inline-compiler-error-color, #e95757); font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; white-space: pre-line; pointer-events: none; transform: translateY(-50%); }
 .compiler-error-enter-active,
 .compiler-error-leave-active { transition: opacity .18s ease; }
 .compiler-error-enter-from,
 .compiler-error-leave-to { opacity: 0; }
-.inline-compiler-error-host.skip-entrance-animation .compiler-error-enter-active { transition-duration: 0ms; }
 .inline-compiler-error-message i { color: var(--inline-compiler-error-color, #f05b5b); font-size: .55em; font-style: normal; }
 .inline-compiler-error-underline {
   position: absolute;

@@ -54,11 +54,13 @@ every change stays a local draft, so nothing is written mid-gesture. **Done
 editing annotations** commits all changed drafts as normalized `:geometry`
 bindings on exactly the edited `DrawnAnnotation` tags, then exits. **Esc**
 cancels in stages — an active drag, then the selection, then (after a
-confirmation) the whole session, discarding its drafts. **Cmd/Ctrl+Z** undoes
-the last gesture locally; one toolbar control switches the connector between
-manual and automatic routing, another curves or straightens it with a
-draggable quadratic control point, and reset controls restore the label or the
-annotation's whole authored geometry. Source revisions are checked, so a
+confirmation) the whole session, discarding its drafts. One toolbar control
+hides or shows the connector (writing `:connect` into the tag where the
+deck's default differs, see `themeConfig.drawnAnnotation.connect`), one
+switches it between manual and automatic routing, another curves or
+straightens it with a draggable quadratic control point, and **Reset
+annotation** or **Reset slide** removes the saved geometry of one annotation
+or of every annotation on the slide. Source revisions are checked, so a
 conflicting commit fails without overwriting anyone: the drafts stay visible,
 and you either fix and press Done again or choose **Reload saved geometry** to
 discard them. The locator, toolbar, and write endpoint exist only while Vite
@@ -471,10 +473,10 @@ own visits in that browser.
 
 A Kotlin fence on a slide is a fragment: it carries its imports (folded away,
 see above) but no package, and it may mix declarations with bare statements.
-`slidev-kotlin-snippets` turns every Kotlin fence of a deck into one Kotlin
-file, in the spirit of [KotlinX Knit](https://github.com/Kotlin/kotlinx-knit),
-so a Gradle module can compile the deck's code against the real libraries and
-a stale slide fails the build instead of the talk.
+`slidev-kotlin-snippets` turns Kotlin and Java fences into source files, in the
+spirit of [KotlinX Knit](https://github.com/Kotlin/kotlinx-knit), so a Gradle
+module can compile the deck's code against the real libraries and a stale slide
+fails the build instead of the talk.
 
 Turn it on in the headmatter and run the CLI from the deck:
 
@@ -482,6 +484,7 @@ Turn it on in the headmatter and run the CLI from the deck:
 themeConfig:
   snippets:
     dir: src/main/kotlin/presentation/snippets   # default: src/main/kotlin/snippets
+    javaDir: src/main/java/presentation/snippets  # default: src/main/java/snippets
     package: presentation.snippets               # default: snippets
     imports:                                     # added to every file
       - presentation.support.*
@@ -493,21 +496,29 @@ npx slidev-kotlin-snippets --check    # exits 1 when they are out of date (CI)
 npx slidev-kotlin-snippets talk.md    # another entry than slides.md
 ```
 
-Each fence becomes `<dir>/<section>/<slide>-<title>.kt` in its own package,
-`<package>.<section>.slide<n>`, so every step of a Magic Move chain can
-declare its own `object Talks`. Inside the file:
+Each Kotlin fence becomes `<dir>/<section>/<slide>-<title>.kt`; each Java
+fence becomes `<javaDir>/<section>/<slide>-<title>.java`. Files have a package,
+`<package>.<section>.slide<n>`, so every step of a Magic Move chain can declare
+its own `object Talks`. A Java and Kotlin fence on the same slide deliberately
+share that package, allowing Java ↔ Kotlin interop examples to compile. Inside
+the file:
 
 - the fence's imports come first, after the `imports` from the config. Keep
   the tables, types, and values the slides use without defining them in a
   hand-written package and star-import it; a fence that defines its own
   `Talks` shadows the shared one, because a declaration in the file's own
   package wins over a star import.
-- top-level declarations (`fun`, `val`, `object`, `class`, ... with their
-  annotations, modifiers, and `context(...)` lines) stay top-level, and bare
-  statements such as `Talks.selectAll()` are wrapped in `suspend fun main()`.
-  A `package` line is dropped; `@file:` annotations move above the package.
-- a slide with several Kotlin fences tells them apart by their first meta
-  word (`jdbc`, `r2dbc`) or a letter.
+- Kotlin top-level declarations (`fun`, `val`, `object`, `class`, ... with
+  their annotations, modifiers, and `context(...)` lines) stay top-level, and
+  bare statements such as `Talks.selectAll()` are wrapped in `suspend fun main()`.
+  A Kotlin `package` line is dropped; `@file:` annotations move above the package.
+- Java fences are emitted as Java compilation units with the generated package
+  and imports; they must therefore contain declarations rather than bare
+  statements. Their own `package` line is replaced. A fence declaring a public
+  top-level Java type is named after that type (as Java requires); otherwise it
+  uses the slide-based filename.
+- a slide with several fences in the same language tells them apart by their
+  first meta word (`jdbc`, `r2dbc`) or a letter.
 
 Not every fence is meant to compile. Add `no-compile` to a fence that sketches
 library internals or an intermediate step (`` ```kotlin no-compile ``); the flag

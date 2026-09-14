@@ -7,6 +7,7 @@ import {
   activeAnnotationGestures,
   annotationEditMode,
   annotationEditorActionsFor,
+  annotationEditorLocatorsOn,
   annotationEditorRegistryVersion,
   annotationGeometryVersion,
   annotationEditorStatus,
@@ -14,13 +15,9 @@ import {
   clearAllAnnotationDrafts,
   clearAnnotationSelection,
   clearLabelDraft,
-  clearLabelDraftFields,
   installAnnotationEditorShortcut,
-  recordAnnotationUndo,
-  replaceLabelDraft,
   selectedAnnotationId,
   setLabelDraft,
-  takeAnnotationUndo,
 } from './drawn-annotation/editor-store'
 
 // Slidev's build pipeline can set `import.meta.env.DEV` while it renders the
@@ -41,7 +38,7 @@ function loadWriterClient() {
 // is not an export guard. Keep authoring controls exclusively on the primary
 // normal-slide route: no print/export, presenter, overview, notes, or preview
 // layer can expose a control that changes the deck while it is being shown.
-const { hasPrimarySlide, isPresenter, isPrintMode } = useNav()
+const { currentPage, hasPrimarySlide, isPresenter, isPrintMode } = useNav()
 const editorAvailable = computed(() => isDevelopment && hasPrimarySlide.value && !isPresenter.value && !isPrintMode.value)
 const checkingWriter = ref(false)
 const canWrite = ref(false)
@@ -70,11 +67,19 @@ const selectedConnectorCurved = computed(() => {
   annotationGeometryVersion.value
   return annotationEditorActionsFor(selected.value)?.hasConnectorControl() ?? false
 })
-const canToggleConnector = computed(() => {
+const selectedConnected = computed(() => {
+  // The `connect` prop only changes through a write and the HMR remount that
+  // re-registers the annotation, so registration is the one dependency.
+  annotationEditorRegistryVersion.value
+  return annotationEditorActionsFor(selected.value)?.connected() ?? false
+})
+const canToggleConnect = computed(() => {
   // A remounted annotation restores its selection before it registers again.
   annotationEditorRegistryVersion.value
   return !!annotationEditorActionsFor(selected.value)
 })
+// Manual routing and curving act on a drawn leader line only.
+const canToggleConnector = computed(() => canToggleConnect.value && selectedConnected.value)
 
 async function toggleSelectedConnectorAttachment() {
   const actions = annotationEditorActionsFor(selected.value)
@@ -292,19 +297,6 @@ function clearSelectionOnEditorClickOutside(event: PointerEvent) {
     clearAnnotationSelection()
 }
 
-function keyboardUndo(event: KeyboardEvent) {
-  if (!annotationEditMode.value || (!event.metaKey && !event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'z')
-    return
-  // Native undo remains available to actual form controls and editable slide
-  // content. The editor owns Cmd/Ctrl+Z only when an annotation is selected.
-  const target = event.target instanceof Element ? event.target : undefined
-  if (!selected.value || target?.closest('input, textarea, select, [contenteditable="true"]'))
-    return
-  event.preventDefault()
-  event.stopPropagation()
-  undoSelected()
-}
-
 onMounted(() => {
   // The toolbar is the singleton that owns the toggle, so it installs
   // Alt+Shift+A: the shortcut must work on a deck whose current slide has no
@@ -316,7 +308,6 @@ onMounted(() => {
   window.addEventListener('dblclick', blockNavigationInput, true)
   window.addEventListener('keydown', cancelEditSessionOnEscape, true)
   window.addEventListener('pointerdown', clearSelectionOnEditorClickOutside, true)
-  window.addEventListener('keydown', keyboardUndo, true)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('drawn-annotation-editor-toggle', toggleEditor)
@@ -325,43 +316,73 @@ onBeforeUnmount(() => {
   window.removeEventListener('dblclick', blockNavigationInput, true)
   window.removeEventListener('keydown', cancelEditSessionOnEscape, true)
   window.removeEventListener('pointerdown', clearSelectionOnEditorClickOutside, true)
-  window.removeEventListener('keydown', keyboardUndo, true)
   clearTimeout(statusClearTimer)
   releaseNavigation?.()
   releaseNavigation = undefined
 })
 
-// Restoring an automatic connector is not a reset: that transition belongs
-// exclusively to the manual/automatic toggle above, so every path to the
-// automatic state shares one undo, status and draft-clearing code path.
-async function resetSelected(part: 'label' | 'all') {
-  if (!selected.value || !canWrite.value)
+/**
+ * A reset removes saved geometry, which a draft cannot express (drafts only
+ * overlay the source), so it writes immediately: the `:geometry` binding
+ * leaves the tag and the annotation's draft goes with it. Restoring an
+ * automatic connector is not a reset: that transition belongs exclusively to
+ * the manual/automatic toggle above.
+ */
+async function resetAnnotations(locators: string[], description: string) {
+  if (!locators.length || !canWrite.value || !isDevelopment)
     return
-  annotationEditorStatus.value = `Resetting ${part === 'all' ? 'label and connector' : part} for ${selected.value}…`
+  annotationEditorStatus.value = `Resetting ${description}…`
   try {
-    if (!isDevelopment)
-      return
-    const { cachedAnnotationGeometry, resetAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
-    // A reset removes saved geometry, which a draft cannot express (drafts
-    // only overlay the source), so it is the one kind of session edit that
-    // writes immediately. Keep the rule being removed so Undo can restore it
-    // — as an uncommitted draft — instead of making reset a dead end.
-    const previous = cachedAnnotationGeometry(selected.value) ?? annotationEditorActionsFor(selected.value)?.persistedGeometry() ?? null
-    if (part === 'all')
-      await saveLabelGeometry(selected.value, null)
-    else
-      await resetAnnotationGeometry(selected.value, part, previous)
-    recordAnnotationUndo(selected.value, previous)
-    // Only the reset part of the local draft is spent; uncommitted edits to
-    // the other part must survive. "Reset selected" intentionally drops both.
-    if (part === 'all')
-      clearLabelDraft(selected.value)
-    else
-      clearLabelDraftFields(selected.value, part)
-    annotationEditorStatus.value = `${selected.value} reset to authored defaults`
+    const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
+    // A tag without saved geometry has nothing to remove; skipping it keeps
+    // "Reset slide" from rewriting the file once per untouched annotation.
+    const saved = (locator: string) => Object.values(cachedAnnotationGeometry(locator) ?? annotationEditorActionsFor(locator)?.persistedGeometry() ?? {}).some(value => value !== undefined)
+    for (const locator of locators) {
+      if (saved(locator))
+        await saveLabelGeometry(locator, null)
+      clearLabelDraft(locator)
+    }
+    annotationEditorStatus.value = `${description} reset to authored defaults`
   }
   catch (error) {
     annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to reset annotation geometry'
+  }
+}
+
+function resetSelected() {
+  if (selected.value)
+    void resetAnnotations([selected.value], locatorDescription(selected.value))
+}
+
+function resetSlide() {
+  const locators = annotationEditorLocatorsOn(currentPage.value)
+  if (!locators.length || !confirm(`Remove the saved geometry of all ${locators.length} annotations on this slide?`))
+    return
+  void resetAnnotations(locators, `slide ${currentPage.value}`)
+}
+
+/**
+ * Show or hide the leader line. `connect` is a prop rather than geometry, so
+ * the toggle writes the tag immediately. The tag only says what the slide's
+ * or deck's `drawnAnnotation.connect` default does not: the binding comes out
+ * when the wanted state is that default, and goes in as `:connect="true"` or
+ * `:connect="false"` otherwise.
+ */
+async function toggleSelectedConnect() {
+  const actions = annotationEditorActionsFor(selected.value)
+  if (!selected.value || !actions || !canWrite.value || !isDevelopment)
+    return
+  const connect = !actions.connected()
+  const binding = connect === actions.defaultConnected() ? null : connect
+  annotationEditorStatus.value = connect ? 'Showing connector…' : 'Hiding connector…'
+  try {
+    const { saveConnect } = await loadWriterClient()
+    await saveConnect(selected.value, binding)
+    const outcome = connect ? 'Connector shown' : 'Connector hidden'
+    annotationEditorStatus.value = binding === null ? `${outcome} — the tag follows the deck default again` : `${outcome} — the tag now carries :connect="${binding}"`
+  }
+  catch (error) {
+    annotationEditorStatus.value = error instanceof Error ? error.message : 'Unable to change the connector'
   }
 }
 
@@ -387,22 +408,6 @@ async function reloadSavedGeometry() {
   }
 }
 
-/**
- * Undo restores the recorded pre-gesture draft snapshot locally. It never
- * writes: the restored state is committed — or discarded — with the session.
- */
-function undoSelected() {
-  if (!selected.value)
-    return
-  const undo = takeAnnotationUndo(selected.value)
-  if (!undo) {
-    annotationEditorStatus.value = 'Nothing to undo for this annotation'
-    return
-  }
-  replaceLabelDraft(undo.locator, undo.geometry)
-  annotationEditorStatus.value = 'Annotation change undone'
-}
-
 </script>
 
 <template>
@@ -413,16 +418,18 @@ function undoSelected() {
     <template v-if="annotationEditMode">
       <button type="button" :disabled="committing" @click="toggleEditor">Done editing annotations</button>
       <span class="drawn-annotation-toolbar__selection">{{ selectedDescription }}</span>
-      <button type="button" :disabled="!selected" title="Cmd/Ctrl+Z" @click="undoSelected">Undo</button>
       <button type="button" :disabled="committing" @click="reloadSavedGeometry">Reload saved geometry</button>
+      <button type="button" :disabled="!canToggleConnect || committing" @click="toggleSelectedConnect">
+        {{ selectedConnected ? 'Hide connector' : 'Show connector' }}
+      </button>
       <button type="button" :disabled="!canToggleConnector || committing" @click="toggleSelectedConnectorAttachment">
         {{ selectedConnectorManual ? 'Use automatic connector' : 'Make connector manual' }}
       </button>
       <button type="button" :disabled="!canToggleConnector || committing" @click="toggleSelectedConnectorCurve">
         {{ selectedConnectorCurved ? 'Straighten connector' : 'Curve connector' }}
       </button>
-      <button type="button" :disabled="!selected || committing" @click="resetSelected('label')">Reset label</button>
-      <button type="button" :disabled="!selected || committing" @click="resetSelected('all')">Reset label &amp; connector</button>
+      <button type="button" :disabled="!selected || committing" @click="resetSelected">Reset annotation</button>
+      <button type="button" :disabled="committing" @click="resetSlide">Reset slide</button>
     </template>
     <span v-if="annotationEditorStatus" class="drawn-annotation-toolbar__status" role="status">{{ annotationEditorStatus }}</span>
   </aside>

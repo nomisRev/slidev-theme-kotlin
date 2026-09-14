@@ -20,7 +20,8 @@ export declare function serializeGeometry(geometry: DrawnAnnotationGeometryPatch
 export declare function findDrawnAnnotationTags(source: string): DrawnAnnotationTag[]
 export declare function fingerprintDrawnAnnotationTag(tag: string): string
 export declare function injectDrawnAnnotationLocators(source: string, file: string, fileSource?: string): string
-export declare function patchDrawnAnnotationTag(tag: string, patch: DrawnAnnotationGeometryPatch): string
+/** `geometry` replaces the `:geometry` binding; `connect` writes that `:connect` literal, or removes the binding when `null`. Either may be omitted to leave that binding alone. */
+export declare function patchDrawnAnnotationTag(tag: string, geometry?: DrawnAnnotationGeometryPatch, connect?: boolean | null): string
 export declare function drawnAnnotationEditor(options?: DrawnAnnotationEditorOptions): {
   name: string
   apply: 'serve'

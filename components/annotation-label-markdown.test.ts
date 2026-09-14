@@ -16,6 +16,12 @@ describe('DrawnAnnotation label Markdown', () => {
     expect(annotationLabelText('```kotlin\nclass MyClass\n```')).toBe('class MyClass')
   })
 
+  it('renders explicit and literal line breaks in a label', () => {
+    expect(renderAnnotationLabel('First\\nSecond')).toBe('<p>First<br>\nSecond</p>\n')
+    expect(renderAnnotationLabel('First\nSecond')).toBe('<p>First<br>\nSecond</p>\n')
+    expect(annotationLabelText('First\\nSecond')).toBe('First Second')
+  })
+
   it('escapes HTML supplied through a label prop', () => {
     expect(renderAnnotationLabel('<img src=x onerror=alert(1)>')).toContain('&lt;img src=x onerror=alert(1)&gt;')
   })

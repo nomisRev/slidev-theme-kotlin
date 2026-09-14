@@ -1,6 +1,7 @@
 /**
  * Development-only Vite plugin that lets the DrawnAnnotation visual editor
- * persist `:geometry` bindings back into the authored Markdown.
+ * persist `:geometry` and `:connect` bindings back into the authored
+ * Markdown.
  *
  * Plain JavaScript on purpose: the package export `./annotation-editor` is
  * loaded by Node itself when a consuming deck's `vite.config.ts` imports it —
@@ -15,6 +16,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 
 const MAX_BODY_BYTES = 64 * 1024
 const component = '<DrawnAnnotation'
+const locatorAttribute = '__drawn-annotation-locator'
 const hash = value => createHash('sha256').update(value).digest('hex').slice(0, 16)
 /**
  * Slidev never feeds a Markdown file through Vite as one module. Every slide is
@@ -186,7 +188,8 @@ export function findDrawnAnnotationTags(source) {
  * The locator is the key for every piece of editor state in the browser, so
  * it must survive the writer's own edits: it carries no file revision (the
  * client fetches that out of band), and the fingerprint ignores the
- * `:geometry` binding, the only part of the tag the writer rewrites.
+ * `:geometry` and `:connect` bindings, the only parts of the tag the writer
+ * rewrites.
  */
 function encodeLocator(value) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
 function decodeLocator(value) {
@@ -198,25 +201,64 @@ function decodeLocator(value) {
     return { file: data.file, fingerprint: data.fingerprint, ordinal: data.ordinal, line: data.line }
   } catch { throw new Error('invalid source locator') }
 }
-/** The tag's identity: its text without the writer-owned `:geometry` binding. */
+/** The tag's identity: its text without the writer-owned `:geometry` and `:connect` bindings. */
 export function fingerprintDrawnAnnotationTag(tag) {
-  let binding
-  // A malformed binding cannot be patched later anyway; fingerprint it as is.
-  try { binding = geometryBinding(tag) } catch {}
-  return hash(binding ? `${tag.slice(0, binding.start)}${tag.slice(binding.end)}` : tag)
+  let identity = tag
+  for (const binding of [geometryBinding, connectBinding]) {
+    let span
+    // A malformed binding cannot be patched later anyway; fingerprint it as is.
+    try { span = binding(identity) } catch {}
+    if (span) identity = `${identity.slice(0, span.start)}${identity.slice(span.end)}`
+  }
+  return hash(identity)
 }
 function lineAt(source, offset) { let line = 1; for (let index = source.indexOf('\n'); index >= 0 && index < offset; index = source.indexOf('\n', index + 1)) line++; return line }
+function occurrencesOf(needle, haystack) {
+  const offsets = []
+  for (let offset = haystack.indexOf(needle); offset >= 0; offset = haystack.indexOf(needle, offset + 1)) offsets.push(offset)
+  return offsets
+}
+/**
+ * The tag's exact offset in the file, when the chunk pins it down.
+ *
+ * The chunk Slidev hands over need not occur in the file as a whole: a slide
+ * chunk is trimmed and has no frontmatter, and a transform that runs ahead of
+ * this one may have rewritten a line of it. Grow a window of whole lines from
+ * the tag, upward and then downward, as far as it still occurs verbatim in
+ * the file; the widest such window usually takes in the slide's title, which
+ * tells two slides with identical tags apart. When it occurs once, the tag's
+ * position inside it is its position in the file. Two verbatim occurrences
+ * mean the window could name a different slide, so there is no exact
+ * position.
+ */
+function exactOffset(source, tag, fileSource) {
+  let start = source.lastIndexOf('\n', tag.start - 1) + 1
+  const lineEnd = source.indexOf('\n', tag.end - 1)
+  let end = lineEnd < 0 ? source.length : lineEnd + 1
+  if (!fileSource.includes(source.slice(start, end))) return undefined
+  for (let up = source.lastIndexOf('\n', start - 2) + 1; start > 0; up = source.lastIndexOf('\n', up - 2) + 1) {
+    if (!fileSource.includes(source.slice(up, end))) break
+    start = up
+  }
+  for (let down = source.indexOf('\n', end); end < source.length; down = source.indexOf('\n', down + 1)) {
+    const next = down < 0 ? source.length : down + 1
+    if (!fileSource.includes(source.slice(start, next))) break
+    end = next
+    if (down < 0) break
+  }
+  const occurrences = occurrencesOf(source.slice(start, end), fileSource)
+  return occurrences.length === 1 ? occurrences[0] + (tag.start - start) : undefined
+}
 /** Where `tag`, found in `source` (a chunk of `fileSource`), sits in the file. */
 function locateInFile(source, tag, fileSource, fileTags) {
-  const occurrences = []
-  for (let offset = fileSource.indexOf(source); offset >= 0; offset = fileSource.indexOf(source, offset + 1)) occurrences.push(offset)
   const fingerprint = fingerprintDrawnAnnotationTag(tag.text)
   const identical = fileTags.filter(candidate => fingerprintDrawnAnnotationTag(candidate.text) === fingerprint)
-  // A verbatim chunk gives an exact position only when it occurs once. With
-  // duplicate chunks, addressing the first matching tag would silently edit a
+  // An exact position must coincide with a file tag of the same identity.
+  // Without one, addressing the first matching tag would silently edit a
   // different slide, so use only a fingerprint that identifies one file tag.
-  const match = occurrences.length === 1
-    ? identical.find(candidate => candidate.start === occurrences[0] + tag.start)
+  const offset = exactOffset(source, tag, fileSource)
+  const match = offset !== undefined
+    ? identical.find(candidate => candidate.start === offset)
     : identical.length === 1 ? identical[0] : undefined
   return match && { fingerprint, ordinal: identical.indexOf(match), line: lineAt(fileSource, match.start) }
 }
@@ -231,12 +273,15 @@ function locateInFile(source, tag, fileSource, fileTags) {
 export function injectDrawnAnnotationLocators(source, file, fileSource = source, fileTags = findDrawnAnnotationTags(fileSource)) {
   let result = source
   for (const tag of findDrawnAnnotationTags(source).reverse()) {
+    // Vite can run the transform twice on one module; a tag that already
+    // carries a locator keeps it.
+    if (tag.text.includes(locatorAttribute)) continue
     const location = locateInFile(source, tag, fileSource, fileTags)
     // A tag the writer could not find again stays a plain, non-editable annotation.
     if (!location) continue
     const value = encodeLocator({ file, ...location })
     const at = tag.start + attributeInsertionPoint(tag.text)
-    result = `${result.slice(0, at)} __drawn-annotation-locator="${value}"${result.slice(at)}`
+    result = `${result.slice(0, at)} ${locatorAttribute}="${value}"${result.slice(at)}`
   }
   return result
 }
@@ -291,18 +336,44 @@ function geometryBinding(tag) {
   throw new Error('geometry binding is incomplete')
 }
 
-/** Patch exactly one opening tag, preserving every unrelated character. */
-export function patchDrawnAnnotationTag(tag, patch) {
-  // The writer owns only its binding. Existing source geometry is intentionally
-  // replaced by the validated editor snapshot, never evaluated as JavaScript.
-  const existing = geometryBinding(tag)
-  const empty = !patch.label && !patch.connector
-  if (existing)
-    return empty ? `${tag.slice(0, existing.start)}${tag.slice(existing.end)}` : `${tag.slice(0, existing.start)} :geometry="${serializeGeometry(patch)}"${tag.slice(existing.end)}`
-  if (empty)
-    return tag
+/**
+ * The span of a `:connect` binding the writer may rewrite: a boolean literal,
+ * quoted either way. Any other expression belongs to the author.
+ */
+function connectBinding(tag) {
+  const start = tag.search(/\s:connect\s*=/)
+  if (start < 0) return undefined
+  const match = /\s:connect\s*=\s*(["'])\s*(true|false)\s*\1/.exec(tag.slice(start))
+  if (!match) throw new Error('`:connect` must be a boolean literal to be edited')
+  return { start, end: start + match[0].length, value: match[2] === 'true' }
+}
+
+/** Replace or remove one writer-owned binding, or add it before the tag's close. */
+function replaceBinding(tag, existing, text) {
+  if (existing) return `${tag.slice(0, existing.start)}${text}${tag.slice(existing.end)}`
+  if (!text) return tag
   const close = attributeInsertionPoint(tag)
-  return `${tag.slice(0, close)} :geometry="${serializeGeometry(patch)}"${tag.slice(close)}`
+  return `${tag.slice(0, close)}${text}${tag.slice(close)}`
+}
+
+/**
+ * Patch exactly one opening tag, preserving every unrelated character. The
+ * writer owns only its bindings: existing source geometry is replaced by the
+ * validated editor snapshot, never evaluated as JavaScript, and `connect`
+ * writes that boolean as the `:connect` literal, or removes the binding when
+ * `null`, so the slide's or deck's `drawnAnnotation.connect` default applies
+ * again. The editor decides which, since only it knows that default. Either
+ * part may be omitted to leave that binding alone.
+ */
+export function patchDrawnAnnotationTag(tag, geometry, connect) {
+  let result = tag
+  if (geometry !== undefined) {
+    const empty = !geometry.label && !geometry.connector
+    result = replaceBinding(result, geometryBinding(result), empty ? '' : ` :geometry="${serializeGeometry(geometry)}"`)
+  }
+  if (connect !== undefined)
+    result = replaceBinding(result, connectBinding(result), connect === null ? '' : ` :connect="${connect}"`)
+  return result
 }
 
 async function requestBody(request) {
@@ -340,6 +411,14 @@ export function drawnAnnotationEditor(_options = {}) {
   const serialized = (operation) => { const result = writes.then(operation, operation); writes = result.then(() => undefined, () => undefined); return result }
   return {
     name: 'slidev-theme-kotlin:drawn-annotation-editor', apply: 'serve',
+    // Slidev's Markdown plugin is itself a `pre` plugin, and Slidev appends
+    // its plugins after the deck's `vite.config.ts` plugins, so `pre` puts
+    // this transform ahead of it: it receives a slide's Markdown as written
+    // (Slidev's `slide.content`) instead of the rendered Vue template, where
+    // sibling tags share a line with the rendered fence and no line of the
+    // file can be found again. Should the order ever change, the fingerprint
+    // fallback in `locateInFile` still applies.
+    enforce: 'pre',
     configResolved(config) { root = resolve(config.root) },
     transform(code, id) {
       // Vite can append query parameters to module IDs. They describe the
@@ -367,21 +446,25 @@ export function drawnAnnotationEditor(_options = {}) {
         try {
           const payload = await requestBody(request)
           const result = await serialized(async () => {
-            if (Object.keys(payload).some(key => key !== 'locator' && key !== 'expectedRevision' && key !== 'geometry'))
+            if (Object.keys(payload).some(key => key !== 'locator' && key !== 'expectedRevision' && key !== 'geometry' && key !== 'connect'))
               throw new Error('source writer payload has an unknown property')
             if (typeof payload.expectedRevision !== 'string')
               throw new Error('an expected source revision is required')
+            if (payload.connect !== undefined && payload.connect !== null && typeof payload.connect !== 'boolean')
+              throw new Error('connect must be a boolean, or null to remove the binding')
+            if (payload.geometry === undefined && payload.connect === undefined)
+              throw new Error('nothing to write: provide geometry or connect')
             const token = decodeLocator(payload.locator); const path = resolve(root, token.file)
             if (!isWithinRoot(root, path) || path === root) throw new Error('source file must stay under the Vite root')
             const source = await readFile(path, 'utf8'); const revision = hash(source)
             if (payload.expectedRevision !== revision) return { status: 409, body: { error: 'source changed; reload before saving', revision, recovery: 'Reload saved geometry before retrying.' } }
             const tag = findDrawnAnnotationTags(source).filter(candidate => fingerprintDrawnAnnotationTag(candidate.text) === token.fingerprint)[token.ordinal]
             if (!tag) return { status: 409, body: { error: 'annotation source changed; refusing stale locator', revision, recovery: 'Reload the slide and select the annotation again.' } }
-            const geometry = validateGeometryPatch(payload.geometry)
-            const nextSource = `${source.slice(0, tag.start)}${patchDrawnAnnotationTag(tag.text, geometry)}${source.slice(tag.end)}`
+            const geometry = payload.geometry === undefined ? undefined : validateGeometryPatch(payload.geometry)
+            const nextSource = `${source.slice(0, tag.start)}${patchDrawnAnnotationTag(tag.text, geometry, payload.connect)}${source.slice(tag.end)}`
             const temporary = `${path}.${randomUUID()}.tmp`
             try { await writeFile(temporary, nextSource, 'utf8'); await rename(temporary, path) } finally { await unlink(temporary).catch(() => {}) }
-            return { status: 200, body: { geometry, revision: hash(nextSource) } }
+            return { status: 200, body: { ...(geometry ? { geometry } : {}), ...(payload.connect === undefined ? {} : { connect: payload.connect }), revision: hash(nextSource) } }
           })
           return json(response, result.status, result.body)
         } catch (error) { return json(response, 400, { error: error instanceof Error ? error.message : 'unable to save annotation geometry' }) }

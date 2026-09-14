@@ -1,7 +1,7 @@
 # Release the theme so the decks can pick up the static content, snippets CLI, and analytics
 
 **Status:** open
-**Blocks:** ../issues/EXPF-001, KOTF-001, KTORF-001, ADVDS-001
+**Blocks:** exposed-fundamentals/issues/EXPF-001, kotlin-fundamentals/issues/KOTF-001, ktor-fundamentals/issues/KTORF-001, advanced-dsl-in-kotlin/issues/ADVDS-001
 
 ## Problem
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { drawnAnnotationEditor, findDrawnAnnotationTags, injectDrawnAnnotationLocators, patchDrawnAnnotationTag, serializeGeometry, validateGeometryPatch } from './drawn-annotation-editor'
+import { drawnAnnotationEditor, findDrawnAnnotationTags, fingerprintDrawnAnnotationTag, injectDrawnAnnotationLocators, patchDrawnAnnotationTag, serializeGeometry, validateGeometryPatch } from './drawn-annotation-editor'
 
 const revision = (source: string) => createHash('sha256').update(source).digest('hex').slice(0, 16)
 const locatorOf = (transformed: string) => / __drawn-annotation-locator="([^"]+)"/.exec(transformed)?.[1]
@@ -114,6 +114,29 @@ describe('source geometry editor', () => {
     expect(patchDrawnAnnotationTag('<DrawnAnnotation text="Suspend" />', { label: { x: .1, y: .2 } }))
       .toBe('<DrawnAnnotation text="Suspend"  :geometry="{ label: { x: 0.1000, y: 0.2000 } }"/>')
     expect(patchDrawnAnnotationTag(tag, {})).toBe('<DrawnAnnotation text="Suspend" on="0">')
+  })
+
+  it('writes and removes the connect binding without touching geometry, and never edits an authored expression', () => {
+    const tag = '<DrawnAnnotation text="Suspend" :geometry="{ label: { x: .1, y: .2 } }" on="0">'
+    const hidden = patchDrawnAnnotationTag(tag, undefined, false)
+    expect(hidden).toBe('<DrawnAnnotation text="Suspend" :geometry="{ label: { x: .1, y: .2 } }" on="0" :connect="false">')
+    // Writing the same literal twice leaves one binding; `null` removes it, so
+    // the slide or deck default applies again.
+    expect(patchDrawnAnnotationTag(hidden, undefined, false)).toBe(hidden)
+    expect(patchDrawnAnnotationTag(hidden, undefined, null)).toBe(tag)
+    expect(patchDrawnAnnotationTag(tag, undefined, null)).toBe(tag)
+    // A deck whose default hides the line gets an explicit `true` to show it.
+    const shown = patchDrawnAnnotationTag(tag, undefined, true)
+    expect(shown).toBe('<DrawnAnnotation text="Suspend" :geometry="{ label: { x: .1, y: .2 } }" on="0" :connect="true">')
+    expect(patchDrawnAnnotationTag(shown, undefined, false)).toBe(hidden)
+    expect(patchDrawnAnnotationTag('<DrawnAnnotation text="a" :connect=\'true\' />', undefined, false)).toBe('<DrawnAnnotation text="a" :connect="false" />')
+    // Both bindings in one write, and a geometry write that leaves connect alone.
+    expect(patchDrawnAnnotationTag(hidden, {}, null)).toBe('<DrawnAnnotation text="Suspend" on="0">')
+    expect(patchDrawnAnnotationTag(hidden, { label: { x: .5, y: .5 } })).toBe('<DrawnAnnotation text="Suspend" :geometry="{ label: { x: 0.5000, y: 0.5000 } }" on="0" :connect="false">')
+    expect(() => patchDrawnAnnotationTag('<DrawnAnnotation :connect="showLines" label="x">', undefined, false)).toThrow(':connect` must be a boolean literal')
+    // A tag's identity ignores the connect binding like the geometry binding.
+    expect(fingerprintDrawnAnnotationTag(hidden)).toBe(fingerprintDrawnAnnotationTag(tag))
+    expect(fingerprintDrawnAnnotationTag('<DrawnAnnotation text="Suspend" on="0">')).toBe(fingerprintDrawnAnnotationTag(tag))
   })
 
   it('injects locators into self-closing tags without splitting the slash', () => {
@@ -311,6 +334,69 @@ describe('source geometry editor', () => {
     }
   })
 
+  it('locates a tag from the verbatim lines around it when the chunk itself was rewritten', async () => {
+    // A transform ahead of the plugin may rewrite part of a slide chunk (here
+    // the fence), so the chunk as a whole no longer occurs in the file. Two
+    // chained slides carry byte-identical tags; only their titles differ.
+    const tags = '<DrawnAnnotation text="remove" :connect="false"/>\n<DrawnAnnotation text="add" label="still mutable" :connect="false"/>'
+    const slide = (title: string, code: string) => `# ${title}\n\n${tags}\n\n\`\`\`kotlin\n${code}\n\`\`\`\n`
+    const slides = [slide('Read-only', 'val list = mutableListOf("a")'), slide('Parameters', 'fun f(list: MutableList<String>) {}')]
+    const source = `---\ntitle: Deck\n---\n\n${slides.join('\n---\nmagic-move\n---\n\n')}`
+    const { root, plugin, handler, dispose } = await serve({ 'slides.md': source })
+    try {
+      const chunk = slides[1].replace(/```kotlin[\s\S]*```/, '<MagicMoveBetween nav-key="magic-move-between-0-0" />')
+      expect(source.includes(chunk)).toBe(false)
+      const transformed = plugin.transform(chunk, `${join(root, 'slides.md')}__slidev_2.md`)?.code ?? ''
+      const locators = [...transformed.matchAll(/ __drawn-annotation-locator="([^"]+)"/g)].map(match => decode(match[1]))
+      const lines = source.split('\n')
+      const secondTitle = lines.indexOf('# Parameters')
+      expect(secondTitle).toBeGreaterThan(0)
+      // Both tags resolve to the second slide, not to the identical first one.
+      expect(locators).toHaveLength(2)
+      expect(locators.map(locator => locator.line)).toEqual([secondTitle + 3, secondTitle + 4])
+      expect(locators.map(locator => locator.ordinal)).toEqual([1, 1])
+
+      const saved = await sourceRequest(handler, { locator: locatorOf(transformed), expectedRevision: revision(source), geometry: { label: { x: .25, y: .75 } } })
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+      const written = await readFile(join(root, 'slides.md'), 'utf8')
+      expect(written.split('\n')[secondTitle + 2]).toBe('<DrawnAnnotation text="remove" :connect="false" :geometry="{ label: { x: 0.2500, y: 0.7500 } }"/>')
+      expect(written.split('\n').slice(0, secondTitle)).toEqual(lines.slice(0, secondTitle))
+    }
+    finally {
+      await dispose()
+    }
+  })
+
+  it('injects each locator once when Vite transforms a module twice', async () => {
+    const source = '# One\n\n<DrawnAnnotation text="main" label="entry point" :on="1">\n'
+    const { root, plugin, dispose } = await serve({ 'slides.md': source })
+    try {
+      const id = `${join(root, 'slides.md')}__slidev_1.md`
+      const once = plugin.transform(source, id)?.code ?? ''
+      expect(once.match(/__drawn-annotation-locator/g)).toHaveLength(1)
+      expect(plugin.transform(once, id)?.code).toBe(once)
+    }
+    finally {
+      await dispose()
+    }
+  })
+
+  it('leaves a rewritten chunk non-editable when even its verbatim lines occur twice', async () => {
+    const tags = '<DrawnAnnotation text="add" label="same" :connect="false"/>'
+    const slide = (code: string) => `# Same title\n\n${tags}\n\n\`\`\`kotlin\n${code}\n\`\`\`\n`
+    const slides = [slide('val a = 1'), slide('val b = 2')]
+    const source = `---\ntitle: Deck\n---\n\n${slides.join('\n---\nmagic-move\n---\n\n')}`
+    const { root, plugin, dispose } = await serve({ 'slides.md': source })
+    try {
+      const chunk = slides[1].replace(/```kotlin[\s\S]*```/, '<MagicMoveBetween nav-key="magic-move-between-0-0" />')
+      const transformed = plugin.transform(chunk, `${join(root, 'slides.md')}__slidev_2.md`)?.code ?? ''
+      expect(locatorOf(transformed)).toBeUndefined()
+    }
+    finally {
+      await dispose()
+    }
+  })
+
   it('does not attach a first-slide locator to an identical later slide chunk', async () => {
     const chunk = '# Same\n\n<DrawnAnnotation text="duplicate" label="same">\n'
     const source = `---\ntitle: Deck\n---\n\n${chunk}\n---\n\n${chunk}`
@@ -328,8 +414,8 @@ describe('source geometry editor', () => {
   })
 
   it('keeps locators stable across its own writes', async () => {
-    // Editor state (selection, drafts, undo history) is keyed by the locator,
-    // so rewriting a tag's `:geometry` binding must not change its locator.
+    // Editor state (selection, drafts) is keyed by the locator, so rewriting
+    // a tag's `:geometry` or `:connect` binding must not change its locator.
     const authored = '<DrawnAnnotation text="first" :geometry="{ label: { x: .1, y: .2 } }">'
     const plain = '<DrawnAnnotation text="first">'
     const source = `# One\n\n${authored}\n\n---\n\n# Two\n\n${plain}\n`
@@ -358,10 +444,21 @@ describe('source geometry editor', () => {
       expect(removed.status, JSON.stringify(removed.body)).toBe(200)
       const added = await sourceRequest(handler, { locator: second, expectedRevision: removed.body.revision, geometry: { connector: { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } } } })
       expect(added.status, JSON.stringify(added.body)).toBe(200)
+      const withConnector = await readFile(file, 'utf8')
+      expect(withConnector).toContain(`# One\n\n${plain}\n`)
+      expect(withConnector).toContain('<DrawnAnnotation text="first" :geometry="{ connector: { start: { x: 0.0000, y: 0.0000 }, end: { x: 1.0000, y: 1.0000 } } }">')
+      expect(locatorsOf(plugin.transform(withConnector, file)?.code ?? '')).toEqual([first, second])
+      // Hiding the leader line writes only `:connect="false"`; the writer
+      // answers with what it wrote and the locators stay put.
+      const hidden = await sourceRequest(handler, { locator: first, expectedRevision: added.body.revision, connect: false })
+      expect(hidden.status, JSON.stringify(hidden.body)).toBe(200)
+      expect(hidden.body).toEqual({ connect: false, revision: hidden.body.revision })
       const final = await readFile(file, 'utf8')
-      expect(final).toContain(`# One\n\n${plain}\n`)
-      expect(final).toContain('<DrawnAnnotation text="first" :geometry="{ connector: { start: { x: 0.0000, y: 0.0000 }, end: { x: 1.0000, y: 1.0000 } } }">')
+      expect(final).toContain(`# One\n\n<DrawnAnnotation text="first" :connect="false">\n`)
       expect(locatorsOf(plugin.transform(final, file)?.code ?? '')).toEqual([first, second])
+      // A write must carry something; a connect flag must be a boolean.
+      expect((await sourceRequest(handler, { locator: first, expectedRevision: hidden.body.revision })).body.error).toMatch(/nothing to write/)
+      expect((await sourceRequest(handler, { locator: first, expectedRevision: hidden.body.revision, connect: 'no' })).body.error).toMatch(/connect must be a boolean/)
       // Slide chunks resolve to the same locators as the whole file.
       const chunk = final.split('\n---\n\n')[1]
       expect(locatorsOf(plugin.transform(chunk, `${file}__slidev_2.md`)?.code ?? '')).toEqual([second])

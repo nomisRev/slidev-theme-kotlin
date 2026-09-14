@@ -32,9 +32,9 @@ import type { TextSegment } from './code-text-match'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationAuthoringProblems, clearAnnotationSelection, clearLabelDraftFields, endAnnotationDraftGesture, migrateAnnotationLocator, recordAnnotationUndo, registerAnnotationEditorActions, releaseAnnotationSelection, replaceLabelDraft, reportAnnotationAuthoringProblem, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationAuthoringProblems, clearAnnotationSelection, clearLabelDraftFields, endAnnotationDraftGesture, migrateAnnotationLocator, registerAnnotationEditorActions, releaseAnnotationSelection, replaceLabelDraft, reportAnnotationAuthoringProblem, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useId, useSlots, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
@@ -115,7 +115,7 @@ const props = withDefaults(defineProps<{
   targetType?: MarkType
   /** Show the default target circle when `targetType` is omitted. */
   targetMark?: boolean
-  /** Markdown text label. Placed automatically unless geometry supplies a position. */
+  /** Markdown text label. Use `\\n` (or a literal newline in a bound string) for a line break. Placed automatically unless geometry supplies a position. */
   label?: string
   /** Preferred side for automatic placement. `auto` picks by vertical position. */
   placement?: 'auto' | 'up' | 'down' | 'left' | 'right'
@@ -125,7 +125,11 @@ const props = withDefaults(defineProps<{
   clearance?: number
   /** Extra elements an automatically placed label must not cover. */
   avoidSelector?: string
-  /** Draw the leader line between the mark and the label or target. */
+  /**
+   * Draw the leader line between the mark and the label or target. Unset, the
+   * slide's `drawnAnnotation.connect` frontmatter decides, then the deck's
+   * `themeConfig.drawnAnnotation.connect`; the line is drawn by default.
+   */
   connect?: boolean
   /** Arrow head at the end of the leader line. */
   arrow?: boolean
@@ -220,7 +224,7 @@ const props = withDefaults(defineProps<{
   gap: 28,
   clearance: 16,
   avoidSelector: undefined,
-  connect: true,
+  connect: undefined,
   arrow: false,
   curve: 0.12,
   options: undefined,
@@ -283,7 +287,7 @@ const warned = new Set<string>()
 // they can be withdrawn once the text or element turns up after all.
 const problemReporter = useId()
 const missingProblemReporter = `${problemReporter}/missing`
-const { $page: problemPage } = useSlideContext()
+const { $page: problemPage, $frontmatter, $slidev } = useSlideContext()
 function warn(message: string, reporter = problemReporter) {
   if (warned.has(message))
     return
@@ -330,6 +334,18 @@ const hasLabel = computed(() => !!props.label)
 const labelHtml = computed(() => renderAnnotationLabel(props.label ?? ''))
 const labelText = computed(() => annotationLabelText(props.label ?? ''))
 const hasTarget = computed(() => !!props.target)
+/**
+ * What `connect` means when the tag does not say: the slide's frontmatter
+ * wins over the deck's `themeConfig`, and the line is drawn unless one of them
+ * turns it off. The editor needs this default on its own, since showing or
+ * hiding a leader writes a `:connect` binding only where the default differs.
+ */
+const inheritedConnect = computed(() => {
+  const configured = $frontmatter?.drawnAnnotation?.connect ?? $slidev?.configs.themeConfig?.drawnAnnotation?.connect
+  return configured !== false && configured !== 'false'
+})
+const connect = computed(() => props.connect ?? inheritedConnect.value)
+
 // Cross-slide Magic Move mounts a separate annotation component on each page.
 // This identity lets a visible mark hand its ink to an equivalent neighbour;
 // the geometry hand-off below still requires their final positions to match.
@@ -337,13 +353,13 @@ const transitionInkIdentity = computed(() => JSON.stringify([
   sourceMarkType.value, targetMarkType.value, props.selector, props.text,
   props.occurrence, props.multiline, props.padding, props.target,
   props.targetX, props.targetY, props.targetRadius, props.label,
-  props.placement, props.gap, props.connect, props.arrow, props.curve,
+  props.placement, props.gap, connect.value, props.arrow, props.curve,
   props.iterations, props.color, props.strokeWidth, props.duration,
   props.geometry, props.options,
 ]))
 // A source-only mark exposes no visual-editor operation. It remains valid:
 // only labels and connectors have geometry that an editor can manipulate.
-const editorRelevant = computed(() => hasLabel.value || (props.connect && hasTarget.value))
+const editorRelevant = computed(() => hasLabel.value || (connect.value && hasTarget.value))
 
 if (props.on !== undefined && (props.at !== undefined || props.until !== undefined))
   warn('`on` is `at` and `until` in one, so the separate `at` / `until` given here are ignored. Use either `on` alone, or `at` and `until`.')
@@ -536,7 +552,7 @@ const LABEL_HEAD_START = 0.1
 const LABEL_FADE_DURATION = 250
 
 // Whether a leader line is drawn at all: it needs somewhere to go.
-const connectsLine = computed(() => props.connect && (hasTarget.value || hasLabel.value))
+const connectsLine = computed(() => connect.value && (hasTarget.value || hasLabel.value))
 const hasTargetStage = computed(() => hasTarget.value && targetMarkType.value !== 'none')
 
 // A label that waits for a click of its own starts writing straight away. One
@@ -736,6 +752,37 @@ function padBox(box: Box, padding: number) {
 }
 
 /**
+ * A text rect is the font's full content area, not its glyphs: JetBrains Mono
+ * reserves 1.32em, while its capitals reach 0.73em above the baseline and its
+ * descenders 0.18em below. Marks drawn from that rect float away from the
+ * letters and, in a code block whose lines are 1.42em apart, into the
+ * neighbouring lines. These insets trim a text box down to the ink of the
+ * font, cap height to descender, so every mark starts at the letters and
+ * `padding` means the same in code as in prose. In slide pixels, per font.
+ */
+const inkInsetCache = new Map<string, { top: number, bottom: number }>()
+function inkInsets(element: Element) {
+  const style = getComputedStyle(element)
+  const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+  let insets = inkInsetCache.get(font)
+  if (!insets) {
+    const context = document.createElement('canvas').getContext('2d')!
+    context.font = font
+    const metrics = context.measureText('Hlg')
+    insets = {
+      top: Math.max(0, metrics.fontBoundingBoxAscent - metrics.actualBoundingBoxAscent),
+      bottom: Math.max(0, metrics.fontBoundingBoxDescent - metrics.actualBoundingBoxDescent),
+    }
+    inkInsetCache.set(font, insets)
+  }
+  return insets
+}
+
+function trimToInk(box: Box, insets: { top: number, bottom: number }) {
+  return makeBox(box.left, box.top + insets.top, box.right, box.bottom - insets.bottom)
+}
+
+/**
  * Finds the requested occurrence of `needle` across the slot's text nodes. Text
  * inside a code block is split over one span per token, so the match regularly
  * starts and ends in different nodes. The number of matches is reported either
@@ -795,7 +842,17 @@ let lastMarkKey = ''
 // cross-slide Magic Move page.
 let lastMarkTransitionBox: TransitionInkBox | undefined
 let lastVisibleMarkTransitionBox: TransitionInkBox | undefined
+// Ink left behind by an unmounted instance of this annotation is still to be
+// taken back (see restoreTransitionInk).
+let restorePending = false
+// Animation frame during which handed-over ink is being revealed. `unsettle`
+// leaves `skipEntranceAnimation` alone while it is set: a click that lands
+// in the same frame would otherwise clear the skip before the browser has
+// computed the revealed style once, and the label would fade in as if new.
+let restoreHold = 0
 watch(active, (isActive) => {
+  if (isActive)
+    restorePending = false
   if (isActive && lastMarkTransitionBox)
     lastVisibleMarkTransitionBox = lastMarkTransitionBox
   // Keep the outgoing page's final visible bounds long enough for the
@@ -933,7 +990,8 @@ function settleAfterMagicMove() {
 function unsettle(grace = 0) {
   const run = ++settleRun
   magicMoveWasObserved = false
-  skipEntranceAnimation.value = false
+  if (!restoreHold)
+    skipEntranceAnimation.value = false
   // A click can restyle the slide, so measured label sizes and content
   // obstacles go stale here — once per click, which leaves them shared by
   // every frame of the animation.
@@ -1100,7 +1158,11 @@ function updateGeometry() {
   // fragments of this requested range on the same visual line as one box before
   // `multiline` decides whether to draw one shape per line or one around the
   // complete match. Selector annotations keep their element's single box.
-  const rawBoxes = rects.map(toLocal)
+  const inkElement = match?.range
+    ? match.range.startContainer.parentElement
+    : source && getComputedStyle(source).display === 'inline' ? source : null
+  const insets = inkElement ? inkInsets(inkElement) : { top: 0, bottom: 0 }
+  const rawBoxes = rects.map(rect => trimToInk(toLocal(rect), insets))
   const boxes = match?.range ? mergeVisualLineBoxes(rawBoxes) : rawBoxes
   const marked = unionBox(boxes)
   const multiline = props.multiline ?? (sourceMarkType.value === 'underline' || sourceMarkType.value === 'strike-through')
@@ -1119,6 +1181,21 @@ function updateGeometry() {
   geometry.width = width
   geometry.height = height
   lastMarkTransitionBox = transitionInkBox(marked)
+  // A failed take keeps the hand-off pending: the mark may have been measured
+  // against a layout that is still filling in (a Magic Move block paints its
+  // tokens one tick after mounting, and everything below it moves down then).
+  // The `active` watch ends it once the annotation has been drawn normally.
+  if (restorePending && isCurrentSlide.value && withinRange.value && $clicks.value >= resolvedClick.value
+    && lastMarkTransitionBox && takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox)) {
+    restorePending = false
+    skipEntranceAnimation.value = true
+    settled.value = true
+    // Handed-over ink is complete from its first frame on, so it skips the
+    // hidden first paint that a fresh entrance needs (see below).
+    geometryPainted.value = true
+    cancelAnimationFrame(restoreHold)
+    restoreHold = requestAnimationFrame(() => restoreHold = 0)
+  }
   if (active.value)
     lastVisibleMarkTransitionBox = lastMarkTransitionBox
   assignPaths('mark', shapeBoxes.flatMap(box => markPaths(box, sourceMarkType.value)))
@@ -1208,6 +1285,35 @@ function inheritTransitionInk() {
   skipEntranceAnimation.value = takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox)
 }
 
+/**
+ * Slidev sometimes unmounts and remounts the slide it is showing: its
+ * slideshow container changes shape on the first click after a view
+ * transition, and every slide inside it is rebuilt. The previous instance of
+ * this annotation hands its visible ink over on unmount (see
+ * onBeforeUnmount), and the one that replaces it takes the ink back on its
+ * first measurement that finds the mark with its click reached: if the ink
+ * sits at the very same place, it is shown complete right away rather than
+ * waiting for the slide to settle and drawing itself again. A genuinely new
+ * annotation finds nothing to take and animates in as usual.
+ *
+ * That measurement is attempted synchronously, still inside the mount's
+ * render pass, so that nothing is missing from the frame that follows. Two
+ * things can defer it by a tick: a Magic Move code block paints its tokens
+ * one tick after mounting, and Slidev's click count reads as 0 until the
+ * slide's `v-click` elements have registered again. `updateGeometry` keeps
+ * the hand-off pending until both are in.
+ */
+function restoreTransitionInk() {
+  restorePending = true
+  updateGeometry()
+  if (restorePending) {
+    nextTick(() => {
+      if (mounted && restorePending)
+        updateGeometry()
+    })
+  }
+}
+
 function paintDestination(
   root: HTMLElement,
   toLocal: (rect: DOMRect) => Box,
@@ -1278,7 +1384,7 @@ function paintDestinationInto(
     placedLabelRegistry.delete(placementToken)
   }
 
-  if (!destination || !props.connect)
+  if (!destination || !connect.value)
     return
 
   const savedConnector = manualConnector()
@@ -1774,6 +1880,9 @@ onMounted(async () => {
   mounted = true
   if (isAnnotationEditorDevelopment && editorRelevant.value && locator.value) {
     unregisterEditorActions = registerAnnotationEditorActions(locator.value, {
+      page: problemPage.value,
+      connected: () => connect.value,
+      defaultConnected: () => inheritedConnect.value,
       isManualConnector: () => !!manualConnector(),
       toggleConnectorAttachment,
       hasConnectorControl: () => {
@@ -1821,6 +1930,8 @@ onMounted(async () => {
     && $clicks.value >= resolvedClick.value
     && withinRange.value
   unsettle()
+  if (isCurrentSlide.value)
+    restoreTransitionInk()
   scheduleUpdate()
 
   if (isCurrentSlide.value)
@@ -1895,6 +2006,13 @@ function disconnectObservers() {
 }
 
 onBeforeUnmount(() => {
+  // A remount of the current slide (see restoreTransitionInk) must not read
+  // as a redraw: leave the visible ink for the instance that takes over.
+  // Leaving the slide is not this case; the `isCurrentSlide` watch has
+  // already handed the ink to the neighbouring page by then, and `active` is
+  // false.
+  if (isCurrentSlide.value && active.value && lastMarkTransitionBox)
+    rememberTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox)
   mounted = false
   unregisterEditorActions?.()
   unregisterEditorActions = undefined
@@ -1909,6 +2027,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(frame)
   cancelAnimationFrame(paintFrame)
   cancelAnimationFrame(trackFrame)
+  cancelAnimationFrame(restoreHold)
   disconnectObservers()
 })
 
@@ -1922,6 +2041,18 @@ watch($clicks, () => {
     return
   unsettle()
   track(CLICK_TRACK_DURATION)
+  // Right after a remount the count catches up from 0 once the slide's
+  // `v-click` elements have registered; ink still waiting for its click to be
+  // reached (see restoreTransitionInk) is taken back in the same render pass.
+  if (restorePending) {
+    updateGeometry()
+    if (restorePending) {
+      nextTick(() => {
+        if (mounted && restorePending)
+          updateGeometry()
+      })
+    }
+  }
 }, { flush: 'sync' })
 
 // Preloaded slides can already contain their annotations before navigation
@@ -2083,25 +2214,16 @@ function moveLabelDrag(event: PointerEvent) {
  * draft, and nothing is written to the Markdown source (so no HMR, remount,
  * or entrance replay can interrupt a drag). The toolbar's "Done editing
  * annotations" commits every dirty draft in one explicit phase.
- *
- * A completed gesture records the pre-gesture draft snapshot for Undo, which
- * restores it locally with `replaceLabelDraft`.
  */
-function recordGestureUndo(id: string, previous: PersistedAnnotationGeometry | undefined) {
-  if (persistedGeometrySignature(annotationDrafts.get(id)) === persistedGeometrySignature(previous))
-    return
-  recordAnnotationUndo(id, previous ?? null)
-}
-
 /**
  * Switch explicitly between the attached route and a frozen two-endpoint
  * route. Unlike dragging, this makes the connector state discoverable from
  * the global toolbar without making the toolbar depend on annotation DOM.
  * This is the single path back to the automatic state — the toolbar has no
- * separate connector reset — so undo, status text, draft clearing and the
- * source write behave identically for every transition to automatic. The
- * writer removes the whole `geometry.connector` object, endpoints and any
- * control point alike.
+ * separate connector reset — so status text, draft clearing and the source
+ * write behave identically for every transition to automatic. The write keeps
+ * only the label fields, so the whole `geometry.connector` object goes,
+ * endpoints and any control point alike.
  */
 async function toggleConnectorAttachment() {
   if (!locator.value || !connectorEditable.value)
@@ -2115,10 +2237,9 @@ async function toggleConnectorAttachment() {
     try {
       if (!isAnnotationEditorDevelopment)
         return
-      const { cachedAnnotationGeometry, resetAnnotationGeometry } = await loadWriterClient()
-      const previous = cachedAnnotationGeometry(locator.value) ?? persistedLabelGeometry()
-      await resetAnnotationGeometry(locator.value, 'connector', previous)
-      recordAnnotationUndo(locator.value, previous)
+      const { cachedAnnotationGeometry, saveLabelGeometry } = await loadWriterClient()
+      const { x, y, width } = cachedAnnotationGeometry(locator.value) ?? persistedLabelGeometry()
+      await saveLabelGeometry(locator.value, { x, y, width })
       // Only the connector part of the draft is spent; uncommitted label
       // edits must survive the reset.
       clearLabelDraftFields(locator.value, 'connector')
@@ -2137,9 +2258,7 @@ async function toggleConnectorAttachment() {
   const visible = visibleConnectorFractions()
   if (!visible)
     return
-  const previous = annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined
   setLabelDraft(locator.value, visible)
-  recordGestureUndo(locator.value, previous)
   annotationEditorStatus.value = 'Connector is now manual — commit with "Done editing annotations"'
 }
 
@@ -2185,9 +2304,7 @@ function addConnectorControl() {
     : { cx: (visible.x1 + visible.x2) / 2, cy: (visible.y1 + visible.y2) / 2 }
   // Like materializing a manual connector: an ordinary draft edit, visible
   // immediately, committed with the session.
-  const previous = annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined
   setLabelDraft(locator.value, { x1: visible.x1, y1: visible.y1, x2: visible.x2, y2: visible.y2, ...control })
-  recordGestureUndo(locator.value, previous)
   annotationEditorStatus.value = 'Connector is curved — commit with "Done editing annotations"'
 }
 
@@ -2196,9 +2313,8 @@ function addConnectorControl() {
  * A control point the session merely drafted is cleared locally, like any
  * other draft edit. A control point the source holds cannot be removed by a
  * draft (drafts only overlay the source), so — like "Use automatic
- * connector" — straightening a saved curve writes immediately; Undo restores
- * what it removed as an ordinary draft. Either way only `cx`/`cy` are spent:
- * uncommitted endpoint and label drafts survive.
+ * connector" — straightening a saved curve writes immediately. Either way
+ * only `cx`/`cy` are spent: uncommitted endpoint and label drafts survive.
  */
 async function removeConnectorControl() {
   if (!locator.value || !isAnnotationEditorDevelopment)
@@ -2215,14 +2331,8 @@ async function removeConnectorControl() {
       delete next.cx
       delete next.cy
       await saveLabelGeometry(locator.value, next)
-      recordAnnotationUndo(locator.value, previous)
-      clearLabelDraftFields(locator.value, 'control')
     }
-    else {
-      const previousDraft = annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value) } : undefined
-      clearLabelDraftFields(locator.value, 'control')
-      recordGestureUndo(locator.value, previousDraft)
-    }
+    clearLabelDraftFields(locator.value, 'control')
     annotationEditorStatus.value = 'Connector is straight again'
   }
   catch (error) {
@@ -2235,16 +2345,14 @@ function endLabelDrag(event: PointerEvent) {
     return
   event.preventDefault()
   event.stopPropagation()
-  const drag = labelDrag
   labelDrag = undefined
   endAnnotationDraftGesture(locator.value, 'label')
-  recordGestureUndo(locator.value, drag.previous)
 }
 
 // A pointer cancellation means the browser interrupted the gesture (for
 // example, a window focus change), not that the author released it. Nothing
 // has been written — drafts are local for the whole session — so restoring
-// the pre-gesture draft snapshot undoes the partial movement completely.
+// the pre-gesture draft snapshot removes the partial movement completely.
 function restoreCancelledDrag(id: string, previous: PersistedAnnotationGeometry | undefined) {
   replaceLabelDraft(id, previous ?? null)
   annotationEditorStatus.value = 'Annotation drag cancelled'
@@ -2347,10 +2455,8 @@ function endConnectorDrag(event: PointerEvent) {
     return
   event.preventDefault()
   event.stopPropagation()
-  const drag = connectorDrag
   connectorDrag = undefined
   endAnnotationDraftGesture(locator.value, 'connector')
-  recordGestureUndo(locator.value, drag.previous)
 }
 
 function cancelConnectorDrag(event: PointerEvent) {
@@ -2363,13 +2469,6 @@ function cancelConnectorDrag(event: PointerEvent) {
   endAnnotationDraftGesture(locator.value, 'connector')
   restoreCancelledDrag(locator.value, drag.previous)
 }
-
-// A run of arrow presses is one undoable gesture: the pre-nudge snapshot is
-// recorded when a burst starts (a pause, or a different control, starts a new
-// burst), not once per key repeat.
-const NUDGE_UNDO_BURST_MS = 1000
-let nudgeUndoKey = ''
-let nudgeUndoAt = 0
 
 /** Arrow keys nudge the selected label or connector in slide fractions. */
 function nudgeSelectedAnnotation(event: KeyboardEvent) {
@@ -2390,7 +2489,6 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
   const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
   const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
   const part = selectedAnnotationPart.value
-  const before = annotationDrafts.get(locator.value) ? { ...annotationDrafts.get(locator.value)! } : undefined
 
   if ((part === 'label' || part === 'width') && editable.value) {
     if (part === 'width') {
@@ -2451,16 +2549,9 @@ function nudgeSelectedAnnotation(event: KeyboardEvent) {
     return
   }
 
+  // The nudge stays a local draft: no write, no HMR, no debounce.
   event.preventDefault()
   event.stopPropagation()
-  // The nudge stays a local draft: no write, no HMR, no debounce. The burst
-  // bookkeeping only decides where Undo returns to.
-  const burstKey = `${locator.value}:${part}`
-  const now = performance.now()
-  if (burstKey !== nudgeUndoKey || now - nudgeUndoAt > NUDGE_UNDO_BURST_MS)
-    recordGestureUndo(locator.value, before)
-  nudgeUndoKey = burstKey
-  nudgeUndoAt = now
 }
 
 function cancelActiveDrag(event: KeyboardEvent) {

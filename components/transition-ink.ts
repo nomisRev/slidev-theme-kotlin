@@ -1,11 +1,15 @@
 /**
- * Carries annotation ink across one cross-slide Magic Move transition.
+ * Carries annotation ink from one component instance to the one that takes
+ * its place, across one cross-slide Magic Move transition or a remount of the
+ * same slide.
  *
- * Slidev keeps both pages mounted but each page has its own annotation
- * component instance. A matching annotation on the next page therefore has no
- * component state to tell it that the ink was already visible. This tiny,
- * module-local hand-off bridges that one navigation boundary. It deliberately
- * matches both a semantic identity and the final normalized bounds: two equal
+ * Slidev keeps both pages of a Magic Move chain mounted but each page has its
+ * own annotation component instance, and it also unmounts and remounts the
+ * slide it is showing at times (its slideshow container changes shape on the
+ * first click after a view transition). Either way the instance that appears
+ * has no component state to tell it that the ink was already visible. This
+ * tiny, module-local hand-off bridges that boundary. It deliberately matches
+ * both a semantic identity and the final normalized bounds: two equal
  * annotations elsewhere on a slide must still draw independently.
  */
 export interface TransitionInkBox {
@@ -36,9 +40,10 @@ export function rememberTransitionInk(identity: string, page: number, box: Trans
 }
 
 /**
- * Consume ink from the immediately adjacent page when it occupies the same
- * final position. Coordinates are fractions of the concrete slide, so this
- * survives presenter scaling and a differently sized browser window.
+ * Consume ink from the same page (left by an instance that was unmounted) or
+ * the immediately adjacent one when it occupies the same final position.
+ * Coordinates are fractions of the concrete slide, so this survives presenter
+ * scaling and a differently sized browser window.
  */
 export function takeTransitionInk(identity: string, page: number, box: TransitionInkBox) {
   const records = inkByIdentity.get(identity)
@@ -47,7 +52,7 @@ export function takeTransitionInk(identity: string, page: number, box: Transitio
 
   const adjacent = records
     .map((record, index) => ({ record, index }))
-    .filter(({ record }) => Math.abs(record.page - page) === 1)
+    .filter(({ record }) => Math.abs(record.page - page) <= 1)
   if (!adjacent.length)
     return false
 
