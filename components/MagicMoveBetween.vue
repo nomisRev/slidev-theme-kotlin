@@ -199,6 +199,9 @@ const viewTransitionName = computed(() =>
 // The View Transitions API would cross-fade a snapshot of the old code window
 // on top of the live token animation. Hide the old snapshot and show the new
 // (live) one immediately; the group animation still moves the window itself.
+// The rules only depend on the chain, so every window of a chain shares one
+// style element (vueuse reference-counts it by id) instead of each adding its
+// own copy of three `::view-transition-*` rules to the document.
 useStyleTag(`
 ::view-transition-old(${props.navKey}) { display: none; }
 ::view-transition-new(${props.navKey}) { animation: none; mix-blend-mode: normal; }
@@ -206,7 +209,7 @@ useStyleTag(`
   animation-duration: 0.5s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
-`)
+`, { id: `${props.navKey}-style` })
 
 const showCopyButton = computed(() => {
   const codeCopy = $frontmatter?.codeCopy ?? configs.codeCopy

@@ -15,6 +15,26 @@ interface PlacedLabelRecord {
 }
 const placedLabelRegistry = new Map<symbol, PlacedLabelRecord>()
 let nextPlacementOrder = 0
+
+/**
+ * Keyboard handlers of the annotations in an edit session, served by one
+ * window listener. Registering a listener per annotation cost every key press
+ * on the deck two calls per mounted annotation — several hundred in a large
+ * deck, all of them on slides nobody is editing — so instances only register
+ * here while an edit session is open, and the listener exists once.
+ */
+const editorKeydownHandlers = new Set<(event: KeyboardEvent) => void>()
+let editorKeydownListenerInstalled = false
+function registerEditorKeydown(handler: (event: KeyboardEvent) => void) {
+  editorKeydownHandlers.add(handler)
+  if (editorKeydownListenerInstalled || typeof window === 'undefined')
+    return
+  editorKeydownListenerInstalled = true
+  window.addEventListener('keydown', (event) => {
+    for (const registered of Array.from(editorKeydownHandlers))
+      registered(event)
+  }, true)
+}
 </script>
 
 <script setup lang="ts">
@@ -386,11 +406,20 @@ const searchScope = () => slots.default ? 'the slot' : 'the content below this a
 // The self-closing search root is the whole layout, so occurrence counting and
 // selector matches are narrowed here to what actually follows the tag —
 // content above it (a slide title, say) is outside the promised scope.
-function followsAnnotation(node: Node) {
+type AnnotationRelation = 'after' | 'before' | 'around' | 'inside'
+function relationToAnnotation(node: Node): AnnotationRelation {
   const anchor = container.value
   if (slots.default || !anchor)
-    return true
-  return !!(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) && !anchor.contains(node)
+    return 'after'
+  const position = anchor.compareDocumentPosition(node)
+  if (position & Node.DOCUMENT_POSITION_CONTAINS)
+    return 'around'
+  if (position & Node.DOCUMENT_POSITION_CONTAINED_BY)
+    return 'inside'
+  return position & Node.DOCUMENT_POSITION_FOLLOWING ? 'after' : 'before'
+}
+function followsAnnotation(node: Node) {
+  return relationToAnnotation(node) === 'after'
 }
 
 // The mark and the label can share one click or be spread over two, which is
@@ -788,19 +817,35 @@ function trimToInk(box: Box, insets: { top: number, bottom: number }) {
  * starts and ends in different nodes. The number of matches is reported either
  * way, so a miss can be explained rather than silently swallowed.
  */
+// Our own overlay, and the snapshot Magic Move is animating out, so a match is
+// never made against text that is on its way off the slide.
+const IGNORED_TEXT_SCOPES = 'svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'
+
 function textRange(root: HTMLElement, needle: string, occurrence: number | string): { range?: Range, matches: number } {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
     acceptNode(node) {
-      const parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node as HTMLElement
-      // Skip our own overlay, and the snapshot Magic Move is animating out, so
-      // a match is never made against text that is on its way off the slide.
-      if (!parent || parent.closest('svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'))
-        return NodeFilter.FILTER_REJECT
-      // Only leaves are position-filtered: an element that merely precedes or
-      // contains the annotation must still be descended into (FILTER_SKIP),
-      // because content following the tag can live inside it.
-      if (node.nodeType === Node.ELEMENT_NODE)
-        return (node as HTMLElement).tagName === 'BR' && followsAnnotation(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      // Rejecting an element prunes its whole subtree, so each element is
+      // tested once against the ignored scopes on its way down, and a text
+      // node needs no ancestor walk of its own: an ignored ancestor would
+      // already have pruned it. (The ancestor walk was the single most
+      // expensive thing on an annotated slide, once per node per frame.)
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const element = node as HTMLElement
+        if (element.matches(IGNORED_TEXT_SCOPES))
+          return NodeFilter.FILTER_REJECT
+        switch (relationToAnnotation(element)) {
+          // An element around the annotation must still be descended into,
+          // because content following the tag can live inside it.
+          case 'around':
+            return NodeFilter.FILTER_SKIP
+          case 'after':
+            return element.tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+          // Content above the tag, and the annotation's own markup, is outside
+          // the promised scope: pruned here rather than visited text by text.
+          default:
+            return NodeFilter.FILTER_REJECT
+        }
+      }
       return followsAnnotation(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
     },
   })
@@ -820,6 +865,68 @@ function textRange(root: HTMLElement, needle: string, occurrence: number | strin
   const requestedOccurrence = Number(occurrence)
   const match = findTextInSegments(segments, needle, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1)
   return { range: match.range ?? undefined, matches: match.matches }
+}
+
+/**
+ * The match is resolved once per DOM state, not once per animation frame. A
+ * Range is live: while Magic Move moves retained tokens with CSS transforms
+ * nothing in the DOM changes, so the Range found before the step still marks
+ * the same text and only its client rects need re-reading each frame. A
+ * resize, a font or image load, or a label drag move boxes too, never text,
+ * so they reuse the match as well. It is dropped where the text can change:
+ * on every click (`unsettle`), when a code block's children or text mutate,
+ * when the props change, and before the settled pass and the ink hand-off
+ * re-measure. A Range whose boundaries the browser has moved — a replaced
+ * token detaches its text node and shifts the boundary to the container — is
+ * never trusted either way.
+ */
+interface TextMatchCache {
+  root: HTMLElement
+  needle: string
+  occurrence: number | string
+  range?: Range
+  matches: number
+  startNode?: Node
+  endNode?: Node
+}
+let textMatchCache: TextMatchCache | undefined
+
+function invalidateTextMatch() {
+  textMatchCache = undefined
+}
+
+function textMatchIntact(cached: TextMatchCache) {
+  const range = cached.range
+  if (!range)
+    return true
+  return range.startContainer === cached.startNode
+    && range.endContainer === cached.endNode
+    && !!cached.startNode?.isConnected
+    && !range.collapsed
+}
+
+function findText(root: HTMLElement, needle: string, occurrence: number | string): { range?: Range, matches: number } {
+  const cached = textMatchCache
+  if (cached && cached.root === root && cached.needle === needle && cached.occurrence === occurrence && textMatchIntact(cached))
+    return cached
+  const match = textRange(root, needle, occurrence)
+  textMatchCache = { root, needle, occurrence, ...match, startNode: match.range?.startContainer, endNode: match.range?.endContainer }
+  return match
+}
+
+// Client rects of the overlay and the concrete slide, read once per
+// measurement pass and shared by everything that converts between the two
+// coordinate systems. Each conversion used to measure both again, which made
+// a single frame of one annotation six layout reads instead of one.
+let passRects: { overlay: DOMRect, slide?: DOMRect } | undefined
+function overlayRect(svg: SVGSVGElement) {
+  return passRects?.overlay ?? svg.getBoundingClientRect()
+}
+function slideRect(slide: HTMLElement) {
+  if (!passRects)
+    return slide.getBoundingClientRect()
+  passRects.slide ??= slide.getBoundingClientRect()
+  return passRects.slide
 }
 
 function slideRoot() {
@@ -953,6 +1060,7 @@ async function settleAfterAnimations(run: number, grace = 0) {
         // Settle before measuring: the settled pass is the one full
         // recomputation per click that the animation-frame passes lean on.
         settled.value = true
+        invalidateTextMatch()
         updateGeometry()
         inheritTransitionInk()
       }
@@ -979,6 +1087,7 @@ function settleAfterMagicMove() {
     return
   magicMoveWasObserved = false
   settled.value = true
+  invalidateTextMatch()
   updateGeometry()
   inheritTransitionInk()
 }
@@ -997,6 +1106,7 @@ function unsettle(grace = 0) {
   // every frame of the animation.
   labelSizeCache.clear()
   contentObstacleCache = undefined
+  invalidateTextMatch()
   // A frozen edit session never replays entrance or settling behavior:
   // navigation is locked, so the click state cannot really change, and an
   // HMR remount from an explicit toolbar write (a reset, say) must render the
@@ -1024,7 +1134,7 @@ function scheduleUpdate() {
   // directly): the slide may have reflowed, so re-scan content obstacles.
   contentObstacleCache = undefined
   cancelAnimationFrame(frame)
-  frame = requestAnimationFrame(updateGeometry)
+  frame = requestAnimationFrame(() => updateGeometry())
 }
 
 /** Repaint one editing annotation without invalidating the slide obstacle scan. */
@@ -1032,7 +1142,7 @@ function scheduleDraftUpdate() {
   if (!mounted)
     return
   cancelAnimationFrame(frame)
-  frame = requestAnimationFrame(updateGeometry)
+  frame = requestAnimationFrame(() => updateGeometry())
 }
 
 /**
@@ -1113,7 +1223,16 @@ function updateGeometry() {
   const height = svg.clientHeight
   if (!overlayBox.width || !overlayBox.height || !width || !height)
     return
+  passRects = { overlay: overlayBox }
+  try {
+    measureGeometry(root, overlayBox, width, height)
+  }
+  finally {
+    passRects = undefined
+  }
+}
 
+function measureGeometry(root: HTMLElement, overlayBox: DOMRect, width: number, height: number) {
   // DOMRects carry Slidev's presentation scale. Convert them back into the
   // slide's own coordinate system so strokes and offsets scale with the slide.
   const scaleX = width / overlayBox.width
@@ -1125,7 +1244,7 @@ function updateGeometry() {
     (rect.bottom - overlayBox.top) * scaleY,
   )
 
-  const match = props.text ? textRange(root, props.text, props.occurrence) : undefined
+  const match = props.text ? findText(root, props.text, props.occurrence) : undefined
   const source = props.text
     ? undefined
     : Array.from(root.querySelectorAll<HTMLElement>(props.selector)).find(followsAnnotation) ?? null
@@ -1259,8 +1378,8 @@ function transitionInkBox(marked: Box): TransitionInkBox | undefined {
   const slide = slideRoot()
   if (!svg || !slide || !geometry.width || !geometry.height)
     return undefined
-  const overlayBox = svg.getBoundingClientRect()
-  const slideBox = slide.getBoundingClientRect()
+  const overlayBox = overlayRect(svg)
+  const slideBox = slideRect(slide)
   if (!overlayBox.width || !overlayBox.height || !slideBox.width || !slideBox.height)
     return undefined
   const left = overlayBox.left + marked.left / geometry.width * overlayBox.width
@@ -1305,6 +1424,7 @@ function inheritTransitionInk() {
  */
 function restoreTransitionInk() {
   restorePending = true
+  invalidateTextMatch()
   updateGeometry()
   if (restorePending) {
     nextTick(() => {
@@ -1367,8 +1487,8 @@ function paintDestinationInto(
     // InlineCompilerError) has an SVG canvas limited to that component. The
     // label is allowed to leave that canvas, so constrain it to the slide,
     // expressed in the SVG's local coordinates, rather than to the canvas.
-    const slide = slideRoot() ?? root
-    const label = fitLabel(root, toLocal, destination ?? markBox, toLocal(slide.getBoundingClientRect()))
+    const slide = slideRoot()
+    const label = fitLabel(root, toLocal, destination ?? markBox, toLocal(slide ? slideRect(slide) : root.getBoundingClientRect()))
     geometry.labelLeft = label.box.cx
     geometry.labelTop = label.box.cy
     geometry.labelWidth = label.width
@@ -1398,8 +1518,8 @@ function paintDestinationInto(
     const slide = slideRoot()
     if (!slide)
       return
-    const slideBox = slide.getBoundingClientRect()
-    const overlayBox = overlay.value.getBoundingClientRect()
+    const slideBox = slideRect(slide)
+    const overlayBox = overlayRect(overlay.value)
     start = slideFractionPointToLocal({ x: savedConnector.x1, y: savedConnector.y1 }, slideBox, overlayBox, geometry)
     end = slideFractionPointToLocal({ x: savedConnector.x2, y: savedConnector.y2 }, slideBox, overlayBox, geometry)
     if (savedConnector.cx !== undefined && savedConnector.cy !== undefined) {
@@ -1785,8 +1905,8 @@ function collectLabelObstacles(toLocal: (rect: DOMRect) => Box): Box[] {
         obstacles.push(toLocal(rect))
     }
   }
-  const slideBox = slide.getBoundingClientRect()
-  const overlayBox = svg.getBoundingClientRect()
+  const slideBox = slideRect(slide)
+  const overlayBox = overlayRect(svg)
   const ourClick = resolvedLabelClick.value
   for (const record of placedLabelRegistry.values()) {
     if (record.root !== slide || !record.active)
@@ -1837,8 +1957,8 @@ function publishPlacedLabel(box: Box) {
   const svg = overlay.value
   if (!slide || !svg)
     return
-  const slideBox = slide.getBoundingClientRect()
-  const overlayBox = svg.getBoundingClientRect()
+  const slideBox = slideRect(slide)
+  const overlayBox = overlayRect(svg)
   const topLeft = localPointToSlideFraction({ x: box.left, y: box.top }, slideBox, overlayBox, geometry)
   const bottomRight = localPointToSlideFraction({ x: box.right, y: box.bottom }, slideBox, overlayBox, geometry)
   placedLabelRegistry.set(placementToken, {
@@ -1977,7 +2097,11 @@ function connectObservers() {
   // tracking loop forever.
   const animated = observedRoot?.querySelectorAll('.slidev-code, .slidev-code-magic-move, pre.shiki')
   if (animated?.length) {
-    mutationObserver = new MutationObserver(() => {
+    mutationObserver = new MutationObserver((records) => {
+      // A class or style change moves tokens; only replaced children or text
+      // can invalidate the match the tracking frames reuse.
+      if (records.some(record => record.type !== 'attributes'))
+        invalidateTextMatch()
       if (isMagicMoveInProgress())
         magicMoveWasObserved = true
       track()
@@ -2045,11 +2169,14 @@ watch($clicks, () => {
   // `v-click` elements have registered; ink still waiting for its click to be
   // reached (see restoreTransitionInk) is taken back in the same render pass.
   if (restorePending) {
+    invalidateTextMatch()
     updateGeometry()
     if (restorePending) {
       nextTick(() => {
-        if (mounted && restorePending)
+        if (mounted && restorePending) {
+          invalidateTextMatch()
           updateGeometry()
+        }
       })
     }
   }
@@ -2090,6 +2217,7 @@ watch(isCurrentSlide, (current) => {
 watch(props, () => {
   labelSizeCache.clear()
   lastMarkKey = ''
+  invalidateTextMatch()
   scheduleUpdate()
 })
 
@@ -2570,14 +2698,22 @@ function cancelActiveDrag(event: KeyboardEvent) {
   restoreCancelledDrag(locator.value, drag?.previous)
 }
 
-onMounted(() => {
-  window.addEventListener('keydown', cancelActiveDrag, true)
-  window.addEventListener('keydown', nudgeSelectedAnnotation, true)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', cancelActiveDrag, true)
-  window.removeEventListener('keydown', nudgeSelectedAnnotation, true)
-})
+// Edit-session keys are served by the module's single window listener (see
+// the plain script block above), and only while a session is open: outside
+// one, the deck's own key handling pays nothing for the annotations on it.
+function editorKeydown(event: KeyboardEvent) {
+  cancelActiveDrag(event)
+  nudgeSelectedAnnotation(event)
+}
+if (isAnnotationEditorDevelopment) {
+  watch(annotationEditMode, (editing) => {
+    if (editing)
+      registerEditorKeydown(editorKeydown)
+    else
+      editorKeydownHandlers.delete(editorKeydown)
+  }, { immediate: true })
+  onBeforeUnmount(() => editorKeydownHandlers.delete(editorKeydown))
+}
 </script>
 
 <template>

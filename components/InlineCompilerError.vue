@@ -310,17 +310,33 @@ function appendTextSegments(element: HTMLElement, segments: TextSegment[]) {
 function codeTextSegments(code: HTMLElement, line?: number): TextSegment[] {
   const segments: TextSegment[] = []
   if (isMagicMove) {
+    // One walk over the whole block. Walking each token separately cost one
+    // TreeWalker per span, and this runs on every mutation Magic Move makes.
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.nodeType !== Node.ELEMENT_NODE)
+          return NodeFilter.FILTER_ACCEPT
+        const element = node as HTMLElement
+        // Outgoing tokens of the previous step linger (absolutely positioned)
+        // during a transition; rejecting them prunes their text as well.
+        if (element.className.includes('shiki-magic-move-leave'))
+          return NodeFilter.FILTER_REJECT
+        return element.tagName === 'BR' && element.parentElement === code ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      },
+    })
     let currentLine = 1
-    for (const child of code.children) {
-      if (child.tagName === 'BR') {
+    let node: Node | null
+    // eslint-disable-next-line no-cond-assign
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
         if (line === undefined)
           segments.push({ text: '\n' })
-        currentLine++
+        if (++currentLine > (line ?? Number.POSITIVE_INFINITY))
+          break
         continue
       }
-      if ((line === undefined || currentLine === line) && child instanceof HTMLElement
-        && !child.className.includes('shiki-magic-move-leave'))
-        appendTextSegments(child, segments)
+      if (line === undefined || currentLine === line)
+        segments.push({ node: node as Text, text: (node as Text).data })
     }
   }
   else {
