@@ -34,7 +34,6 @@ function decodeSteps(stepsLz: string): KeyedTokensInfo[] {
 </script>
 
 <script setup lang="ts">
-import { ShikiMagicMovePrecompiled } from '@shikijs/magic-move/vue'
 import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { CLICKS_MAX } from '@slidev/client/constants.ts'
 import { configs } from '@slidev/client/env.ts'
@@ -42,6 +41,7 @@ import TitleIcon from '@slidev/client/internals/TitleIcon.vue'
 import { makeId, updateCodeHighlightRange } from '@slidev/client/logic/utils.ts'
 import { useClipboard, useStyleTag } from '@vueuse/core'
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
+import { MagicMovePrecompiled } from './magic-move/batched-renderer'
 
 // Cross-slide Magic Move. The codeblock transformer in `setup/transformers.ts`
 // emits one instance per code window on every slide of a `magic-move` chain,
@@ -278,7 +278,7 @@ function copyCode() {
         {{ title.replace(/~([^~]+)~/g, '').trim() }}
       </div>
     </div>
-    <ShikiMagicMovePrecompiled
+    <MagicMovePrecompiled
       v-if="steps.length"
       class="slidev-code relative shiki overflow-visible"
       :steps="steps"
