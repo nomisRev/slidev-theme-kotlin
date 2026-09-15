@@ -1,5 +1,39 @@
-<script setup lang="ts">
+<script lang="ts">
 import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
+import lz from 'lz-string'
+
+// Decoded payloads are shared by every instance of the same payload for the
+// lifetime of the page. This lives in a plain `<script>` block on purpose:
+// top-level code in `<script setup>` runs once per component instance.
+// Slidev keeps every slide mounted and remounts all of them whenever its
+// slideshow container changes type (a click followed by a slide change, with
+// `transition: view-transition`), so without this cache a deck of 145 code
+// windows spent about 50 ms per navigation decoding the same strings again.
+// HMR hands an instance a new string, which is simply a new key.
+const decodedSteps = new Map<string, KeyedTokensInfo[]>()
+
+function decodeSteps(stepsLz: string): KeyedTokensInfo[] {
+  const cached = decodedSteps.get(stepsLz)
+  if (cached)
+    return cached
+  let parsed: KeyedTokensInfo[] = []
+  try {
+    const decompressed = lz.decompressFromBase64(stepsLz)
+    const decoded = decompressed ? JSON.parse(decompressed) : null
+    if (Array.isArray(decoded) && decoded.length)
+      parsed = decoded
+    else
+      console.error('[MagicMoveBetween] The precompiled steps decoded to nothing — the code window is not rendered.')
+  }
+  catch (error) {
+    console.error('[MagicMoveBetween] Could not parse the precompiled steps — the code window is not rendered.', error)
+  }
+  decodedSteps.set(stepsLz, parsed)
+  return parsed
+}
+</script>
+
+<script setup lang="ts">
 import { ShikiMagicMovePrecompiled } from '@shikijs/magic-move/vue'
 import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { CLICKS_MAX } from '@slidev/client/constants.ts'
@@ -7,7 +41,6 @@ import { configs } from '@slidev/client/env.ts'
 import TitleIcon from '@slidev/client/internals/TitleIcon.vue'
 import { makeId, updateCodeHighlightRange } from '@slidev/client/logic/utils.ts'
 import { useClipboard, useStyleTag } from '@vueuse/core'
-import lz from 'lz-string'
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 
 // Cross-slide Magic Move. The codeblock transformer in `setup/transformers.ts`
@@ -57,19 +90,7 @@ const props = withDefaults(defineProps<{
 // The transformer emits `steps-lz` as a static attribute, so this computes
 // once per payload — but a corrupt payload must not take the whole slide down
 // with it, and an HMR edit can hand the same instance a new payload.
-const steps = computed<KeyedTokensInfo[]>(() => {
-  try {
-    const decompressed = lz.decompressFromBase64(props.stepsLz)
-    const parsed = decompressed ? JSON.parse(decompressed) : null
-    if (Array.isArray(parsed) && parsed.length)
-      return parsed
-    console.error('[MagicMoveBetween] The precompiled steps decoded to nothing — the code window is not rendered.')
-  }
-  catch (error) {
-    console.error('[MagicMoveBetween] Could not parse the precompiled steps — the code window is not rendered.', error)
-  }
-  return []
-})
+const steps = computed<KeyedTokensInfo[]>(() => decodeSteps(props.stepsLz))
 const { $page, $scale: scale, $zoom: zoom, $frontmatter, $clicksContext: clicks } = useSlideContext()
 const { currentSlideNo, isPrintMode } = useNav()
 const container = useTemplateRef<HTMLElement>('container')
