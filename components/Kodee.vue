@@ -37,13 +37,17 @@ const FEATURED_OFFSETS: Record<string, Record<string, string>> = {
 
 <script setup lang="ts">
 import { computed, watchEffect } from 'vue'
-import { useSlideContext } from '@slidev/client'
 import type { KodeeProps } from './kodee-props'
 
-const props = withDefaults(defineProps<KodeeProps>(), {
+// Whether slide navigation hands Kodee to the browser's View Transition (the
+// `view-transition-name` in the style block) instead of v-motion. The caller
+// decides, because the mascot is rendered both inside a slide and in the
+// deck-wide layer where no slide context exists.
+const props = withDefaults(defineProps<KodeeProps & { viewTransition?: boolean }>(), {
   variant: 'greeting',
   size: 'small',
   position: 'corner',
+  viewTransition: false,
 })
 
 const variantName = computed(() =>
@@ -104,23 +108,10 @@ const positionStyles = computed(() => {
   return styles
 })
 
-const { $frontmatter, $slidev } = useSlideContext()
-
-// Whether slide navigation hands Kodee to the browser's View Transition (the
-// `view-transition-name` below) instead of v-motion. That is only the case
-// when the deck — or this slide — actually uses the `view-transition`
-// transition AND the browser implements the API; checking API support alone
-// would silently disable the entrance animation in every modern browser,
-// even in decks using a different transition. Slidev falls back to a normal
-// transition in browsers without the API, so v-motion takes over there too.
-const usesViewTransition = computed(() =>
-  ($frontmatter?.transition ?? $slidev?.configs.transition) === 'view-transition'
-  && typeof document !== 'undefined' && 'startViewTransition' in document)
-
 // Compute v-motion animation config
 const motionConfig = computed(() => {
   const baseScale = props.scale ?? 1
-  const viewTransition = usesViewTransition.value
+  const viewTransition = props.viewTransition
 
   return {
     initial: {

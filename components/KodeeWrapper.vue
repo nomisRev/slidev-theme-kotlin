@@ -2,7 +2,9 @@
 import { computed } from 'vue'
 import { useSlideContext } from '@slidev/client'
 import type { KodeeProps } from './kodee-props'
+import { resolveKodeeConfig } from './kodee-props'
 import Kodee from './Kodee.vue'
+import { usesViewTransition } from './kodee-view-transition'
 
 interface Props {
   defaultVariant?: string
@@ -16,42 +18,27 @@ const props = withDefaults(defineProps<Props>(), {
   defaultPosition: 'corner',
 })
 
-const { $frontmatter, $slidev } = useSlideContext()
+const { $frontmatter, $slidev, $renderContext } = useSlideContext()
 
-const defaults = computed<KodeeProps>(() => ({
-  variant: props.defaultVariant,
-  size: props.defaultSize,
-  position: props.defaultPosition,
-}))
+// Wherever Slidev renders its global layers (the slideshow in play and
+// presenter views, and every printed or exported slide) the mascot is drawn
+// by `global-bottom.vue`, once for the whole deck, so that a slide transition
+// does not fade one copy out while fading an identical copy in. The overview
+// and the presenter's next-slide preview render slides without global layers,
+// and there each slide keeps its own mascot.
+const drawnPerSlide = computed(() => !['slide', 'presenter'].includes($renderContext.value))
 
-const kodeeConfig = computed<KodeeProps | null>(() => {
-  // A slide-level value wins. Otherwise use the deck-wide theme setting.
-  const configured = $frontmatter?.kodee ?? $slidev?.configs.themeConfig?.kodee
+const kodeeConfig = computed<KodeeProps | null>(() =>
+  resolveKodeeConfig($frontmatter?.kodee ?? $slidev?.configs.themeConfig?.kodee, {
+    variant: props.defaultVariant,
+    size: props.defaultSize,
+    position: props.defaultPosition,
+  }),
+)
 
-  if (configured === undefined || configured === null || configured === false)
-    return null
-
-  if (configured === true)
-    return defaults.value
-
-  if (typeof configured === 'string') {
-    return {
-      ...defaults.value,
-      variant: configured,
-    }
-  }
-
-  if (typeof configured === 'object') {
-    // Only the known options: anything else in the frontmatter object would
-    // otherwise fall through `v-bind` onto the mascot's DOM element.
-    const { variant, size, position, x, y, scale } = { ...defaults.value, ...configured }
-    return { variant, size, position, x, y, scale }
-  }
-
-  return null
-})
+const viewTransition = computed(() => usesViewTransition($frontmatter?.transition))
 </script>
 
 <template>
-  <Kodee v-if="kodeeConfig" v-bind="kodeeConfig" />
+  <Kodee v-if="drawnPerSlide && kodeeConfig" v-bind="kodeeConfig" :view-transition="viewTransition" />
 </template>
