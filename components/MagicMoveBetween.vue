@@ -105,6 +105,13 @@ const renderedStep = computed(() =>
 // so re-renders (theme switch, HMR) never replay the transition.
 const animated = ref(false)
 
+// A slide transition such as `fade` keeps the old slide on screen while the
+// new one fades in. The neighbour's window is morphing this window's code by
+// then, so the old copy is hidden for the fade instead of ghosting over it.
+// (With `transition: view-transition` the same job is done by hiding the
+// window's old snapshot, see the style tag below.)
+const departing = ref(false)
+
 // Guards the awaits in the watcher below: rapid navigation re-enters it, and
 // a stale continuation resuming after its awaits must not replay the animation
 // or overwrite the step a newer navigation already settled on.
@@ -124,16 +131,20 @@ watch(currentSlideNo, async (to, from) => {
   if (isPrintMode.value)
     return
   const epoch = ++navigationEpoch
+  const pages = props.stepPages
   if (to !== $page.value) {
+    // Hide only when the neighbour takes over this window's code.
+    if (from === $page.value)
+      departing.value = pages.includes(to)
     // Reset silently while hidden so a revisit starts from a clean state.
     animated.value = false
     stepIndex.value = props.step
     return
   }
+  departing.value = false
   // The transformer supplies the page-to-step map with every payload it
   // compiles. A map that does not place this step on this page means payload
   // and slide are out of sync (mid-HMR, say): skip the animation over guessing.
-  const pages = props.stepPages
   if (pages.length !== steps.value.length || pages[props.step] !== $page.value)
     return
   const fromStep = pages.indexOf(from)
@@ -258,6 +269,7 @@ function copyCode() {
   <div
     ref="container"
     class="slidev-code-wrapper slidev-code-magic-move magic-move-between relative group"
+    :class="{ 'magic-move-between--departing': departing }"
     :style="{ 'view-transition-name': viewTransitionName }"
   >
     <div v-if="title" class="slidev-code-block-title">
@@ -276,6 +288,9 @@ function copyCode() {
         globalScale: scale * zoom,
         duration: animated ? duration : 0,
         stagger: 1,
+        // The window grows or shrinks from the first frame, alongside the
+        // slide transition, instead of after Shiki's default 40% delay.
+        delayContainer: 0,
       }"
     />
     <button
@@ -291,6 +306,12 @@ function copyCode() {
 </template>
 
 <style scoped>
+/* The slide this window belongs to is fading out while its neighbour morphs
+   the same code: only the neighbour's copy may be visible. */
+.magic-move-between--departing {
+  visibility: hidden;
+}
+
 /* The classes live on tokens the Magic Move renderer creates inside the child
    component, so they need :deep() to be reached from scoped CSS. */
 :deep(.shiki-magic-move-enter-from),

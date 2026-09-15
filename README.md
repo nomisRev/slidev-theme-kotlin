@@ -83,7 +83,7 @@ Add the theme to your slides' frontmatter:
 ```yaml
 ---
 theme: kotlin
-transition: view-transition
+transition: fade
 ---
 
 # Your Presentation Title
@@ -254,9 +254,16 @@ Details:
   parallel snippets (say Kotlin next to SQL) each animate independently.
 - Everything outside the code fences is a normal slide — headings, prose, and
   layout can change freely and follow the deck's regular slide transition.
-- With `transition: view-transition`, the code windows of both slides are
-  paired through the View Transitions API, so the window glides to its new
-  position while the tokens morph, instead of cross-fading with the page.
+- With a slide transition such as `fade`, the departing slide's copy of the
+  window is hidden for the length of the transition, so only the arriving
+  window is visible while its tokens morph and its box resizes to the new
+  code. Prefer `fade` over `view-transition`: with `transition:
+  view-transition`, Slidev 52 switches its slideshow container between a
+  `div` and a `TransitionGroup` whenever a click is followed by a slide
+  change, which remounts every preloaded slide of the deck and stalls the
+  frame for 150 ms or more on each such navigation. If you do use
+  `view-transition`, the code windows of both slides are paired through the
+  View Transitions API instead.
 - Navigating backward plays the animation in reverse. Deep links, the
   overview, and PDF/PNG exports render each slide's own step statically.
 - Fence metadata still works: the code-window identity icons, `[Title]`

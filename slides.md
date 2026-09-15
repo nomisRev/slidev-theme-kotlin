@@ -1,7 +1,7 @@
 ---
 theme: ./
 highlighter: shiki
-transition: view-transition
+transition: fade
 themeConfig:
   kodee: greeting
   siteUrl: https://nomisrev.github.io/slidev-theme-kotlin/
