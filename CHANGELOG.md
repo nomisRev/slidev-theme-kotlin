@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- The text on `cover` and `intro` slides no longer runs under the featured Kodee: the layouts keep it in a column of `--cover-text-width` (48% of the content box by default, clear of the mascot's arm) and wrap it there. The showcase's own cover subtitle, intro bullets, and closing title had been partly hidden behind the mascot since the deck was written. A deck widens the column from its stylesheet, or sets `100%` on the class of a slide that hides the mascot.
 - `SmartCast` and `Warning` follow the colour scheme: in dark mode the token background is Darcula's smart-cast green (`#294436`) and warning olive (`#52503a`) instead of the IntelliJ Light tints, which left Darcula's grey code nearly unreadable on a pastel bar, and the messages brighten to `#7bc47f` and `#d4b44a`. The same variables (`--smart-cast-color`, `--warning-color`, and the `-message-color` pair) still override both schemes, as `TypeHint` already did.
 
 ## 0.13.0

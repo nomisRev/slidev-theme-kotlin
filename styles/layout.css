@@ -308,9 +308,23 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
     border-bottom: 4pt solid var(--slidev-theme-primary);
 }
 
+:root {
+    /* Width of the text column on `cover` and `intro` slides, as a share of
+       the content box. The default keeps every line clear of the featured
+       mascot, whose arm reaches about halfway across the slide; text wraps
+       inside the column instead of running under Kodee. A deck overrides it
+       from its own stylesheet, for example `100%` on the class of a slide
+       that hides the mascot, or wider when its titles are short. */
+    --cover-text-width: 48%;
+}
+
 .slidev-layout.cover,
 .slidev-layout.intro {
     @apply h-full grid;
+
+    > div {
+        max-width: var(--cover-text-width);
+    }
 
     h1 {
         @apply text-6xl leading-20;

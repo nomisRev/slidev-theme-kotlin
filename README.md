@@ -339,6 +339,18 @@ kodee:
 ---
 ```
 
+On `cover` and `intro` slides the text sits in a column beside the featured
+mascot and wraps inside it instead of running under Kodee. The column is
+`--cover-text-width`, 48% of the content box by default, which clears the
+mascot's arm. Widen it in the deck's stylesheet when the titles are short, or
+give a slide that hides the mascot the full width:
+
+```css
+.slidev-layout.cover.no-mascot {
+  --cover-text-width: 100%;
+}
+```
+
 #### Kodee Configuration Options
 
 - **variant**: Choose from available Kodee images
