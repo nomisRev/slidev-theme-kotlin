@@ -289,13 +289,17 @@ const ATTRIBUTES = String.raw`((?:"[^"]*"|'[^']*'|[^>"'])*)`
  * that only exist for the slide. This runs on the whole slide, before fences
  * are split off, because an `InlineCompilerError` wraps the fence it marks.
  */
+const DRAWN_ANNOTATION_TAG = new RegExp(`<DrawnAnnotation\\b${ATTRIBUTES}/?>`, 'g')
+const INLINE_COMPILER_ERROR_TAG = new RegExp(`<InlineCompilerError\\b${ATTRIBUTES}/?>`, 'g')
+const KODEE_TAG = new RegExp(`<(?:Kodee|KodeeWrapper)\\b${ATTRIBUTES}/?>`, 'g')
+
 export function translateComponents(content: string): string {
   return content
-    .replace(new RegExp(`<DrawnAnnotation\\b${ATTRIBUTES}/?>`, 'g'), (_, raw) => annotationNote(raw))
+    .replace(DRAWN_ANNOTATION_TAG, (_, raw) => annotationNote(raw))
     .replace(/<\/DrawnAnnotation>/g, '')
-    .replace(new RegExp(`<InlineCompilerError\\b${ATTRIBUTES}/?>`, 'g'), (_, raw) => compilerErrorNote(raw))
+    .replace(INLINE_COMPILER_ERROR_TAG, (_, raw) => compilerErrorNote(raw))
     .replace(/<\/InlineCompilerError>/g, '')
-    .replace(new RegExp(`<(?:Kodee|KodeeWrapper)\\b${ATTRIBUTES}/?>`, 'g'), '')
+    .replace(KODEE_TAG, '')
     .replace(/<\/(?:Kodee|KodeeWrapper)>/g, '')
 }
 

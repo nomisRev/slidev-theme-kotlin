@@ -121,7 +121,7 @@ html.dark {
    taken directly from its identity mark. Plain fences retain the neutral editor
    border above. */
 .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
-    --code-window-icon: url('/kotlin.svg');
+    --code-window-icon: url('../assets/code-window/kotlin.svg');
     --code-window-border: var(--code-window-kotlin-color);
 }
 
@@ -134,32 +134,32 @@ html.dark {
 }
 
 .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
-    --code-window-icon: url('/gradle.svg');
+    --code-window-icon: url('../assets/code-window/gradle.svg');
     --code-window-border: var(--code-window-gradle-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
-    --code-window-icon: url('/amper-icon.svg');
+    --code-window-icon: url('../assets/code-window/amper-icon.svg');
     --code-window-border: var(--code-window-amper-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
-    --code-window-icon: url('/java.svg');
+    --code-window-icon: url('../assets/code-window/java.svg');
     --code-window-border: var(--code-window-java-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
-    --code-window-icon: url('/terminal.svg');
+    --code-window-icon: url('../assets/code-window/terminal.svg');
     --code-window-border: var(--code-window-terminal-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
-    --code-window-icon: url('/maven.svg');
+    --code-window-icon: url('../assets/code-window/maven.svg');
     --code-window-border: var(--code-window-maven-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-window-icon--postgresql)) {
-    --code-window-icon: url('/Postgresql_elephant.svg');
+    --code-window-icon: url('../assets/code-window/Postgresql_elephant.svg');
     --code-window-border: var(--code-window-postgresql-color);
 }
 
@@ -167,7 +167,7 @@ html.dark {
    window's own background and text colour. The run icon is green on both
    schemes, so it has no dark variant. */
 .slidev-code-wrapper:has(code.code-window-icon--output) {
-    --code-window-icon: url('/run.svg');
+    --code-window-icon: url('../assets/code-window/run.svg');
 }
 
 .slidev-code-wrapper:has(code.code-window-icon--output) .slidev-code {
@@ -220,12 +220,12 @@ html.dark {
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--kotlin, :has(code.code-window-icon--kotlin)) {
-    --code-window-icon: url('/kotlin_dark.svg');
+    --code-window-icon: url('../assets/code-window/kotlin_dark.svg');
     --code-window-border: var(--code-window-kotlin-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-window-icon--gradle)) {
-    --code-window-icon: url('/gradle_dark.svg');
+    --code-window-icon: url('../assets/code-window/gradle_dark.svg');
     --code-window-border: var(--code-window-gradle-color);
 }
 
@@ -234,17 +234,17 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-windo
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
-    --code-window-icon: url('/java_dark.svg');
+    --code-window-icon: url('../assets/code-window/java_dark.svg');
     --code-window-border: var(--code-window-java-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--terminal, :has(code.code-window-icon--terminal)) {
-    --code-window-icon: url('/terminal_dark.svg');
+    --code-window-icon: url('../assets/code-window/terminal_dark.svg');
     --code-window-border: var(--code-window-terminal-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--maven, :has(code.code-window-icon--maven)) {
-    --code-window-icon: url('/maven_dark.svg');
+    --code-window-icon: url('../assets/code-window/maven_dark.svg');
     --code-window-border: var(--code-window-maven-color);
 }
 

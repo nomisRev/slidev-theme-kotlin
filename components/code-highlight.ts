@@ -208,7 +208,7 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
   }
 
   function requestedOccurrence() {
-    const occurrence = Math.trunc(props.occurrence ?? 1)
+    const occurrence = Math.trunc(Number(props.occurrence ?? 1))
     return Number.isFinite(occurrence) && occurrence > 0 ? occurrence : 1
   }
 
@@ -365,22 +365,35 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     placeMessage(host, target)
   }
 
+  // Observer bursts are coalesced into one sync per frame: a Magic Move step
+  // flips classes on every token in several batches, and each sync walks the
+  // block, writes classes and then forces a layout for the message.
+  let pendingSync: number | undefined
+  function scheduleSync() {
+    pendingSync ??= requestAnimationFrame(() => {
+      pendingSync = undefined
+      sync()
+    })
+  }
+
   // The code lines do not exist until Shiki Magic Move renders its first step,
   // and are replaced for every subsequent step; re-painting on every mutation
   // keeps the highlight on the current step's tokens instead of stale ones.
-  useMutationObserver(container, sync, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+  useMutationObserver(container, scheduleSync, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
   // A resize moves the tokens, never the text: repaint is a no-op, the message moves.
-  useResizeObserver(container, sync)
+  useResizeObserver(container, scheduleSync)
 
   onMounted(async () => {
     await nextTick()
     sync()
-    document.fonts?.ready.then(sync)
+    document.fonts?.ready.then(scheduleSync)
   })
 
   onBeforeUnmount(() => {
     clear()
     $clicksContext?.unregister(id)
+    if (pendingSync !== undefined)
+      cancelAnimationFrame(pendingSync)
     clearTimeout(missingTargetWarning)
     if (isDevelopment)
       clearAnnotationAuthoringProblems(id)

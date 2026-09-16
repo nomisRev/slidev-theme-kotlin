@@ -372,7 +372,7 @@ kodee:
 
 ### Using DrawnAnnotation
 
-`<DrawnAnnotation>` is auto-registered for every deck using the theme. It can mark an element with a selector or exact text inside a Shiki or Magic Move code block, then connect that mark to a label or another element. Labels accept safe Markdown: backticked inline code and `>` quotes use the local-first JetBrains Mono stack.
+`<DrawnAnnotation>` is auto-registered for every deck using the theme. It can mark an element with a selector or exact text inside a Shiki or Magic Move code block, then connect that mark to a label or another element. Labels accept a small, safe Markdown subset (backticked inline code, `>` quotes, `**strong**`, `*emphasis*`, and line breaks; HTML is escaped): inline code and quotes use the local-first JetBrains Mono stack.
 
 ````md
 <DrawnAnnotation type="circle" text="fun main" label="program entry point" :on="1">
@@ -647,9 +647,11 @@ This will open the example presentation in your browser with hot-reload enabled.
 │   ├── default.vue     # Default slide layout
 │   └── intro.vue       # Introduction slide layout
 ├── assets/             # Bundled theme assets
-│   └── kodee-*.svg     # Kodee mascot variants (11 variants)
+│   ├── kodee-*.svg     # Kodee mascot variants (11 variants)
+│   └── code-window/    # Code-window identity icons, referenced from layout.css
 ├── public/             # Static assets
 │   └── kotlin-logo*.svg # Kotlin logos (light/dark modes)
+├── index.html          # Head tags merged into every deck (font preconnect)
 ├── setup/              # Slidev setup files
 │   ├── shiki.ts        # Syntax highlighting configuration for Kotlin
 │   ├── transformers.ts # Cross-slide Magic Move and import folding passes

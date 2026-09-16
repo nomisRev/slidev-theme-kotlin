@@ -425,7 +425,9 @@ export function drawnAnnotationEditor(_options = {}) {
       // module request, not a pathname and must never become part of a writer
       // locator.
       const pathname = id.split('?', 1)[0].replace(slidevSlideModule, '')
-      if (!pathname.endsWith('.md') || !findDrawnAnnotationTags(code).length) return null
+      // Most slide modules carry no annotation: a substring test keeps the
+      // tag scan, the file read and the locator pass off every one of those.
+      if (!pathname.endsWith('.md') || !code.includes('<DrawnAnnotation') || !findDrawnAnnotationTags(code).length) return null
       // Vite normally supplies absolute IDs, but resolving a relative ID from
       // the configured root keeps the locator correct for programmatic use.
       const absolute = isAbsolute(pathname) ? resolve(pathname) : resolve(root, pathname)

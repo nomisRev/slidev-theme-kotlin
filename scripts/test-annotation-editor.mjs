@@ -15,9 +15,11 @@
  */
 import { spawn } from 'node:child_process'
 import { randomInt } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { copyFile, readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseSync } from '@slidev/parser'
 import { chromium } from 'playwright-chromium'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -25,15 +27,26 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 // resolve relative to the entry file.
 const entry = 'slides.annotation-editor-test.md'
 const copy = resolve(root, entry)
-const FIXTURE_SLIDE = 34
 const FIXTURE_LABEL = 'the entry point of every Kotlin program'
 const FIXTURE_TAG_MARKER = 'text="fun main"'
+// The fixture is the deck slide carrying that label. Its page number is
+// looked up rather than written here, because a slide added above it in
+// `slides.md` moved it more than once and each time the test pointed at the
+// wrong page.
+const FIXTURE_SLIDE = fixtureSlide()
 const STEP_TIMEOUT = 15_000
 // How long to wait before concluding that a gesture wrote nothing. The old
 // editor autosaved after a 350 ms drag pause; well past that proves a draft.
 const NO_WRITE_GRACE = 900
 const port = randomInt(31000, 39000)
 const origin = `http://localhost:${port}`
+
+function fixtureSlide() {
+  const slides = parseSync(readFileSync(resolve(root, 'slides.md'), 'utf8'), 'slides.md').slides
+  const index = slides.findIndex(slide => slide.content.includes(FIXTURE_LABEL))
+  if (index < 0) throw new Error(`No slide of slides.md carries the fixture label "${FIXTURE_LABEL}".`)
+  return index + 1
+}
 
 await copyFile(resolve(root, 'slides.md'), copy)
 const server = spawn(process.execPath, [

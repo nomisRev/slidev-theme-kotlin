@@ -1,35 +1,25 @@
 <script lang="ts">
 import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
-import lz from 'lz-string'
 
-// Decoded payloads are shared by every instance of the same payload for the
-// lifetime of the page. This lives in a plain `<script>` block on purpose:
-// top-level code in `<script setup>` runs once per component instance.
-// Slidev keeps every slide mounted and remounts all of them whenever its
-// slideshow container changes type (a click followed by a slide change, with
-// `transition: view-transition`), so without this cache a deck of 145 code
-// windows spent about 50 ms per navigation decoding the same strings again.
-// HMR hands an instance a new string, which is simply a new key.
-const decodedSteps = new Map<string, KeyedTokensInfo[]>()
-
-function decodeSteps(stepsLz: string): KeyedTokensInfo[] {
-  const cached = decodedSteps.get(stepsLz)
-  if (cached)
-    return cached
-  let parsed: KeyedTokensInfo[] = []
+/**
+ * The transformer in `setup/transformers.ts` emits the chain's precompiled
+ * steps as one JSON attribute. A corrupt payload must not take the whole
+ * slide down with it, so a parse failure renders no code window and says so.
+ * Each instance parses its own copy: `syncTokenKeys` rewrites token keys in
+ * place while animating, so sharing parsed steps between the windows of a
+ * chain would let one window's pairing leak into another's.
+ */
+function parseSteps(stepsJson: string): KeyedTokensInfo[] {
   try {
-    const decompressed = lz.decompressFromBase64(stepsLz)
-    const decoded = decompressed ? JSON.parse(decompressed) : null
+    const decoded = JSON.parse(stepsJson)
     if (Array.isArray(decoded) && decoded.length)
-      parsed = decoded
-    else
-      console.error('[MagicMoveBetween] The precompiled steps decoded to nothing — the code window is not rendered.')
+      return decoded
+    console.error('[MagicMoveBetween] The precompiled steps decoded to nothing — the code window is not rendered.')
   }
   catch (error) {
     console.error('[MagicMoveBetween] Could not parse the precompiled steps — the code window is not rendered.', error)
   }
-  decodedSteps.set(stepsLz, parsed)
-  return parsed
+  return []
 }
 </script>
 
@@ -50,7 +40,8 @@ import { MagicMovePrecompiled } from './magic-move/batched-renderer'
 // tokens from the neighbour's step to ours, like a classic Magic Move block
 // does on clicks.
 const props = withDefaults(defineProps<{
-  stepsLz: string
+  /** Every step of the chain, precompiled by the transformer, as JSON. */
+  stepsJson: string
   /** This slide's position in the chain of code snippets. */
   step: number
   /**
@@ -87,10 +78,9 @@ const props = withDefaults(defineProps<{
   lines: configs.lineNumbers,
 })
 
-// The transformer emits `steps-lz` as a static attribute, so this computes
-// once per payload — but a corrupt payload must not take the whole slide down
-// with it, and an HMR edit can hand the same instance a new payload.
-const steps = computed<KeyedTokensInfo[]>(() => decodeSteps(props.stepsLz))
+// The transformer emits `steps-json` as a static attribute, so this computes
+// once per payload; an HMR edit can hand the same instance a new one.
+const steps = computed<KeyedTokensInfo[]>(() => parseSteps(props.stepsJson))
 const { $page, $scale: scale, $zoom: zoom, $frontmatter, $clicksContext: clicks } = useSlideContext()
 const { currentSlideNo, isPrintMode } = useNav()
 const container = useTemplateRef<HTMLElement>('container')
@@ -124,7 +114,7 @@ let navigationEpoch = 0
 // HMR patches this existing component instance rather than remounting it. Pin
 // it to the new payload's declared step and invalidate a navigation watcher
 // continuation that may otherwise restore the previous payload's step.
-watch([() => props.stepsLz, () => props.step], () => {
+watch([() => props.stepsJson, () => props.step], () => {
   navigationEpoch++
   animated.value = false
   stepIndex.value = props.step

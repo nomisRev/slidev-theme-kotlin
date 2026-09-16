@@ -26,6 +26,8 @@
     "annotation-editor.mjs",
     "annotation-editor.d.ts",
     "global-top.vue",
+    "global-bottom.vue",
+    "index.html",
     "layouts",
     "public",
     "setup",
@@ -49,10 +51,9 @@
   },
   "dependencies": {
     "@shikijs/magic-move": "4.4.3",
-    "@slidev/parser": "52.19.1",
-    "@slidev/types": "52.19.1",
+    "@slidev/parser": "^52.19.1",
+    "@slidev/types": "^52.19.1",
     "jiti": "2.7.0",
-    "lz-string": "1.5.0",
     "markdown-it": "14.3.0",
     "roughjs": "4.6.6"
   },

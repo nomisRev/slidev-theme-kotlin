@@ -107,7 +107,10 @@ export function isLinkedToPrevious(frontmatter: unknown): boolean {
  * HTML comment, or an unusual separator affects slicing.
  */
 export function normalizeMagicMoveSeparators(lines: string[]): void {
-  for (const slide of parseSync(lines.join('\n'), '').slides) {
+  // Only the boundaries are needed, and they are found line by line: Slidev
+  // parses every slide's YAML itself right after this, and the preparser runs
+  // again on every reload of every file, so the YAML is not parsed here too.
+  for (const slide of parseSync(lines.join('\n'), '', { noParseYAML: true }).slides) {
     if (slide.contentStart - slide.start === 3
       && lines[slide.start + 1].trim() === 'magic-move'
       && lines[slide.contentStart - 1]?.trimEnd() === '---')

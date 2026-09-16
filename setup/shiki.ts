@@ -3,7 +3,6 @@ import { defineShikiSetup } from '@slidev/types'
 import type { ShikiTransformer, ThemeRegistration } from 'shiki'
 import { codeWindowIcon } from './code-window-icon'
 
-
 /** Add the fence identity to Shiki's code node for the theme CSS to render. */
 function transformerCodeWindowIcon(): ShikiTransformer {
   return {
@@ -17,6 +16,11 @@ function transformerCodeWindowIcon(): ShikiTransformer {
   }
 }
 
+/**
+ * Lets a fence carry Slidev's own `<span v-mark>` around a token, as decks
+ * written on early versions of the theme do: the span is hidden from Shiki
+ * behind a placeholder and put back around the highlighted output.
+ */
 function transformerVMark(): ShikiTransformer {
   const placeholderPrefix = '___VMARK_'
   const placeholders = new Map<string, { vMarkAttr: string, content: string }>()
@@ -25,6 +29,10 @@ function transformerVMark(): ShikiTransformer {
     name: 'slidev:v-mark-transformer',
     preprocess(code) {
       placeholders.clear()
+      // Almost no fence has a mark; keep those off the regex and the
+      // postprocess walk entirely.
+      if (!code.includes('v-mark'))
+        return code
       let counter = 0
       return code.replace(/<span\s+(v-mark[^>]*)>([^<]*)<\/span>/g, (_match, vMarkAttr, content) => {
         const placeholder = `${placeholderPrefix}${counter++}___`
@@ -33,6 +41,8 @@ function transformerVMark(): ShikiTransformer {
       })
     },
     postprocess(html) {
+      if (!placeholders.size)
+        return html
       let result = html
       placeholders.forEach(({ vMarkAttr, content }, placeholder) => {
         const escapedPlaceholder = placeholder

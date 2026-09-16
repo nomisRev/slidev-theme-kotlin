@@ -1,7 +1,7 @@
 import type { CodeblockTransformContext } from '@slidev/types'
 import { defineCodeblockTransformer, defineTransformersSetup } from '@slidev/types'
+import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
 import { toKeyedTokens } from '@shikijs/magic-move/core'
-import lz from 'lz-string'
 import { foldImportEdits } from './code-imports'
 import { codeWindowIcon } from './code-window-icon'
 import { extractTopLevelFences, resolveChain } from './magic-move-between'
@@ -101,6 +101,46 @@ export function takeMagicMoveFenceOrdinal(info: string): { info: string, ordinal
 }
 
 /**
+ * Every fence of a chain slide compiles the whole chain, so a chain of N
+ * slides asked Shiki for each step N times (N² tokenizations per fence
+ * position, on every build and every reload of a chain slide). The compiled
+ * step only depends on what is keyed here, so it is computed once per
+ * server or build. Module state, like Slidev's own setup caches: an edited
+ * fence is a new key, and the old entry is dropped with the process.
+ */
+const compiledSteps = new Map<string, Promise<KeyedTokensInfo>>()
+
+type ShikiUtils = CodeblockTransformContext['options']['utils']
+
+function compileStep(
+  fence: ParsedFence,
+  shiki: ShikiUtils['shiki'],
+  shikiOptions: ShikiUtils['shikiOptions'],
+  lineNumbers: boolean | undefined,
+): Promise<KeyedTokensInfo> {
+  const stepOptions = { ...shikiOptions, lang: fence.lang }
+  const theme = 'themes' in stepOptions ? stepOptions.themes : (stepOptions as any).theme
+  const key = JSON.stringify([fence.lang, theme, lineNumbers, fence.code])
+  let compiled = compiledSteps.get(key)
+  if (!compiled) {
+    // `codeToTokens` is synchronous in Shiki, but Slidev's type allows a
+    // promise, and so do the tests' stand-ins.
+    compiled = Promise.resolve(shiki.codeToTokens(fence.code, stepOptions as any)).then(({ tokens, bg, fg, rootStyle, themeName }) => ({
+      ...toKeyedTokens(fence.code, tokens, JSON.stringify([fence.lang, theme]), lineNumbers),
+      bg,
+      fg,
+      rootStyle,
+      themeName,
+      lang: fence.lang,
+    }))
+    compiledSteps.set(key, compiled)
+    // A failed highlight is not worth remembering: the next pass retries.
+    compiled.catch(() => compiledSteps.delete(key))
+  }
+  return compiled
+}
+
+/**
  * Cross-slide Magic Move: replace every top-level code fence of a slide that
  * belongs to a `magic-move` chain (see `magic-move-between.ts`) with a
  * `<MagicMoveBetween>` component. The component receives every step of the
@@ -165,20 +205,7 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
     return
 
   const { utils: { shiki, shikiOptions }, data: { config } } = options
-  const compiled = await Promise.all(steps.map(async (f) => {
-    const stepOptions = { ...shikiOptions, lang: f.lang }
-    const { tokens, bg, fg, rootStyle, themeName } = await shiki.codeToTokens(f.code, stepOptions as any)
-    const lineNumbers = f.lines ?? config.lineNumbers
-    const theme = 'themes' in stepOptions ? stepOptions.themes : (stepOptions as any).theme
-    return {
-      ...toKeyedTokens(f.code, tokens, JSON.stringify([f.lang, theme]), lineNumbers),
-      bg,
-      fg,
-      rootStyle,
-      themeName,
-      lang: f.lang,
-    }
-  }))
+  const compiled = await Promise.all(steps.map(f => compileStep(f, shiki, shikiOptions, f.lines ?? config.lineNumbers)))
 
   // One component represents every step, so only claim a code-window identity
   // when it holds for all of them (same rule as classic magic-move blocks).
@@ -187,7 +214,13 @@ const magicMoveBetween = defineCodeblockTransformer(async (ctx: CodeblockTransfo
 
   const ownFence = own[groupIndex]
   const attrs = [
-    `steps-lz="${lz.compressToBase64(JSON.stringify(compiled))}"`,
+    // Plain JSON, entity-escaped like every other attribute here. Slidev's
+    // own Magic Move ships an lz-string payload instead, but that is already
+    // compressed, so gzip cannot shrink it and every chain slide pays the full
+    // size again: on a real deck the escaped JSON transferred at a third of
+    // the size, and `JSON.parse` is an order of magnitude faster than the
+    // decode was.
+    `steps-json="${attributeValue(JSON.stringify(compiled))}"`,
     `:step="${ownStep}"`,
     `:step-pages="${attributeValue(JSON.stringify(stepPages))}"`,
     // Shared across the chain so the View Transitions API pairs the old and

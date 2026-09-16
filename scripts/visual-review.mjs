@@ -103,7 +103,7 @@ async function withConsumerProject(themeRoot, callback, source = consumerProject
 async function exportRevision(ref) {
   const worktree = mkdtempSync(join(tmpdir(), 'slidev-visual-'))
   try {
-    const archive = execFileSync('git', ['archive', '--format=tar', ref], { cwd: projectRoot })
+    const archive = execFileSync('git', ['archive', '--format=tar', ref], { cwd: projectRoot, maxBuffer: 50 * 1024 * 1024 })
     const unpacked = spawnSync('tar', ['-xf', '-'], { cwd: worktree, input: archive })
     if (unpacked.status !== 0) throw new Error(`Could not unpack Git revision ${ref}.`)
     symlinkSync(join(projectRoot, 'node_modules'), join(worktree, 'node_modules'), 'dir')

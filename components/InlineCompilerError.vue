@@ -187,22 +187,21 @@ function transitionInkBox(left: number, top: number, right: number, bottom: numb
   }
 }
 
+// One walk over the document's animations, as in DrawnAnnotation: the view
+// transition's pseudo-elements only show up there, and the browser answers a
+// subtree query by walking the whole document anyway.
 function relevantMagicMoveAnimations(host: HTMLElement) {
   const root = host.closest<HTMLElement>('.slidev-layout') ?? host
-  const pageAnimations = document.getAnimations().filter((animation) => {
-    const pseudo = (animation.effect as KeyframeEffect | null)?.pseudoElement
-    return typeof pseudo === 'string' && pseudo.startsWith('::view-transition-')
-  })
-  const animations = [...root.getAnimations({ subtree: true }), ...pageAnimations]
-  return [...new Set(animations)].filter((animation) => {
+  return document.getAnimations().filter((animation) => {
     if (animation.playState !== 'running' && !animation.pending)
       return false
     const effect = animation.effect as KeyframeEffect | null
     const target = effect?.target
     const pseudo = effect?.pseudoElement
-    return (typeof pseudo === 'string' && pseudo.startsWith('::view-transition-'))
-      || (target instanceof Element && !!target.closest('.magic-move-between, .slidev-code-magic-move, .shiki-magic-move-container'))
-  }).filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    return ((typeof pseudo === 'string' && pseudo.startsWith('::view-transition-'))
+      || (target instanceof Element && root.contains(target) && !!target.closest('.magic-move-between, .slidev-code-magic-move, .shiki-magic-move-container')))
+      && Number.isFinite(effect?.getComputedTiming().endTime)
+  })
 }
 
 function isMagicMoveAnimating(host: HTMLElement) {
@@ -260,7 +259,7 @@ function findCodeHost(host: HTMLElement): HTMLElement | null {
 }
 
 function requestedOccurrence() {
-  const occurrence = Math.trunc(props.occurrence ?? 1)
+  const occurrence = Math.trunc(Number(props.occurrence ?? 1))
   return Number.isFinite(occurrence) && occurrence > 0 ? occurrence : 1
 }
 
@@ -337,6 +336,13 @@ function searchTarget(code: HTMLElement): ResolvedTarget {
 function sync() {
   const host = container.value
   if (!host)
+    return
+  // Every slide of the deck stays mounted, and its code block mutates when it
+  // is preloaded or when Slidev rebuilds the slideshow. Nothing of a hidden
+  // slide is on screen, so neither the text search nor the document-wide
+  // animation scan below is worth running for it: becoming current schedules
+  // a full sync (see the `isCurrentSlide` watch), which measures everything.
+  if (!isCurrentSlide.value)
     return
 
   const nextTarget = resolveTarget(host)

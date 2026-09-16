@@ -303,3 +303,66 @@ describe('extractTopLevelFences', () => {
     expect(extractTopLevelFences('```kotlin\nval a = 1')).toEqual([])
   })
 })
+
+describe('cross-slide Magic Move payload', () => {
+  function chain(codes: string[]) {
+    const slides = codes.map((code, index) => ({
+      content: `\`\`\`kotlin\n${code}\n\`\`\``,
+      frontmatter: index ? { magicMove: true } : {},
+    }))
+    const calls: string[] = []
+    const options = {
+      data: { slides, config: { lineNumbers: false } },
+      utils: {
+        shiki: {
+          codeToTokens(code: string) {
+            calls.push(code)
+            return { tokens: [[{ content: code, offset: 0 }]], bg: '#fff', fg: '#000', rootStyle: undefined, themeName: 'light' }
+          },
+        },
+        shikiOptions: { themes: { light: 'light', dark: 'dark' } },
+      },
+    }
+    const context = (index: number): any => ({
+      info: 'kotlin __slidev_magic_move_ordinal__=0',
+      code: `${codes[index]}\n`,
+      fence: 3,
+      slide: { index },
+      options,
+    })
+    return { calls, context }
+  }
+
+  function decodePayload(tag: string) {
+    const attribute = tag.match(/steps-json="([^"]*)"/)![1]
+    return JSON.parse(attribute.replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+  }
+
+  it('emits every step as entity-escaped JSON the component can parse back', async () => {
+    const [magicMoveBetween] = transformersSetup().codeblocks!
+    const { context } = chain(['val a = "one" && b < 2', 'val a = "two"'])
+    const tag = (await magicMoveBetween(context(0)))!
+    expect(tag).toMatch(/^<MagicMoveBetween .* \/>$/)
+    expect(tag).not.toContain('steps-lz')
+    // No raw quote may terminate the attribute early, and the code survives.
+    expect(tag.match(/steps-json="([^"]*)"/)![1]).not.toContain('"')
+    const steps = decodePayload(tag)
+    expect(steps.map((step: any) => step.code)).toEqual(['val a = "one" && b < 2', 'val a = "two"'])
+    expect(steps[0].tokens[0]).toMatchObject({ content: 'val a = "one" && b < 2', key: expect.any(String) })
+    expect(steps[0]).toMatchObject({ bg: '#fff', fg: '#000', lang: 'kotlin', lineNumbers: false })
+    expect(tag).toContain(':step="0"')
+    expect(tag).toContain(':step-pages="[1,2]"')
+  })
+
+  it('highlights each step once for the whole chain, not once per fence', async () => {
+    const [magicMoveBetween] = transformersSetup().codeblocks!
+    const { calls, context } = chain(['fun first() = 1', 'fun second() = 2', 'fun third() = 3'])
+    const tags = await Promise.all([0, 1, 2].map(index => magicMoveBetween(context(index))))
+    expect(tags.every(tag => tag?.includes('steps-json='))).toBe(true)
+    expect(calls).toEqual(['fun first() = 1', 'fun second() = 2', 'fun third() = 3'])
+    // A later pass, as on a reload, reuses the compiled steps as well.
+    await magicMoveBetween(context(1))
+    expect(calls).toHaveLength(3)
+    expect(tags.map(tag => decodePayload(tag!).length)).toEqual([3, 3, 3])
+  })
+})

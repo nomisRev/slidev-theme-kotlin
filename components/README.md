@@ -89,9 +89,11 @@ drawnAnnotation:
 Giving both a `target` and a `label` connects the mark to the target and writes
 the label next to it.
 
-`label` is safe Markdown (embedded HTML is escaped). Backticks render semantic
-inline `<code>`, and a label beginning with `>` renders a block quote. Both use
-the theme's local-first JetBrains Mono stack instead of the label's sans face:
+`label` is a small, safe Markdown subset rendered by the theme itself (embedded
+HTML is escaped): backticks render semantic inline `<code>`, a label beginning
+with `>` renders a block quote, `**strong**` and `*emphasis*` work, and `\n`
+breaks the line. Inline code and quotes use the theme's local-first JetBrains
+Mono stack instead of the label's sans face:
 
 ```md
 <DrawnAnnotation selector="[data-class]" label="The `class MyClass` declaration">

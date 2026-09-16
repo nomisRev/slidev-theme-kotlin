@@ -26,3 +26,36 @@ describe('annotation label Markdown', () => {
     expect(renderAnnotationLabel('<img src=x onerror=alert(1)>')).toContain('&lt;img src=x onerror=alert(1)&gt;')
   })
 })
+
+describe('annotation label Markdown subset', () => {
+  it('renders strong and emphasised text', () => {
+    expect(renderAnnotationLabel('Await **all** of them')).toBe('<p>Await <strong>all</strong> of them</p>\n')
+    expect(renderAnnotationLabel('a *word* here')).toBe('<p>a <em>word</em> here</p>\n')
+    expect(annotationLabelText('Await **all** of them')).toBe('Await all of them')
+  })
+
+  it('keeps asterisks inside code and unmatched asterisks literal', () => {
+    expect(renderAnnotationLabel('`*.example.com` also works')).toBe('<p><code>*.example.com</code> also works</p>\n')
+    expect(renderAnnotationLabel('2 * 3 * 4')).toBe('<p>2 * 3 * 4</p>\n')
+    expect(renderAnnotationLabel('a ** b')).toBe('<p>a ** b</p>\n')
+  })
+
+  it('matches backtick runs of the same length and trims padded spans', () => {
+    expect(renderAnnotationLabel('`` a`b `` and `c`')).toBe('<p><code>a`b</code> and <code>c</code></p>\n')
+    expect(renderAnnotationLabel('an unclosed ` tick')).toBe('<p>an unclosed ` tick</p>\n')
+  })
+
+  it('separates paragraphs on blank lines and nests quotes', () => {
+    expect(renderAnnotationLabel('one\n\ntwo')).toBe('<p>one</p>\n<p>two</p>\n')
+    expect(renderAnnotationLabel('> `Int`\n> or `Long`')).toBe('<blockquote>\n<p><code>Int</code><br>\nor <code>Long</code></p>\n</blockquote>\n')
+  })
+
+  it('renders fenced code as a block and escapes it', () => {
+    expect(renderAnnotationLabel('```kotlin\nval x = a < b\n```')).toBe('<pre><code class="language-kotlin">val x = a &lt; b\n</code></pre>\n')
+  })
+
+  it('escapes HTML inside code and emphasis too', () => {
+    expect(renderAnnotationLabel('`<b>` and **<i>**')).toBe('<p><code>&lt;b&gt;</code> and <strong>&lt;i&gt;</strong></p>\n')
+    expect(annotationLabelText('`<b>`')).toBe('<b>')
+  })
+})

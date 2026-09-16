@@ -46,7 +46,11 @@ import { useIsSlideActive, useSlideContext } from '@slidev/client'
 // The explicit `.ts` extension is required: Slidev's client ships bare TypeScript
 // sources, and the bundler resolves this subpath literally.
 import { injectionClicksContext } from '@slidev/client/constants.ts'
-import rough from 'roughjs'
+// The generator alone: `roughjs` itself resolves to a separate bundled copy
+// of the library, next to the one Slidev's `v-mark` already ships from
+// `roughjs/bin`, and it carries the canvas and SVG renderers this component
+// never uses. A stroke here is only ever a path string.
+import { RoughGenerator } from 'roughjs/bin/generator'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
 import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
@@ -696,7 +700,7 @@ function markerClick(marker: HTMLElement | undefined) {
   return Number.POSITIVE_INFINITY
 }
 
-const generator = rough.generator()
+const generator = new RoughGenerator()
 
 // A stable seed keeps the wobble identical across re-measurements, so the mark
 // glides with a Magic Move transition instead of re-drawing itself every frame.
@@ -1026,22 +1030,17 @@ function relevantAnimations() {
   // its animation is invisible here and we settle at the view transition's
   // end instead of at the final Shiki layout.
   const root = slideRoot() ?? searchRoot()
-  if (!root?.getAnimations)
+  if (!root || typeof document === 'undefined' || !document.getAnimations)
     return []
 
-  // A view transition is owned by the document, not by the incoming slide's
-  // layout. Its pseudo-elements therefore never appear in this subtree, even
-  // though they are exactly the animation we must wait for before drawing on
-  // the new slide.
-  const viewTransitionAnimations = typeof document !== 'undefined'
-    ? document.getAnimations().filter((animation) => {
-        const pseudo = (animation.effect as KeyframeEffect | null)?.pseudoElement
-        return typeof pseudo === 'string' && pseudo.startsWith('::view-transition-')
-      })
-    : []
-  const animations = [...root.getAnimations({ subtree: true }), ...viewTransitionAnimations]
-
-  return [...new Set(animations)].filter((animation) => {
+  // One walk over the document's animations. A view transition is owned by
+  // the document, not by the incoming slide's layout, so its pseudo-elements
+  // never appear under the slide root even though they are exactly the
+  // animation to wait for before drawing on the new slide; and the browser
+  // answers `root.getAnimations({ subtree: true })` by walking every
+  // animation in the document anyway, so asking the document once and
+  // keeping what sits under the root costs half as much as asking both.
+  return document.getAnimations().filter((animation) => {
     if (animation.playState !== 'running' && !animation.pending)
       return false
     const target = (animation.effect as KeyframeEffect | null)?.target
@@ -1050,7 +1049,7 @@ function relevantAnimations() {
     // included. For regular elements, never wait for our own strokes or label:
     // they only start after `settled` opens the annotation.
     const belongsToPageTransition = typeof pseudo === 'string' && pseudo.startsWith('::view-transition-')
-    const belongsToSlot = target instanceof Element && !target.closest('.annotation-ignore')
+    const belongsToSlot = target instanceof Element && root.contains(target) && !target.closest('.annotation-ignore')
     return (belongsToPageTransition || belongsToSlot)
       && Number.isFinite(animation.effect?.getComputedTiming().endTime)
   })
