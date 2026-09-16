@@ -28,8 +28,9 @@ should mark stays off the slide and [says why on the console](#when-nothing-appe
 | `type` | `underline` | short form of `source-type`; kept for existing annotations |
 | `source-type` | `type` | source shape: `underline`, `circle`, `box`, `strike-through`, or `none` |
 | `selector` | `[data-annotate]` | element inside the slot to mark |
-| `text` | – | exact text inside the slot to mark instead of an element |
+| `text` | – | exact text inside the slot to mark instead of an element; `\n` continues the match on the next source line |
 | `occurrence` | `1` | which occurrence of `text`, 1-based |
+| `line` | – | one-based source line of a code block to search on; occurrences are counted on that line only |
 | `multiline` | – | mark every visual line of the match; on by default for `underline` and `strike-through` |
 | `padding` | `4` | space between the marked box and the stroke, in slide pixels |
 
@@ -38,6 +39,13 @@ element to point a selector at. It works in plain Shiki blocks and in
 `magic-move` blocks alike, and the mark follows the token while Magic Move
 animates it. When the text is not part of the current Magic Move step, the
 annotation stays hidden.
+
+A short token that repeats — `email` on three lines, `Long` on two — is
+reached either by counting (`occurrence="3"`) or by naming the line
+(`:line="5"`), whichever reads better; both count from the code block's
+first line of real code, after any folded imports. `line` is the first line
+of the match when `text` spans several lines (written with `\n`, indentation
+included), and a slide with more than one code block numbers each from one.
 
 ## What to point at
 
@@ -375,7 +383,9 @@ To move it into a theme:
 2. add `roughjs` and `markdown-it` to the theme's `dependencies` — they draw
    the strokes and safely render Markdown labels respectively;
 3. define `--drawn-annotation-color` (and, if wanted, the label variables
-   above) in the theme's styles to pick the theme-wide default look.
+   above) in the theme's styles to pick the theme-wide default look, and copy
+   the `.annotation-label-content` rules from `styles/layout.css`, which zero
+   the paragraph margins and put inline code in the mono stack.
 
 Nothing in the component reads deck-specific layout state: every colour,
 font and duration flows in through props or CSS variables. Automatic placement
@@ -428,6 +438,16 @@ Give `text` to mark an exact rendered fragment, even when Shiki split it across
 syntax-token spans. `occurrence` selects its one-based occurrence (default
 `1`). Add `line` to limit the text search to that one-based source line.
 
+A diagnostic can cover several lines: write the line break into `text` as
+`\n` (or a real newline in a bound string), indentation included, exactly as
+the code renders. Every line the match covers gets its own squiggle, and the
+message sits after the line the match starts on, as IntelliJ places its
+inline diagnostics. With `line`, that is the first line of the match.
+
+````md
+<InlineCompilerError text="when (state) {\n  is Loading -> spinner()\n}" message="'when' expression must be exhaustive">
+````
+
 Alternatively, give only `line` to underline the line's non-whitespace code.
 A target on an empty line cannot be displayed. In development, a missing,
 ambiguous, or invalid target produces a console warning after Magic Move has had
@@ -435,9 +455,9 @@ time to settle.
 
 | prop | required | meaning |
 | --- | --- | --- |
-| `message` | yes | diagnostic text shown beside the code and announced to screen readers |
-| `text` | one of `text` or `line` | exact rendered code text to underline |
-| `line` | one of `text` or `line` | one-based line number; also narrows a `text` search |
+| `message` | yes | diagnostic shown beside the code and announced to screen readers; the same Markdown as a `DrawnAnnotation` label, so `` `Int` `` renders inline code and `\n` breaks the line |
+| `text` | one of `text` or `line` | exact rendered code text to underline; `\n` continues it on the next line |
+| `line` | one of `text` or `line` | one-based line number; also narrows a `text` search to that line (the first line of a multi-line match) |
 | `occurrence` | no | one-based match of `text` to underline; defaults to `1` |
 
 ## Click timing
@@ -498,13 +518,15 @@ following it.
 Give `text` to mark an exact rendered fragment, even when Shiki split it
 across syntax-token spans. `occurrence` selects its one-based occurrence
 (default `1`). Add `line` to limit the text search to that one-based source
-line.
+line. `\n` in `text` continues the match on the next line, as for
+`InlineCompilerError`.
 
 | prop | required | meaning |
 | --- | --- | --- |
 | `text` | yes | exact rendered code text to paint green |
-| `line` | no | one-based line number that narrows a `text` search |
+| `line` | no | one-based line number that narrows a `text` search (the first line of a multi-line match) |
 | `occurrence` | no | one-based match of `text` to paint; defaults to `1` |
+| `message` | no | text shown after the end of the match's first line, as for `Warning`; the same Markdown as a `DrawnAnnotation` label, so `` `Int` `` renders inline code and `\n` breaks its line |
 
 In development, a missing, ambiguous, or invalid target produces a console
 warning after Magic Move has had time to settle.
@@ -525,6 +547,187 @@ takes precedence over `at` and `until` when both forms are supplied.
 | CSS variable | default | meaning |
 | --- | --- | --- |
 | `--smart-cast-color` | IntelliJ's smart-cast green (`#dcf8df`) | highlight background colour |
+| `--smart-cast-message-color` | a darker green (`#3b7a45`) | colour of an optional `message` and its dot |
+| `--smart-cast-message-size` | the annotated code's font size | message font size |
 
 Read where it is used, so any scope can redefine it — a single slide's class
 as well as `:root`.
+
+# `Warning`
+
+`<Warning>` paints IntelliJ's warning yellow behind an exact piece of code —
+the `Array` property a data class compares by reference, the parameter a
+function never reads. It is `SmartCast` in another colour: the same props, the
+same exact-text match across Shiki tokens, the same travel with Magic Move.
+Wrap exactly one fenced code block.
+
+````md
+<Warning text="val tags: Array<String>" message="Property with 'Array' type in a 'data' class: it is recommended to override 'equals()' and 'hashCode()'">
+
+```kotlin
+data class Tags(val key: String, val tags: Array<String>)
+```
+
+</Warning>
+````
+
+`message` is optional: with it, the warning's text sits after the end of the
+line the match starts on, as `InlineCompilerError` places its diagnostics,
+and waits for a Magic Move step to settle before it appears. Without it,
+`Warning` paints the background and nothing else. Code the slide shows broken
+on purpose belongs under `InlineCompilerError` instead: the Kotlin snippet CLI
+skips those fences, while a fence under `Warning` still compiles and is still
+generated.
+
+## Target and click timing
+
+Exactly as for `SmartCast`: `text` (with `\n` for a multi-line match),
+`line`, `occurrence`, and `at` / `until` / `on`. `message` is the same
+Markdown as a `DrawnAnnotation` label: `` `Int` `` renders inline code and
+`\n` breaks its line.
+
+## Styling
+
+| CSS variable | default | meaning |
+| --- | --- | --- |
+| `--warning-color` | IntelliJ Light's warning yellow (`#faf4d7`) | highlight background colour |
+| `--warning-message-color` | a darker warning ochre (`#9a7b0f`) | colour of the message and its dot |
+| `--warning-message-size` | the annotated code's font size | message font size |
+
+Read where it is used, so any scope can redefine it — a single slide's class
+as well as `:root`.
+
+# `TypeHint`
+
+`<TypeHint>` draws IntelliJ's inlay hint for a lambda with receiver: the grey
+`this: HTML` pill the IDE renders right after the `{` that opens the lambda.
+A `context(...)` block gets the IDE's other shape, `context(Clock)` with no
+`this:`, since it supplies a context without changing the receiver. It
+exists for DSL slides, where what each block brings into scope is the whole
+lesson, and it draws nothing else — no highlight, no squiggle. Wrap exactly
+one fenced code block; nest one wrapper per hint.
+
+````md
+<TypeHint :line="1" receiver="HTML">
+<TypeHint :line="2" receiver="BODY" :at="1">
+
+```kotlin
+html {
+  body {
+    p { +"Hello" }
+  }
+}
+```
+
+</TypeHint>
+</TypeHint>
+````
+
+````md
+<TypeHint :line="2" context="Clock.System">
+
+```kotlin
+fun liveTalks(talks: List<Talk>): List<Talk> =
+  context(Clock.System) {
+    talks.filter { it.isLive() }
+  }
+```
+
+</TypeHint>
+````
+
+The hint is the message of `SmartCast` and `Warning` in another shape: the
+same exact-text match across Shiki tokens, the same placement after the end
+of the line the match starts on, the same wait for a Magic Move step to
+settle. Because `{` usually ends its line in a DSL, "after the line" is
+"after the brace", as in the IDE. When code follows the brace on the same
+line (`body { }`), the pill sits after that code instead of covering it.
+
+## Target
+
+`text` defaults to `{`, so a hint normally names only its `line` and its
+`receiver` or `context`. Give `text` (with `\n` for a multi-line match) and
+`occurrence` when the brace is not the anchor you want, exactly as for
+`SmartCast`.
+
+| prop | required | meaning |
+| --- | --- | --- |
+| `receiver` | one of the two | the lambda's receiver type; rendered as `this: <receiver>` |
+| `context` | one of the two | what a `context(...)` block supplies; rendered as `context(<context>)` |
+| `line` | no | one-based line number that narrows the `text` search |
+| `text` | no | exact rendered code the pill follows; defaults to `{` |
+| `occurrence` | no | one-based match of `text` on that line; defaults to `1` |
+
+## Click timing
+
+Exactly as for `SmartCast`: `at`, `until`, and `on`.
+
+## Styling
+
+| CSS variable | default | meaning |
+| --- | --- | --- |
+| `--type-hint-color` | IntelliJ Light's hint grey (`#6c707e`), Darcula's (`#8c8c8c`) in dark mode | text colour |
+| `--type-hint-background` | IntelliJ Light's hint background (`#ebecf0`), Darcula's (`#3c3f41`) in dark mode | pill background |
+| `--type-hint-size` | 85% of the annotated code's font size | pill font size |
+
+The pill uses the code font. Read where they are used, so any scope can
+redefine them — a single slide's class as well as `:root`.
+
+# `InlineValue`
+
+`<InlineValue>` draws IntelliJ's debugger inline value: the grey
+`numbers: [1, 2, 3]` the IDE writes after a line while it is paused there. It
+is for output slides where each line has its own result and the reader's eye
+should never leave the line. It draws nothing else — no highlight, no squiggle,
+no panel. Wrap exactly one fenced code block; nest one wrapper per value.
+
+````md
+<InlineValue text="println(numbers)" value="numbers: [1, 2, 3]">
+<InlineValue :line="5" text="[1, 2, 3]" value="[2, 3, 4]">
+
+```kotlin
+val numbers = [1, 2, 3]
+println(numbers)
+
+[1, 2, 3].map { it + 1 }
+```
+
+</InlineValue>
+</InlineValue>
+````
+
+`value` is written as given: `name: value` reads as the debugger labels a
+variable, a bare `[2, 3, 4]` suits an expression that names nothing. It is
+`SmartCast`'s message in the editor's own font and colour: the same exact-text
+match across Shiki tokens, the same placement after the end of the line the
+match starts on, the same wait for a Magic Move step to settle.
+
+When every line of a ```` ```console ```` fence maps to one line of code the
+wrapper replaces the fence; when the output is one block (a stack trace, a
+table) keep the fence, which the theme renders as a run panel.
+
+## Target
+
+`text` names the line. Give `line` when the same text appears more than once,
+and `occurrence` when it repeats on that line, exactly as for `SmartCast`.
+
+| prop | required | meaning |
+| --- | --- | --- |
+| `value` | yes | the text shown after the line |
+| `text` | yes | exact rendered code on the line; `\n` continues the match on the next line |
+| `line` | no | one-based line number that narrows the `text` search |
+| `occurrence` | no | one-based match of `text` on that line; defaults to `1` |
+
+## Click timing
+
+Exactly as for `SmartCast`: `at`, `until`, and `on`.
+
+## Styling
+
+| CSS variable | default | meaning |
+| --- | --- | --- |
+| `--inline-value-color` | the debugger's inline-value grey (`#787878`), on both schemes | text colour |
+| `--inline-value-size` | the annotated code's font size | font size |
+
+The value uses the code font. Read where they are used, so any scope can
+redefine them — a single slide's class as well as `:root`.

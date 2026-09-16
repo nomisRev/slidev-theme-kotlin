@@ -49,6 +49,7 @@ import { injectionClicksContext } from '@slidev/client/constants.ts'
 import rough from 'roughjs'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
+import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
@@ -116,10 +117,12 @@ const props = withDefaults(defineProps<{
   sourceType?: MarkType
   /** Element to annotate, searched inside the default slot. */
   selector?: string
-  /** Exact text to annotate inside the slot. Works inside Shiki and Magic Move. */
+  /** Exact text to annotate inside the slot. Works inside Shiki and Magic Move; `\\n` continues the match on the next source line. */
   text?: string
   /** Which occurrence of `text` to annotate, 1-based. Markdown attributes arrive as strings. */
   occurrence?: number | string
+  /** One-based source line of a code block to search `text` on — the first line of the match when `text` spans several. Occurrences are counted on that line only. */
+  line?: number
   /** Mark every visual line of a wrapped or multi-line match. */
   multiline?: boolean
   /** Extra space between the annotated box and the mark, in slide pixels. */
@@ -231,6 +234,7 @@ const props = withDefaults(defineProps<{
   selector: '[data-annotate]',
   text: undefined,
   occurrence: 1,
+  line: undefined,
   multiline: undefined,
   padding: 4,
   target: undefined,
@@ -350,6 +354,9 @@ const resolvedPlacement = computed(() => {
 
 // The label and the target each drive several stages, so their presence is
 // decided once, and an empty string counts as absent everywhere.
+// Markdown attributes cannot conveniently contain a literal line break, so a
+// match that continues on the next source line is written with `\\n`.
+const annotatedText = computed(() => props.text === undefined ? undefined : normalizeAnnotationLineBreaks(props.text))
 const hasLabel = computed(() => !!props.label)
 const labelHtml = computed(() => renderAnnotationLabel(props.label ?? ''))
 const labelText = computed(() => annotationLabelText(props.label ?? ''))
@@ -371,7 +378,7 @@ const connect = computed(() => props.connect ?? inheritedConnect.value)
 // the geometry hand-off below still requires their final positions to match.
 const transitionInkIdentity = computed(() => JSON.stringify([
   sourceMarkType.value, targetMarkType.value, props.selector, props.text,
-  props.occurrence, props.multiline, props.padding, props.target,
+  props.occurrence, props.line, props.multiline, props.padding, props.target,
   props.targetX, props.targetY, props.targetRadius, props.label,
   props.placement, props.gap, connect.value, props.arrow, props.curve,
   props.iterations, props.color, props.strokeWidth, props.duration,
@@ -821,9 +828,24 @@ function trimToInk(box: Box, insets: { top: number, bottom: number }) {
 // never made against text that is on its way off the slide.
 const IGNORED_TEXT_SCOPES = 'svg, .annotation-ignore, .shiki-magic-move-leave, .shiki-magic-move-leave-to'
 
-function textRange(root: HTMLElement, needle: string, occurrence: number | string): { range?: Range, matches: number } {
+function textRange(root: HTMLElement, needle: string, occurrence: number | string, line?: number): { range?: Range, matches: number } {
+  // Source line numbers, for a `line`-scoped search: every code block (a
+  // `<pre>`) starts a new block at line 1, a static Shiki `.line` span
+  // starts the next line, and a Magic Move `<br>` ends one. Segments outside
+  // any code block carry no line and are never part of a line search.
+  let block = 0
+  let currentPre: HTMLElement | undefined
+  let currentBlock: number | undefined
+  let currentLine = 1
+  let staticLines = 0
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
     acceptNode(node) {
+      // Content after a code block is outside it again; `contains` is the
+      // one native ancestor check that is cheap enough to make per node.
+      if (currentPre && !currentPre.contains(node)) {
+        currentPre = undefined
+        currentBlock = undefined
+      }
       // Rejecting an element prunes its whole subtree, so each element is
       // tested once against the ignored scopes on its way down, and a text
       // node needs no ancestor walk of its own: an ignored ancestor would
@@ -833,6 +855,15 @@ function textRange(root: HTMLElement, needle: string, occurrence: number | strin
         const element = node as HTMLElement
         if (element.matches(IGNORED_TEXT_SCOPES))
           return NodeFilter.FILTER_REJECT
+        if (element.tagName === 'PRE') {
+          currentPre = element
+          currentBlock = ++block
+          currentLine = 1
+          staticLines = 0
+        }
+        else if (currentBlock !== undefined && element.classList.contains('line')) {
+          currentLine = ++staticLines
+        }
         switch (relationToAnnotation(element)) {
           // An element around the annotation must still be descended into,
           // because content following the tag can live inside it.
@@ -857,13 +888,14 @@ function textRange(root: HTMLElement, needle: string, occurrence: number | strin
   let node: Node | null
   // eslint-disable-next-line no-cond-assign
   while ((node = walker.nextNode())) {
-    segments.push(node.nodeType === Node.TEXT_NODE
-      ? { node: node as Text, text: (node as Text).data }
-      : { text: '\n' })
+    if (node.nodeType === Node.TEXT_NODE)
+      segments.push({ node: node as Text, text: (node as Text).data, line: currentBlock === undefined ? undefined : currentLine, block: currentBlock })
+    else
+      segments.push({ text: '\n', line: currentBlock === undefined ? undefined : currentLine++, block: currentBlock })
   }
 
   const requestedOccurrence = Number(occurrence)
-  const match = findTextInSegments(segments, needle, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1)
+  const match = findTextInSegments(segments, needle, Number.isFinite(requestedOccurrence) ? requestedOccurrence : 1, line)
   return { range: match.range ?? undefined, matches: match.matches }
 }
 
@@ -884,6 +916,7 @@ interface TextMatchCache {
   root: HTMLElement
   needle: string
   occurrence: number | string
+  line?: number
   range?: Range
   matches: number
   startNode?: Node
@@ -905,12 +938,12 @@ function textMatchIntact(cached: TextMatchCache) {
     && !range.collapsed
 }
 
-function findText(root: HTMLElement, needle: string, occurrence: number | string): { range?: Range, matches: number } {
+function findText(root: HTMLElement, needle: string, occurrence: number | string, line?: number): { range?: Range, matches: number } {
   const cached = textMatchCache
-  if (cached && cached.root === root && cached.needle === needle && cached.occurrence === occurrence && textMatchIntact(cached))
+  if (cached && cached.root === root && cached.needle === needle && cached.occurrence === occurrence && cached.line === line && textMatchIntact(cached))
     return cached
-  const match = textRange(root, needle, occurrence)
-  textMatchCache = { root, needle, occurrence, ...match, startNode: match.range?.startContainer, endNode: match.range?.endContainer }
+  const match = textRange(root, needle, occurrence, line)
+  textMatchCache = { root, needle, occurrence, line, ...match, startNode: match.range?.startContainer, endNode: match.range?.endContainer }
   return match
 }
 
@@ -1195,12 +1228,15 @@ const missingIsAnError = computed(() =>
 function explainMissing(match?: { range?: Range, matches: number }) {
   if (everFound || !missingIsAnError.value)
     return
+  const scope = props.line === undefined ? searchScope() : `line ${props.line} of the code in ${searchScope()}`
   if (!props.text)
     warnMissing(`Selector "${props.selector}" matched nothing inside ${searchScope()}. Put the attribute on the element to annotate, or use \`text\` to mark code.`)
+  else if (props.line !== undefined && (!Number.isInteger(props.line) || props.line < 1))
+    warnMissing(`\`line\` must be a positive integer, got ${JSON.stringify(props.line)}.`)
   else if (!match || match.matches === 0)
-    warnMissing(`Text "${props.text}" was not found in ${searchScope()}. It has to match the rendered text exactly — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
+    warnMissing(`Text "${props.text}" was not found in ${scope}. It has to match the rendered text exactly${props.text.includes('\\n') ? ', line breaks and indentation included' : ''} — and inside a Magic Move block, be part of the step the annotation is drawn on.`)
   else if (match.matches < Math.max(1, Number(props.occurrence)))
-    warnMissing(`Text "${props.text}" ${match.matches === 1 ? 'matches only once' : `matches only ${match.matches} times`}, but \`occurrence\` asks for match ${props.occurrence}.`)
+    warnMissing(`Text "${props.text}" ${match.matches === 1 ? 'matches only once' : `matches only ${match.matches} times`} in ${scope}, but \`occurrence\` asks for match ${props.occurrence}.`)
   else
     warnMissing(`Text "${props.text}" was found, but has no size on screen right now, so there is nothing to draw around.`)
 }
@@ -1244,7 +1280,9 @@ function measureGeometry(root: HTMLElement, overlayBox: DOMRect, width: number, 
     (rect.bottom - overlayBox.top) * scaleY,
   )
 
-  const match = props.text ? findText(root, props.text, props.occurrence) : undefined
+  const needle = annotatedText.value
+  const validLine = props.line === undefined || (Number.isInteger(props.line) && props.line >= 1)
+  const match = needle && validLine ? findText(root, needle, props.occurrence, props.line) : undefined
   const source = props.text
     ? undefined
     : Array.from(root.querySelectorAll<HTMLElement>(props.selector)).find(followsAnnotation) ?? null
@@ -3002,22 +3040,8 @@ if (isAnnotationEditorDevelopment) {
   transition: opacity var(--label-fade, 250ms) ease-out;
 }
 
-/* MarkdownIt wraps ordinary text in a paragraph. Reset the layout defaults
-   inherited from `.slidev-layout`, otherwise its margins distort label
-   measurement and placement. `v-html` children do not receive Vue's scoped
-   attribute, so the descendant selectors intentionally remain deep. */
-.annotation-label-content > :first-child { margin-top: 0; }
-.annotation-label-content > :last-child { margin-bottom: 0; }
-.annotation-label-content :deep(p) { margin: 0; }
-.annotation-label-content :deep(code),
-.annotation-label-content :deep(pre),
-.annotation-label-content :deep(blockquote) {
-  font-family: var(--drawn-annotation-code-font, var(--slidev-code-font-family, 'JetBrains Mono Local', 'JetBrains Mono', ui-monospace, monospace));
-}
-
-/* Inline Markdown code should read as part of the handwritten label, rather
-   than carrying the code-chip background supplied by the slide theme. */
-.annotation-label-content :deep(code) { background: transparent; }
+/* The rendered Markdown inside `.annotation-label-content` is styled in the
+   theme's `styles/layout.css`, shared with the inline diagnostics. */
 
 /* Measured before it is placed, so keep it laid out but invisible until then. */
 .annotation-label.is-placed { visibility: visible; }

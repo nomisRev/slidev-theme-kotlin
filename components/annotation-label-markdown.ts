@@ -9,7 +9,7 @@ const markdown = new MarkdownIt({
   linkify: true,
 })
 
-/** Render the small Markdown subset accepted by a DrawnAnnotation label. */
+/** Render the small Markdown subset accepted by a DrawnAnnotation label and an inline diagnostic message. */
 export function renderAnnotationLabel(source: string): string {
   return markdown.render(normalizeAnnotationLineBreaks(source))
 }

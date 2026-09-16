@@ -123,6 +123,24 @@ or `r2dbc` modifier uses the Gradle, JDBC, or R2DBC identity respectively.
 Terminal, Maven, and PostgreSQL icons respectively. All other fences remain plain
 code surfaces.
 
+A `console` fence is program output, not code: it renders as a flat panel in
+the colours of IntelliJ's Run tool window, without the editor's outline and
+shadow, marked with the green run icon. Put it under the Kotlin fence whose
+output it shows:
+
+````md
+```kotlin
+println([1, 2, 3].map { it + 1 })
+```
+
+```console
+[2, 3, 4]
+```
+````
+
+To show a value next to the line that produces it instead, as the debugger
+does, wrap the fence in [`InlineValue`](components/README.md#inlinevalue).
+
 The identity border colours are exposed as theme variables and can be
 customized from a deck stylesheet. Each variable has a light and dark-mode
 value:
@@ -138,10 +156,16 @@ value:
   --code-window-postgresql-color: #336791;
   --code-window-jdbc-color: #f59e0b;
   --code-window-r2dbc-color: #06b6d4;
+
+  /* The `console` output panel. */
+  --code-window-output-background: #f7f8fa;
+  --code-window-output-color: #2b2d30;
 }
 
 html.dark {
   --code-window-kotlin-color: #a571e6;
+  --code-window-output-background: #1e1f22;
+  --code-window-output-color: #bcbec4;
   /* Override any of the other dark-mode values as needed. */
 }
 ```

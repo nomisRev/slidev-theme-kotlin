@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 
-describe('DrawnAnnotation label Markdown', () => {
+describe('annotation label Markdown', () => {
   it('renders backticked source as semantic inline code', () => {
     expect(renderAnnotationLabel('`class MyClass`')).toBe('<p><code>class MyClass</code></p>\n')
     expect(annotationLabelText('`class MyClass`')).toBe('class MyClass')

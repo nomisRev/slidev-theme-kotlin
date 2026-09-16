@@ -211,6 +211,25 @@ SELECT * FROM presentations;
 ```
 
 ---
+kodee: false
+---
+
+# Output is a run panel, not a second editor
+
+```kotlin
+val numbers = listOf(1, 2, 3)
+println(numbers.map { it + 1 })
+println(numbers.groupBy { it % 2 })
+```
+
+```console
+[2, 3, 4]
+{1=[1, 3], 0=[2]}
+```
+
+A `console` fence takes IntelliJ's Run tool window colours and the run icon, without the editor's outline and shadow.
+
+---
 kodee: wink
 ---
 
@@ -563,7 +582,7 @@ The <b data-circled>circle</b> is drawn first; the <b data-underlined>underline<
 
 # Compiler diagnostics: static code
 
-<InlineCompilerError :line="3" message="Type mismatch: inferred type is String but Int was expected">
+<InlineCompilerError :line="3" message="Type mismatch: inferred type is `String` but `Int` was expected">
 
 ```kotlin
 fun retryAfter(attempt: Int): Int {
@@ -592,6 +611,24 @@ The second occurrence is the diagnostic target; the first two clicks leave the c
 
 ---
 
+# Compiler diagnostics: several lines
+
+<InlineCompilerError text="when (state) {\n    Loading -> spinner()\n    is Content -> state.text\n  }" message="'when' expression must be exhaustive.\nAdd the 'is Error' branch or an 'else' branch" :on="1">
+
+```kotlin
+fun render(state: UiState): String =
+  when (state) {
+    Loading -> spinner()
+    is Content -> state.text
+  }
+```
+
+</InlineCompilerError>
+
+`\n` in `text` continues the match on the next source line, indentation included; each line gets its own squiggle and the message sits after the first.
+
+---
+
 # Compiler diagnostics follow Magic Move
 
 <InlineCompilerError text="displayName" message="Unresolved reference: displayName" :on="1">
@@ -611,6 +648,83 @@ fun welcome(user: User) = user.displayName
 ````
 
 </InlineCompilerError>
+
+---
+
+# Smart casts paint the narrowed receiver
+
+<SmartCast text="nullable.length" :on="1">
+
+```kotlin
+val nullable: String? = null
+val length =
+  if (nullable != null) nullable.length
+  else -1
+```
+
+</SmartCast>
+
+`SmartCast` paints IntelliJ's smart-cast green onto the matched tokens themselves, so it needs no position tracking and travels with Magic Move for free.
+
+---
+
+# Warnings paint the suspicious code
+
+<Warning text="val tags: Array<String>" message="Property with 'Array' type in a 'data' class:\nit is recommended to override 'equals()' and 'hashCode()'" :on="1">
+
+```kotlin
+data class Tags(val key: String, val tags: Array<String>)
+```
+
+</Warning>
+
+`Warning` is `SmartCast` in IntelliJ's warning yellow: the same props, the same exact match across tokens, plus an optional `message` after the line. The code still compiles, so the Kotlin snippet CLI keeps its fence.
+
+---
+
+# Type hints name the receiver
+
+<TypeHint :line="1" receiver="HTML">
+<TypeHint :line="2" receiver="BODY" :at="1">
+<TypeHint :line="3" receiver="P" :at="2">
+
+```kotlin
+html {
+  body {
+    p {
+      +"Hello"
+    }
+  }
+}
+```
+
+</TypeHint>
+</TypeHint>
+</TypeHint>
+
+`TypeHint` draws IntelliJ's inlay hint for a lambda with receiver: the `this: HTML` pill after the `{` on `line`. `text` defaults to `{`, so a DSL slide names a line and a receiver and nothing else.
+
+---
+
+# Inline values show a result on its own line
+
+<InlineValue :line="3" text="listOf(1, 2, 3)" value="[2, 3, 4]">
+<InlineValue :line="4" text="listOf(1, 2, 3)" value="[[1, 2], [2, 3], [3, 4]]" :at="1">
+<InlineValue :line="5" text="listOf(1, 2, 3)" value="[1, 2, 2, 3, 3, 4]" :at="2">
+
+```kotlin
+fun <A, B> Iterable<A>.flatMap(transform: (A) -> Iterable<B>): List<B>
+
+listOf(1, 2, 3).map { it + 1 }
+listOf(1, 2, 3).map { listOf(it, it + 1) }
+listOf(1, 2, 3).flatMap { listOf(it, it + 1) }
+```
+
+</InlineValue>
+</InlineValue>
+</InlineValue>
+
+`InlineValue` writes the debugger's grey inline value after the line `text` names, so each line carries its own result instead of a console beneath the code. `value` is shown as written; `name: value` reads as the debugger labels a variable.
 
 ---
 
@@ -728,3 +842,22 @@ fun prune(values: MutableList<String>, remove: String) {
 </DrawnAnnotation>
 
 The requested down placement is deliberate: it must remain below the source or fail cleanly, never drift into the code panel.
+
+---
+
+# Reach a repeated token by its line
+
+<DrawnAnnotation type="box" text="$remove" :line="3" placement="down" label="`line` names the source line to search" :at="1">
+<DrawnAnnotation type="circle" text="remove" :line="2" occurrence="2" placement="down" label="`occurrence` then counts on that line only" :at="2">
+
+```kotlin
+fun prune(values: MutableList<String>, remove: String) {
+    values.remove(remove)
+    println("removed $remove")
+}
+```
+
+</DrawnAnnotation>
+</DrawnAnnotation>
+
+Same as `InlineCompilerError` and `SmartCast`: a short token that repeats is reached by naming its line instead of counting every earlier match.

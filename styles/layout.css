@@ -17,6 +17,12 @@
     --code-window-maven-color: #3574f0;
     --code-window-postgresql-color: #336791;
 
+    /* A `console` fence is program output, not code. It renders as a flat
+       panel in the colours of IntelliJ's Run tool window (new UI), marked
+       with the run icon instead of an editor identity. */
+    --code-window-output-background: #f7f8fa;
+    --code-window-output-color: #2b2d30;
+
     /* Size every code window for the same number of monospace columns. The
        calculation uses the slide canvas, not the individual code block, so a
        deck gets one consistent font size. 8rem + 2px accounts for the default
@@ -55,6 +61,9 @@ html.dark {
     --code-window-terminal-color: #ced0d6;
     --code-window-maven-color: #548af7;
     --code-window-postgresql-color: #336791;
+
+    --code-window-output-background: #1e1f22;
+    --code-window-output-color: #bcbec4;
 }
 
 /* Container units make the column count follow a custom Slidev canvas width
@@ -152,6 +161,26 @@ html.dark {
 .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-window-icon--postgresql)) {
     --code-window-icon: url('/Postgresql_elephant.svg');
     --code-window-border: var(--code-window-postgresql-color);
+}
+
+/* Output drops the editor surface: no outline, no shadow, and the tool
+   window's own background and text colour. The run icon is green on both
+   schemes, so it has no dark variant. */
+.slidev-code-wrapper:has(code.code-window-icon--output) {
+    --code-window-icon: url('/run.svg');
+}
+
+.slidev-code-wrapper:has(code.code-window-icon--output) .slidev-code {
+    border-color: transparent;
+    background: var(--code-window-output-background) !important;
+    color: var(--code-window-output-color) !important;
+    box-shadow: none;
+}
+
+/* Shiki reads `console` as a shell session and would colour prompts and
+   commands; output is one colour. */
+.slidev-code-wrapper:has(code.code-window-icon--output) .slidev-code span {
+    color: inherit !important;
 }
 
 .slidev-code-wrapper:is([class*='code-window-icon--'], :has(code[class*='code-window-icon--']))::after {
@@ -308,6 +337,20 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
     --drawn-annotation-label-size: 28px;
     --drawn-annotation-label-weight: 800;
 }
+
+/* Markdown rendered into a `DrawnAnnotation` label or an `InlineCompilerError`,
+   `Warning`, or `SmartCast` message. MarkdownIt wraps ordinary text in a
+   paragraph; reset the layout defaults inherited from `.slidev-layout`,
+   otherwise its margins distort label measurement and placement. Inline code
+   reads as part of the label, in the mono stack and without the theme's
+   code-chip background. */
+.slidev-layout .annotation-label-content > :first-child { margin-top: 0; }
+.slidev-layout .annotation-label-content > :last-child { margin-bottom: 0; }
+.slidev-layout .annotation-label-content p { margin: 0; line-height: inherit; }
+.slidev-layout .annotation-label-content :is(code, pre, blockquote) {
+    font-family: var(--drawn-annotation-code-font);
+}
+.slidev-layout .annotation-label-content code { background: transparent; }
 
 /* Quotes are code-adjacent callouts in this developer theme. They use the
    configured mono stack whether they are ordinary Markdown or label content. */

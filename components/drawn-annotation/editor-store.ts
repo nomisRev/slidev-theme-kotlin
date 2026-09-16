@@ -194,7 +194,7 @@ export function clearAllAnnotationDrafts() {
  * component that re-measures every animation frame holds one entry.
  */
 export interface AnnotationAuthoringProblem {
-  component: 'DrawnAnnotation' | 'InlineCompilerError'
+  component: 'DrawnAnnotation' | 'InlineCompilerError' | 'SmartCast' | 'Warning'
   message: string
   /** The slide the reporter sits on; only the current slide's problems are shown. */
   page: number

@@ -111,6 +111,10 @@ const animated = ref(false)
 // (With `transition: view-transition` the same job is done by hiding the
 // window's old snapshot, see the style tag below.)
 const departing = ref(false)
+// Its counterpart on the arriving slide: this window is morphing from the
+// neighbour's code, so the fade must leave it at full opacity and fade only
+// the content around it (see the unscoped style block below).
+const arriving = ref(false)
 
 // Guards the awaits in the watcher below: rapid navigation re-enters it, and
 // a stale continuation resuming after its awaits must not replay the animation
@@ -137,6 +141,7 @@ watch(currentSlideNo, async (to, from) => {
     if (from === $page.value)
       departing.value = pages.includes(to)
     // Reset silently while hidden so a revisit starts from a clean state.
+    arriving.value = false
     animated.value = false
     stepIndex.value = props.step
     return
@@ -150,6 +155,9 @@ watch(currentSlideNo, async (to, from) => {
   const fromStep = pages.indexOf(from)
   if (fromStep < 0 || fromStep === props.step)
     return
+  // Set before the render that applies the slide transition's classes, so the
+  // slide never paints a transparent root first.
+  arriving.value = true
   // First render the neighbour's code without animation, wait for the slide
   // to become visible (the renderer measures real token positions), then move
   // to our own step with the animation enabled.
@@ -269,7 +277,7 @@ function copyCode() {
   <div
     ref="container"
     class="slidev-code-wrapper slidev-code-magic-move magic-move-between relative group"
-    :class="{ 'magic-move-between--departing': departing }"
+    :class="{ 'magic-move-between--departing': departing, 'magic-move-between--arriving': arriving }"
     :style="{ 'view-transition-name': viewTransitionName }"
   >
     <div v-if="title" class="slidev-code-block-title">
@@ -304,6 +312,37 @@ function copyCode() {
     </button>
   </div>
 </template>
+
+<style>
+/* Slidev's `fade` transitions the opacity of the whole slide root. On a chain
+   slide that fades the morphing code window along with everything else: the
+   departing copy is hidden at once and the arriving copy starts transparent,
+   so the window blinks out and fades back in halfway through its own
+   animation. Keep the root of a morphing slide opaque and fade the content
+   around the window instead: every element that neither is nor contains a
+   morphing window, at the topmost level where that holds, so nested opacities
+   never compound. The root keeps Slidev's own `transition` declaration, which
+   is where Vue reads the transition's duration from. These rules target the
+   slide root, an ancestor of this component, so they cannot be scoped. */
+.slidev-page.fade-enter-from:has(.magic-move-between--arriving),
+.slidev-page.fade-leave-to:has(.magic-move-between--departing) {
+  opacity: 1;
+}
+
+:is(.slidev-page.fade-enter-active, .slidev-page.fade-enter-active *):has(.magic-move-between--arriving)
+  > :not(.magic-move-between--arriving, :has(.magic-move-between--arriving)),
+:is(.slidev-page.fade-leave-active, .slidev-page.fade-leave-active *):has(.magic-move-between--departing)
+  > :not(.magic-move-between--departing, :has(.magic-move-between--departing)) {
+  transition: opacity var(--slidev-transition-duration) ease;
+}
+
+:is(.slidev-page.fade-enter-from, .slidev-page.fade-enter-from *):has(.magic-move-between--arriving)
+  > :not(.magic-move-between--arriving, :has(.magic-move-between--arriving)),
+:is(.slidev-page.fade-leave-to, .slidev-page.fade-leave-to *):has(.magic-move-between--departing)
+  > :not(.magic-move-between--departing, :has(.magic-move-between--departing)) {
+  opacity: 0;
+}
+</style>
 
 <style scoped>
 /* The slide this window belongs to is fading out while its neighbour morphs

@@ -19,4 +19,6 @@ export function codeWindowIcon(language: string, meta = ''): string | undefined 
     return 'terminal'
   if (language === 'sql')
     return 'postgresql'
+  if (language === 'console')
+    return 'output'
 }

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { ClicksInfo } from '@slidev/types'
-import type { TextSegment } from './code-text-match'
+import type { TextMatch } from './code-text-match'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { useMutationObserver, useResizeObserver } from '@vueuse/core'
-import { findTextInSegments } from './code-text-match'
+import { codeTextSegments, findTextInSegments, mergeVisualLines, trimmedLineRange } from './code-text-match'
 import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
+import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { clearAnnotationAuthoringProblems, reportAnnotationAuthoringProblem } from './drawn-annotation/editor-store'
@@ -16,9 +17,18 @@ import { clearAnnotationAuthoringProblems, reportAnnotationAuthoringProblem } fr
 const isDevelopment = import.meta.env.MODE === 'development'
 
 const props = defineProps<{
-  /** One-based source line number inside the single fenced code block this component wraps. Optional when `text` identifies the target. */
+  /**
+   * One-based source line number inside the single fenced code block this
+   * component wraps. Alone, it underlines that line's code. With `text`, it
+   * narrows the search to that line — the first line of the match when `text`
+   * spans several.
+   */
   line?: number
-  /** Exact rendered code text to underline. When `line` is also given, only that line is searched. */
+  /**
+   * Exact rendered code text to underline. `\\n` (or a literal newline in a
+   * bound string) continues the match on the next source line; every line the
+   * match covers gets its own squiggle.
+   */
   text?: string
   /** Which occurrence of `text` to underline, 1-based. */
   occurrence?: number | string
@@ -39,8 +49,12 @@ const props = defineProps<{
 
 // Markdown attributes cannot conveniently contain a literal line break, so
 // accept both a real newline (including one from a bound Vue string) and the
-// explicit `\\n` escape.
-const message = computed(() => normalizeAnnotationLineBreaks(props.message))
+// explicit `\\n` escape, in the diagnostic and in the text it underlines.
+// The diagnostic is the same safe Markdown as a `DrawnAnnotation` label, so
+// backticks render a type name as inline code; the live region gets its text.
+const messageHtml = computed(() => renderAnnotationLabel(props.message))
+const messageText = computed(() => annotationLabelText(props.message))
+const text = computed(() => props.text === undefined ? undefined : normalizeAnnotationLineBreaks(props.text))
 
 const slideContext = useSlideContext()
 const { $clicksContext, $clicks, $scale, $zoom } = slideContext
@@ -54,10 +68,11 @@ const position = ref({
   maxWidth: 'none',
   '--inline-compiler-error-target-size': '12px',
 })
-// The wavy underline is one absolutely positioned element spanning the whole
-// offending expression: per-token `text-decoration: underline wavy` restarts
-// the wave's phase at every Shiki span boundary, breaking the squiggle.
-const underline = ref({ left: '0px', top: '0px', width: '0px' })
+// The wavy underline is one absolutely positioned element per visual line of
+// the offending expression: per-token `text-decoration: underline wavy`
+// restarts the wave's phase at every Shiki span boundary, breaking the
+// squiggle, and a match over several lines gets one squiggle per line.
+const underlines = ref<{ left: string, top: string, width: string }[]>([])
 // The exact rendered range to underline, plus the token elements that contain
 // it. A Magic Move step may not contain the requested line or text (yet), and
 // an empty line has no range; without one the message has no anchor and stays
@@ -239,116 +254,9 @@ function findCodeHost(host: HTMLElement): HTMLElement | null {
     isMagicMove = !!codeHost
     if (!codeHost)
       codeHost = host.querySelector<HTMLElement>('.slidev-code code')
+    invalidateTarget()
   }
   return codeHost
-}
-
-function findLineTargets(host: HTMLElement, line: number): HTMLElement[] {
-  const code = findCodeHost(host)
-  if (!code || !Number.isInteger(line) || line < 1)
-    return []
-
-  const tokens: HTMLElement[] = []
-  if (isMagicMove) {
-    let currentLine = 1
-    for (const child of code.children) {
-      if (child.tagName === 'BR') {
-        if (++currentLine > line)
-          break
-        continue
-      }
-      // Outgoing tokens of the previous step linger (absolutely positioned)
-      // during a transition and must not count toward the new step's lines.
-      if (currentLine === line && child instanceof HTMLElement
-        && !child.className.includes('shiki-magic-move-leave'))
-        tokens.push(child)
-    }
-  }
-  else {
-    const lineEl = code.querySelectorAll<HTMLElement>('.line')[line - 1]
-    if (lineEl) {
-      const spans = Array.from(lineEl.children).filter((c): c is HTMLElement => c instanceof HTMLElement)
-      // Prefer token spans over the block-level line span. The range builder
-      // below trims whitespace inside a token too, since Shiki commonly puts
-      // a line's indentation in the same span as its first keyword.
-      if (spans.length)
-        tokens.push(...spans)
-      else if (lineEl.textContent?.trim())
-        tokens.push(lineEl)
-    }
-  }
-  // Drop wholly whitespace-only edge tokens. Shiki can also combine an
-  // indent and the first keyword in one token; rangeForElements trims that
-  // remaining whitespace inside the edge text nodes.
-  while (tokens.length && !tokens[0].textContent?.trim())
-    tokens.shift()
-  while (tokens.length && !tokens[tokens.length - 1].textContent?.trim())
-    tokens.pop()
-  return tokens
-}
-
-function appendTextSegments(element: HTMLElement, segments: TextSegment[]) {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement
-      return parent?.closest('.shiki-magic-move-leave, .shiki-magic-move-leave-to')
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT
-    },
-  })
-  let node: Node | null
-  // eslint-disable-next-line no-cond-assign
-  while ((node = walker.nextNode()))
-    segments.push({ node: node as Text, text: (node as Text).data })
-}
-
-/**
- * Rebuilds the code's rendered text while retaining each text node. Magic Move
- * uses <br> elements where static Shiki uses `.line` wrappers, so normalising
- * both shapes here lets an exact match cross syntax-token spans in either one.
- */
-function codeTextSegments(code: HTMLElement, line?: number): TextSegment[] {
-  const segments: TextSegment[] = []
-  if (isMagicMove) {
-    // One walk over the whole block. Walking each token separately cost one
-    // TreeWalker per span, and this runs on every mutation Magic Move makes.
-    const walker = document.createTreeWalker(code, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        if (node.nodeType !== Node.ELEMENT_NODE)
-          return NodeFilter.FILTER_ACCEPT
-        const element = node as HTMLElement
-        // Outgoing tokens of the previous step linger (absolutely positioned)
-        // during a transition; rejecting them prunes their text as well.
-        if (element.className.includes('shiki-magic-move-leave'))
-          return NodeFilter.FILTER_REJECT
-        return element.tagName === 'BR' && element.parentElement === code ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-      },
-    })
-    let currentLine = 1
-    let node: Node | null
-    // eslint-disable-next-line no-cond-assign
-    while ((node = walker.nextNode())) {
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        if (line === undefined)
-          segments.push({ text: '\n' })
-        if (++currentLine > (line ?? Number.POSITIVE_INFINITY))
-          break
-        continue
-      }
-      if (line === undefined || currentLine === line)
-        segments.push({ node: node as Text, text: (node as Text).data })
-    }
-  }
-  else {
-    const lines = Array.from(code.querySelectorAll<HTMLElement>('.line'))
-    const selected = line === undefined ? lines : lines.slice(line - 1, line)
-    selected.forEach((lineEl, index) => {
-      appendTextSegments(lineEl, segments)
-      if (line === undefined && index < selected.length - 1)
-        segments.push({ text: '\n' })
-    })
-  }
-  return segments
 }
 
 function requestedOccurrence() {
@@ -356,114 +264,74 @@ function requestedOccurrence() {
   return Number.isFinite(occurrence) && occurrence > 0 ? occurrence : 1
 }
 
-/** Finds an exact text match even when Shiki split it across token spans. */
-function findTextTarget(code: HTMLElement, needle: string, line?: number) {
-  return findTextInSegments(codeTextSegments(code, line), needle, requestedOccurrence())
+/**
+ * The target is resolved once per DOM state, not once per animation frame. A
+ * Range is live: while Magic Move moves retained tokens with CSS transforms
+ * nothing in the DOM changes, so the Range found before the step still marks
+ * the same text and only its client rects need re-reading each frame. A
+ * resize or a font load moves boxes too, never text, so they reuse it as
+ * well. It is dropped where the text can change: when the code block's
+ * children or text mutate, when the props change, and when the code element
+ * itself is replaced. A Range whose boundaries the browser has moved — a
+ * replaced token detaches its text node and shifts the boundary to the
+ * container — is never trusted either way.
+ */
+interface ResolvedTarget extends TextMatch {
+  /** The code of the line the match starts on: the message sits after it. */
+  lineRange: Range | null
+  startNode?: Node
+  endNode?: Node
+}
+const NO_TARGET: ResolvedTarget = { range: null, elements: [], matches: 0, lineRange: null }
+let resolvedTarget: ResolvedTarget | undefined
+
+function invalidateTarget() {
+  resolvedTarget = undefined
 }
 
-function rangeForElements(elements: HTMLElement[]): Range | null {
-  if (!elements.length)
-    return null
-
-  // A token is not necessarily just code: Shiki often emits the leading
-  // indentation together with the first keyword (for example, `    return`).
-  // Select text-node offsets rather than whole token elements so a line
-  // diagnostic begins at the first actual character, not in its indent.
-  const nodes: Text[] = []
-  for (const element of elements) {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-    let node: Node | null
-    // eslint-disable-next-line no-cond-assign
-    while ((node = walker.nextNode()))
-      nodes.push(node as Text)
-  }
-
-  const value = nodes.map(node => node.data).join('')
-  const start = value.length - value.trimStart().length
-  const end = value.trimEnd().length
-  if (start === end)
-    return null
-
-  let offset = 0
-  let startNode: Text | undefined
-  let endNode: Text | undefined
-  let startOffset = 0
-  let endOffset = 0
-  for (const node of nodes) {
-    const next = offset + node.data.length
-    if (!startNode && start >= offset && start < next) {
-      startNode = node
-      startOffset = start - offset
-    }
-    if (!endNode && end > offset && end <= next) {
-      endNode = node
-      endOffset = end - offset
-      break
-    }
-    offset = next
-  }
-  if (!startNode || !endNode)
-    return null
-
-  const range = document.createRange()
-  range.setStart(startNode, startOffset)
-  range.setEnd(endNode, endOffset)
-  return range
+function targetIntact(target: ResolvedTarget) {
+  const range = target.range
+  // An unmatched target can only turn up through a mutation, which
+  // invalidates; until then the miss is as final as a hit.
+  if (!range)
+    return true
+  return range.startContainer === target.startNode
+    && range.endContainer === target.endNode
+    && !!target.startNode?.isConnected
+    && !range.collapsed
+    && (!target.lineRange || !target.lineRange.collapsed)
 }
 
-/** Returns the source line containing the start of a rendered target range. */
-function rangeLine(code: HTMLElement, range: Range): number | undefined {
-  const start = range.startContainer instanceof HTMLElement
-    ? range.startContainer
-    : range.startContainer.parentElement
-  if (!start)
-    return undefined
-
-  if (!isMagicMove) {
-    const line = start.closest<HTMLElement>('.line')
-    if (!line)
-      return undefined
-    const lines = Array.from(code.querySelectorAll<HTMLElement>('.line'))
-    const index = lines.indexOf(line)
-    return index < 0 ? undefined : index + 1
-  }
-
-  // Magic Move's tokens and <br>s are direct children of the <pre>. Climb to
-  // the direct token containing the Range boundary, then count its line.
-  let token: HTMLElement | null = start
-  while (token?.parentElement && token.parentElement !== code)
-    token = token.parentElement
-  if (!token || token.parentElement !== code)
-    return undefined
-
-  let line = 1
-  for (const child of code.children) {
-    if (child === token)
-      return line
-    if (child.tagName === 'BR')
-      line++
-  }
-  return undefined
-}
-
-function findTarget(host: HTMLElement) {
+function resolveTarget(host: HTMLElement): ResolvedTarget {
   const code = findCodeHost(host)
-  if (!code)
-    return { range: null, elements: [] as HTMLElement[], matches: 0 }
+  if (resolvedTarget && targetIntact(resolvedTarget))
+    return resolvedTarget
+  resolvedTarget = code ? searchTarget(code) : NO_TARGET
+  return resolvedTarget
+}
 
-  if (props.text !== undefined) {
-    if (!props.text || (props.line !== undefined && (!Number.isInteger(props.line) || props.line < 1)))
-      return { range: null, elements: [] as HTMLElement[], matches: 0 }
-    return findTextTarget(code, props.text, props.line)
-  }
+function searchTarget(code: HTMLElement): ResolvedTarget {
+  const line = props.line
+  if (line !== undefined && (!Number.isInteger(line) || line < 1))
+    return NO_TARGET
+  const needle = text.value
+  if (needle === '' || (needle === undefined && line === undefined))
+    return NO_TARGET
 
-  if (props.line === undefined)
-    return { range: null, elements: [] as HTMLElement[], matches: 0 }
-  const elements = findLineTargets(host, props.line)
-  if (!elements.length)
-    return { range: null, elements, matches: 0 }
+  const segments = codeTextSegments(code, isMagicMove)
+  const match: TextMatch = needle === undefined
+    ? { ...trimmedLineRange(segments, line!), matches: 0, line }
+    : findTextInSegments(segments, needle, requestedOccurrence(), line)
+  if (!match.range)
+    return { ...match, lineRange: null }
 
-  return { range: rangeForElements(elements), elements, matches: 0 }
+  // The squiggle follows only the exact offending text, but placing the
+  // diagnostic immediately after that text would cover the remainder of its
+  // source line. The message is anchored after the line's final
+  // non-whitespace token instead, on the line the match starts.
+  const startLine = match.line ?? line
+  const lineRange = startLine === undefined ? null : trimmedLineRange(segments, startLine).range
+  return { ...match, lineRange, startNode: match.range.startContainer, endNode: match.range.endContainer }
 }
 
 function sync() {
@@ -471,7 +339,7 @@ function sync() {
   if (!host)
     return
 
-  const nextTarget = findTarget(host)
+  const nextTarget = resolveTarget(host)
   const nextTargets = nextTarget.elements
   textMatches.value = nextTarget.matches
   targetRange.value = nextTarget.range
@@ -516,33 +384,18 @@ function sync() {
   const hostBox = host.getBoundingClientRect()
   // Token spans can be wider than their text; the Range gives the exact
   // rendered edges, including offsets inside the first and last token. Its
-  // client rects are unioned because Shiki may fragment one range by token.
-  let left = Infinity
-  let right = -Infinity
-  let top = Infinity
-  let bottom = -Infinity
-  for (const box of Array.from(range.getClientRects())) {
-    if (!box.width)
-      continue
-    left = Math.min(left, box.left)
-    right = Math.max(right, box.right)
-    top = Math.min(top, box.top)
-    bottom = Math.max(bottom, box.bottom)
-  }
-  if (right <= left)
+  // client rects are merged per visual line because Shiki fragments one
+  // range by token, and a match can continue on the next line.
+  const lines = mergeVisualLines(range.getClientRects())
+  if (!lines.length)
     return
+  const first = lines[0]
 
-  // The squiggle follows only the exact offending text, but placing the
-  // diagnostic immediately after that text would cover the remainder of its
-  // source line. Anchor the message after the line's final non-whitespace
-  // token instead. This preserves the old line-targeted placement while text
-  // targeting narrows only the underline.
-  let messageRight = right
-  const code = findCodeHost(host)
-  const line = code ? (props.line ?? rangeLine(code, range)) : undefined
-  const lineRange = line === undefined ? null : rangeForElements(findLineTargets(host, line))
-  if (lineRange) {
-    for (const box of Array.from(lineRange.getClientRects())) {
+  // The message goes after the end of the line the match starts on, like
+  // IntelliJ's inline diagnostics, so the rest of that line stays readable.
+  let messageRight = first.right
+  if (nextTarget.lineRange) {
+    for (const box of Array.from(nextTarget.lineRange.getClientRects())) {
       if (box.width)
         messageRight = Math.max(messageRight, box.right)
     }
@@ -562,16 +415,22 @@ function sync() {
   const targetSize = targetElement ? getComputedStyle(targetElement).fontSize : '12px'
   position.value = {
     left: `${(messageRight - hostBox.left) / scale + 10}px`,
-    top: `${(top - hostBox.top + (bottom - top) / 2) / scale}px`,
+    top: `${(first.top - hostBox.top + (first.bottom - first.top) / 2) / scale}px`,
     maxWidth: `${Math.max(60, (slideBox.right - messageRight) / scale - 34)}px`,
     '--inline-compiler-error-target-size': targetSize || '12px',
   }
-  underline.value = {
-    left: `${(left - hostBox.left) / scale}px`,
-    top: `${(bottom - hostBox.top) / scale - 1}px`,
-    width: `${(right - left) / scale}px`,
-  }
-  lastTargetTransitionBox = transitionInkBox(left, top, right, bottom, slideBox)
+  underlines.value = lines.map(line => ({
+    left: `${(line.left - hostBox.left) / scale}px`,
+    top: `${(line.bottom - hostBox.top) / scale - 1}px`,
+    width: `${(line.right - line.left) / scale}px`,
+  }))
+  lastTargetTransitionBox = transitionInkBox(
+    Math.min(...lines.map(line => line.left)),
+    first.top,
+    Math.max(...lines.map(line => line.right)),
+    lines[lines.length - 1].bottom,
+    slideBox,
+  )
   restoreTransitionInk()
   if (revealed.value)
     lastVisibleTargetTransitionBox = lastTargetTransitionBox
@@ -599,8 +458,14 @@ function scheduleSync() {
 // The code lines do not exist until Shiki Magic Move renders its first step,
 // and are replaced for every subsequent step. Class changes are observed too:
 // Magic Move signals the end of a transition by removing its animation
-// classes, without touching the DOM structure.
-useMutationObserver(container, scheduleSync, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+// classes, without touching the DOM structure — and a class flip alone never
+// changes the text, so only replaced children or edited text drop the
+// resolved target.
+useMutationObserver(container, (records) => {
+  if (records.some(record => record.type !== 'attributes'))
+    invalidateTarget()
+  scheduleSync()
+}, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] })
 // The getter re-observes automatically whenever the line or text is retargeted.
 useResizeObserver(() => [container.value, ...targets.value], scheduleSync)
 
@@ -628,7 +493,10 @@ onBeforeUnmount(() => {
   if (isDevelopment)
     clearAnnotationAuthoringProblems(id)
 })
-watch([() => props.line, () => props.text, () => props.occurrence], sync)
+watch([() => props.line, text, () => props.occurrence], () => {
+  invalidateTarget()
+  sync()
+})
 watch(visible, sync)
 
 let revealTimer: ReturnType<typeof setTimeout> | undefined
@@ -702,23 +570,24 @@ function warnMissingTarget(message: string) {
   console.warn(`[InlineCompilerError] ${message}`)
   reportAnnotationAuthoringProblem(id, { component: 'InlineCompilerError', message, page: slideContext.$page.value })
 }
-watch([visible, hasTarget, () => props.line, () => props.text, () => props.occurrence, textMatches], ([isVisible, found]) => {
+watch([visible, hasTarget, () => props.line, text, () => props.occurrence, textMatches], ([isVisible, found]) => {
   clearTimeout(missingTargetWarning)
   if (!isDevelopment)
     return
   clearAnnotationAuthoringProblems(id)
   if (isVisible && !found) {
     missingTargetWarning = setTimeout(() => {
-      if (props.text !== undefined) {
+      const needle = text.value
+      if (needle !== undefined) {
         const scope = props.line === undefined ? '' : ` on line ${props.line}`
-        if (!props.text)
+        if (!needle)
           warnMissingTarget(`\`text\` must be non-empty for "${props.message}" — the diagnostic is not shown.`)
         else if (props.line !== undefined && (!Number.isInteger(props.line) || props.line < 1))
           warnMissingTarget(`\`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
         else if (textMatches.value > 0)
           warnMissingTarget(`Text "${props.text}" only matched ${textMatches.value} time${textMatches.value === 1 ? '' : 's'}${scope}, but \`occurrence\` asks for match ${requestedOccurrence()} — the diagnostic is not shown.`)
         else
-          warnMissingTarget(`Text "${props.text}" was not found${scope} for "${props.message}" — it must match the rendered code exactly.`)
+          warnMissingTarget(`Text "${props.text}" was not found${scope} for "${props.message}" — it must match the rendered code exactly${needle.includes('\n') ? ', line breaks and indentation included' : ''}.`)
       }
       else if (props.line === undefined) {
         warnMissingTarget(`Give either \`line\` or \`text\` for "${props.message}" — the diagnostic is not shown.`)
@@ -740,17 +609,23 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
     <!-- Screen readers only announce a live region reliably when its content
          changes while it is already mounted, so this one exists permanently
          and only its text swaps on reveal. -->
-    <span class="inline-compiler-error-status" role="status" aria-live="polite" aria-atomic="true">{{ revealed ? message : '' }}</span>
+    <span class="inline-compiler-error-status" role="status" aria-live="polite" aria-atomic="true">{{ revealed ? messageText : '' }}</span>
     <!-- Handed-over ink (see restoreTransitionInk and inheritTransitionInk)
          must appear complete in its first frame; a zero-length transition
          would still show Vue's enter-from frame, so it is left out entirely. -->
     <Transition name="compiler-error" :css="!isPrintMode && !skipEntranceAnimation">
       <span
         v-if="revealed"
-        class="inline-compiler-error-underline"
-        :style="underline"
+        class="inline-compiler-error-underlines"
         aria-hidden="true"
-      />
+      >
+        <span
+          v-for="(underline, index) in underlines"
+          :key="index"
+          class="inline-compiler-error-underline"
+          :style="underline"
+        />
+      </span>
     </Transition>
     <Transition name="compiler-error" :css="!isPrintMode && !skipEntranceAnimation">
       <span
@@ -758,7 +633,7 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
         class="inline-compiler-error-message"
         :style="position"
         aria-hidden="true"
-      ><i>●</i>{{ message }}</span>
+      ><i>●</i><span class="annotation-label-content" v-html="messageHtml" /></span>
     </Transition>
   </div>
 </template>
@@ -769,17 +644,18 @@ watch([visible, hasTarget, () => props.line, () => props.text, () => props.occur
 /* Themeable like the other annotation colours: a deck recolours the whole
    diagnostic by defining `--inline-compiler-error-color`, at :root or any
    narrower scope; the fallbacks are IntelliJ's error reds. */
-.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: var(--inline-compiler-error-color, #e95757); font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; white-space: pre-line; pointer-events: none; transform: translateY(-50%); }
+.inline-compiler-error-message { position: absolute; z-index: 2; display: inline-flex; align-items: center; gap: .32em; color: var(--inline-compiler-error-color, #e95757); font-family: var(--slidev-font-sans); font-size: var(--inline-compiler-error-message-size, var(--inline-compiler-error-target-size, 12px)); font-weight: 700; line-height: 1.25; pointer-events: none; transform: translateY(-50%); }
 .compiler-error-enter-active,
 .compiler-error-leave-active { transition: opacity .18s ease; }
 .compiler-error-enter-from,
 .compiler-error-leave-to { opacity: 0; }
 .inline-compiler-error-message i { color: var(--inline-compiler-error-color, #f05b5b); font-size: .55em; font-style: normal; }
+/* One squiggle per visual line, all fading together. The wrapper covers the
+   host exactly, so its children keep the host's coordinate space. */
+.inline-compiler-error-underlines { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .inline-compiler-error-underline {
   position: absolute;
-  z-index: 2;
   height: 6px;
-  pointer-events: none;
   /* The squiggle is an SVG mask over a plain background colour, so it follows
      the theme variable; only the mask's alpha matters, not its stroke colour. */
   background-color: var(--inline-compiler-error-color, #f05b5b);
