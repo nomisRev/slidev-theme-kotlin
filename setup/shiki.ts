@@ -111,8 +111,17 @@ const intellijLight: ThemeRegistration = {
         'constant.character.escape',
         'constant.character.string.escape',
         'variable.string-escape',
+        'punctuation.definition.template-expression.begin',
+        'punctuation.definition.template-expression.end',
       ],
       settings: { foreground: '#0037a6' },
+    },
+    {
+      // The expression inside `${...}` is code, not string: IntelliJ colours
+      // the delimiters like `$name` and the expression like the code around
+      // the string.
+      scope: ['meta.template.expression'],
+      settings: { foreground: '#080808' },
     },
     {
       scope: ['constant.numeric'],
@@ -222,8 +231,17 @@ const intellijDarcula: ThemeRegistration = {
         'constant.character.escape',
         'constant.character.string.escape',
         'variable.string-escape',
+        'punctuation.definition.template-expression.begin',
+        'punctuation.definition.template-expression.end',
       ],
       settings: { foreground: '#cc7832' },
+    },
+    {
+      // The expression inside `${...}` is code, not string: IntelliJ colours
+      // the delimiters like `$name` and the expression like the code around
+      // the string.
+      scope: ['meta.template.expression'],
+      settings: { foreground: '#a9b7c6' },
     },
     {
       scope: ['constant.numeric'],
