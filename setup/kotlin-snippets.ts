@@ -398,7 +398,9 @@ export function renderJavaSnippetFile(fence: ParsedFence, pkg: string, source: S
  * One Kotlin or Java file per compilable fence of the deck. Files are grouped by
  * source Markdown file and named after the slide; a slide with several
  * fences tells them apart by their first meta word (`jdbc`, `r2dbc`) or a
- * letter.
+ * letter. A Java fence with a public type is named after that type, as javac
+ * requires, in a directory of its own when an earlier slide of the same
+ * section already took the name.
  */
 export function collectSnippetFiles(slides: SnippetSlide[], userRoot: string, settings: SnippetSettings): SnippetFile[] {
   const files: SnippetFile[] = []
@@ -425,9 +427,14 @@ export function collectSnippetFiles(slides: SnippetSlide[], userRoot: string, se
         }
         const base = `${String(no).padStart(3, '0')}-${slugify(title) || 'slide'}${suffix ? `-${suffix}` : ''}`
         const extension = language === 'java' ? 'java' : 'kt'
-        const filename = language === 'java' ? javaCompilationUnitName(fence.code) || base : base
+        const unitName = language === 'java' ? javaCompilationUnitName(fence.code) : undefined
         const dir = (language === 'java' ? settings.javaDir : settings.dir).replace(/\/+$/, '')
-        let path = `${dir}/${section}/${filename}.${extension}`
+        let path = `${dir}/${section}/${unitName || base}.${extension}`
+        // javac wants a public type in a file of its own name, so a second
+        // slide of the section declaring the same public type gets a
+        // directory named after the slide instead of a numbered file.
+        if (unitName && usedPaths.has(path))
+          path = `${dir}/${section}/${base}/${unitName}.${extension}`
         for (let n = 2; usedPaths.has(path); n++)
           path = `${dir}/${section}/${base}-${n}.${extension}`
         usedPaths.add(path)

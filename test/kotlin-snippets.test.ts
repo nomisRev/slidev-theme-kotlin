@@ -219,6 +219,18 @@ describe('collectSnippetFiles', () => {
     ])
   })
 
+  it('gives a second slide declaring the same public Java type a directory of its own', () => {
+    const content = '```java\npublic class Person {}\n```'
+    const files = collectSnippetFiles([
+      slide(4, '/deck/lessons/lesson-2.md', 'Getters', content),
+      slide(5, '/deck/lessons/lesson-2.md', 'Setters', content),
+    ], root, settings)
+    expect(files.map(file => [file.path, file.package])).toEqual([
+      ['src/main/java/snippets/lesson-2/Person.java', 'deck.snippets.lesson2.slide5'],
+      ['src/main/java/snippets/lesson-2/006-setters/Person.java', 'deck.snippets.lesson2.slide6'],
+    ])
+  })
+
   it('tells parallel fences apart by their identity, else by letter', () => {
     const content = '```kotlin jdbc\nval a = 1\n```\n\n```kotlin r2dbc\nval a = 2\n```\n\n```kotlin\nval a = 3\n```\n\n```kotlin no-compile\nclass Query(...)\n```'
     const files = collectSnippetFiles([slide(4, '/deck/lessons/lesson-2.md', 'Executing', content)], root, settings)

@@ -40,9 +40,7 @@ const { messageHtml, messageShown, messageStyle } = useCodeHighlight(props, cont
 <style>
 .smart-cast-token {
   background: var(--smart-cast-color, #dcf8df);
-  border-radius: 3px;
-  padding: 0.05em 0.15em;
-  margin: 0 -0.15em;
+  padding: 0.05em 0;
   transition: background-color .18s ease;
 }
 </style>
