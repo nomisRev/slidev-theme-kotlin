@@ -683,7 +683,7 @@ capture every settled click state from Slidev's normal presenter/player route
 It renders the current working tree and a Git revision with the same browser,
 compares every PNG with `pixelmatch`, and writes a three-column
 base/current/diff page. When the local
-`~/Developer/kotlin-fundamentals` consumer deck is available, its baseline is
+`../kotlin-fundamentals` consumer deck is available, its baseline is
 rendered from its clean `HEAD` and its current capture includes its working-tree
 changes, with each capture linked to the corresponding theme revision.
 Screenshots are not committed: the chosen Git revision is the baseline, so

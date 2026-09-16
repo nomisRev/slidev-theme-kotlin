@@ -166,11 +166,11 @@ html.dark {
 /* Output drops the editor surface: no outline, no shadow, and the tool
    window's own background and text colour. The run icon is green on both
    schemes, so it has no dark variant. */
-.slidev-code-wrapper:has(code.code-window-icon--output) {
+.slidev-code-wrapper:is(.code-window-icon--output, :has(code.code-window-icon--output)) {
     --code-window-icon: url('../assets/code-window/run.svg');
 }
 
-.slidev-code-wrapper:has(code.code-window-icon--output) .slidev-code {
+.slidev-code-wrapper:is(.code-window-icon--output, :has(code.code-window-icon--output)) .slidev-code {
     border-color: transparent;
     background: var(--code-window-output-background) !important;
     color: var(--code-window-output-color) !important;
@@ -179,7 +179,7 @@ html.dark {
 
 /* Shiki reads `console` as a shell session and would colour prompts and
    commands; output is one colour. */
-.slidev-code-wrapper:has(code.code-window-icon--output) .slidev-code span {
+.slidev-code-wrapper:is(.code-window-icon--output, :has(code.code-window-icon--output)) .slidev-code span {
     color: inherit !important;
 }
 
@@ -203,7 +203,7 @@ html.dark {
     width: auto;
     height: auto;
     background: none;
-    font-family: var(--font-sans, sans-serif);
+    font-family: var(--slidev-font-sans, sans-serif);
     font-size: 1.2rem;
     font-weight: 800;
     line-height: 1rem;
@@ -305,7 +305,7 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
 }
 
 .slidev-slide-content {
-    border-bottom: 4pt solid #7A51F5FF;
+    border-bottom: 4pt solid var(--slidev-theme-primary);
 }
 
 .slidev-layout.cover,

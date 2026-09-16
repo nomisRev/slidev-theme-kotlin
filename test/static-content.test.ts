@@ -107,6 +107,24 @@ describe('cleanProse', () => {
     expect(cleanProse(prose, base)).toBe('> ⚠ **Compiler error** at `Talks.id`: Unresolved reference: id')
   })
 
+  it('translates the code highlights and keeps generics in their attributes', () => {
+    const prose = [
+      '<Warning text="names: List<String>" message="Unused parameter" :on="1" />',
+      '<SmartCast text="name" />',
+      '<SmartCast text="name" message="Smart cast to `String`" />',
+      '<TypeHint :line="2" receiver="HTML" />',
+      '<TypeHint :line="3" context="Clock" />',
+      '<InlineValue text="numbers" value="List<Int> = [1, 2]" />',
+    ].join('\n')
+    expect(cleanProse(prose, base)).toBe([
+      '> **Warning** at `names: List<String>`: Unused parameter',
+      '> **Smart cast** at `name`: Smart cast to `String`',
+      '> **Type hint** `this: HTML`',
+      '> **Type hint** `context(Clock)`',
+      '> **Inline value** `numbers`: `List<Int> = [1, 2]`',
+    ].join('\n\n'))
+  })
+
   it('keeps generics inside attribute values', () => {
     const prose = '<DrawnAnnotation text="Column<Long>" label="Every column is typed" />\n<DrawnAnnotation text="IdTable<Long>" color="red" />'
     expect(cleanProse(prose, base)).toBe('> **`Column<Long>`** — Every column is typed')

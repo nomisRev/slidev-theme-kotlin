@@ -14,9 +14,15 @@ import { existsSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { load } from '@slidev/parser/fs'
+import { createJiti } from 'jiti'
+import { injectPreparserExtensionLoader, load } from '@slidev/parser/fs'
 
 const themeRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+// Slidev registers the theme's preparser (the bare `magic-move` separator)
+// when it loads a deck; do the same so slides split exactly as they present.
+const preparser = (await createJiti(import.meta.url).import(resolve(themeRoot, 'setup/preparser.ts'))).default
+injectPreparserExtensionLoader((roots, headmatter, filepath, mode) => preparser({ filepath, headmatter, mode }))
 
 const KODEE_VARIANTS = readdirSync(resolve(themeRoot, 'assets'))
   .filter(f => f.startsWith('kodee-') && f.endsWith('.svg'))
@@ -89,7 +95,8 @@ for (const file of files) {
     errors++
     continue
   }
-  const data = await load(process.cwd(), path)
+  const userRoot = dirname(path)
+  const data = await load({ roots: [userRoot], userRoot }, path)
 
   const themeConfigKodee = data.headmatter?.themeConfig?.kodee
   if (themeConfigKodee !== undefined)

@@ -267,8 +267,12 @@ function annotationNote(raw: string): string {
   const { text, label } = parseAttributes(raw)
   if (!label)
     return ''
-  const target = text ? `**\`${text.replace(/`/g, '')}\`** — ` : ''
+  const target = text ? `**${code(text)}** — ` : ''
   return `\n\n> ${target}${label.replace(/\r?\n/g, ' ')}\n\n`
+}
+
+function code(text: string | undefined): string {
+  return text ? `\`${text.replace(/`/g, '')}\`` : ''
 }
 
 function compilerErrorNote(raw: string): string {
@@ -276,8 +280,33 @@ function compilerErrorNote(raw: string): string {
   const diagnostic = (message || '').replace(/\s+/g, ' ').trim()
   if (!diagnostic)
     return ''
-  const target = text ? ` at \`${text.replace(/`/g, '')}\`` : ''
+  const target = text ? ` at ${code(text)}` : ''
   return `\n\n> ⚠ **Compiler error**${target}: ${diagnostic}\n\n`
+}
+
+/** `SmartCast` and `Warning` paint code; only a `message` says something the handout can keep. */
+function highlightNote(title: string, raw: string): string {
+  const { text, message } = parseAttributes(raw)
+  const note = (message || '').replace(/\s+/g, ' ').trim()
+  if (!note)
+    return ''
+  const target = text ? ` at ${code(text)}` : ''
+  return `\n\n> **${title}**${target}: ${note}\n\n`
+}
+
+/** `TypeHint` renders `this: HTML` after a brace, or `context(Clock)` for a context block. */
+function typeHintNote(raw: string): string {
+  const { receiver, context } = parseAttributes(raw)
+  const hint = context ? `context(${context})` : receiver ? `this: ${receiver}` : ''
+  return hint ? `\n\n> **Type hint** ${code(hint)}\n\n` : ''
+}
+
+/** `InlineValue` shows the debugger's value of the line named by `text`. */
+function inlineValueNote(raw: string): string {
+  const { text, value } = parseAttributes(raw)
+  if (!value)
+    return ''
+  return `\n\n> **Inline value**${text ? ` ${code(text)}` : ''}: ${code(value)}\n\n`
 }
 
 // Attribute lists may hold `<` and `>` inside quotes (`text="Column<Long>"`),
@@ -291,16 +320,23 @@ const ATTRIBUTES = String.raw`((?:"[^"]*"|'[^']*'|[^>"'])*)`
  */
 const DRAWN_ANNOTATION_TAG = new RegExp(`<DrawnAnnotation\\b${ATTRIBUTES}/?>`, 'g')
 const INLINE_COMPILER_ERROR_TAG = new RegExp(`<InlineCompilerError\\b${ATTRIBUTES}/?>`, 'g')
+const SMART_CAST_TAG = new RegExp(`<SmartCast\\b${ATTRIBUTES}/?>`, 'g')
+const WARNING_TAG = new RegExp(`<Warning\\b${ATTRIBUTES}/?>`, 'g')
+const TYPE_HINT_TAG = new RegExp(`<TypeHint\\b${ATTRIBUTES}/?>`, 'g')
+const INLINE_VALUE_TAG = new RegExp(`<InlineValue\\b${ATTRIBUTES}/?>`, 'g')
 const KODEE_TAG = new RegExp(`<(?:Kodee|KodeeWrapper)\\b${ATTRIBUTES}/?>`, 'g')
+const CLOSING_TAGS = /<\/(?:DrawnAnnotation|InlineCompilerError|SmartCast|Warning|TypeHint|InlineValue|Kodee|KodeeWrapper)>/g
 
 export function translateComponents(content: string): string {
   return content
     .replace(DRAWN_ANNOTATION_TAG, (_, raw) => annotationNote(raw))
-    .replace(/<\/DrawnAnnotation>/g, '')
     .replace(INLINE_COMPILER_ERROR_TAG, (_, raw) => compilerErrorNote(raw))
-    .replace(/<\/InlineCompilerError>/g, '')
+    .replace(SMART_CAST_TAG, (_, raw) => highlightNote('Smart cast', raw))
+    .replace(WARNING_TAG, (_, raw) => highlightNote('Warning', raw))
+    .replace(TYPE_HINT_TAG, (_, raw) => typeHintNote(raw))
+    .replace(INLINE_VALUE_TAG, (_, raw) => inlineValueNote(raw))
     .replace(KODEE_TAG, '')
-    .replace(/<\/(?:Kodee|KodeeWrapper)>/g, '')
+    .replace(CLOSING_TAGS, '')
 }
 
 const ATX_HEADING = /^( {0,3})(#{1,6})(?=[ \t]|$)/gm

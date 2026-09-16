@@ -58,7 +58,7 @@ const kodeeImage = computed(() => kodeeAssets[`../assets/${variantName.value}.sv
 
 // A typo'd variant renders nothing, so name the alternatives instead of
 // leaving the author to diff file names against their frontmatter.
-if (import.meta.env.DEV) {
+if (import.meta.env.MODE === 'development') {
   watchEffect(() => {
     if (!kodeeImage.value) {
       const available = Object.keys(kodeeAssets)

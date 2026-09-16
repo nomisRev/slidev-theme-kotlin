@@ -35,7 +35,8 @@
     "slide-bottom.vue",
     "CHANGELOG.md",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "!**/*.test.ts"
   ],
   "scripts": {
     "lint": "node scripts/lint-slides.mjs slides.md",

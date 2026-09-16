@@ -10,7 +10,7 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pixelmatch from 'pixelmatch'
@@ -18,7 +18,7 @@ import { PNG } from 'pngjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const slidevCli = resolve(projectRoot, 'node_modules/@slidev/cli/bin/slidev.mjs')
-const consumerProjectRoot = resolve(homedir(), 'Developer/kotlin-fundamentals')
+const consumerProjectRoot = resolve(projectRoot, '../kotlin-fundamentals')
 const reviewConsumer = existsSync(join(consumerProjectRoot, 'slides.md'))
 const outputRoot = resolve(projectRoot, '.visual')
 const currentDir = join(outputRoot, 'current')
