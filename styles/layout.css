@@ -339,8 +339,8 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
 }
 
 /* Markdown rendered into a `DrawnAnnotation` label or an `InlineCompilerError`,
-   `Warning`, or `SmartCast` message. MarkdownIt wraps ordinary text in a
-   paragraph; reset the layout defaults inherited from `.slidev-layout`,
+   `Warning`, or `SmartCast` message. The label renderer wraps ordinary text in
+   a paragraph; reset the layout defaults inherited from `.slidev-layout`,
    otherwise its margins distort label measurement and placement. Inline code
    reads as part of the label, in the mono stack and without the theme's
    code-chip background. */

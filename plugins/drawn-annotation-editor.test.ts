@@ -47,6 +47,12 @@ describe('source geometry editor', () => {
     expect(source).not.toContain('__drawn')
   })
 
+  it('locates a tag in a chunk that opens with a blank line', () => {
+    const file = '# Title\n\n<DrawnAnnotation text="a" label="b" />\n'
+    const chunk = '\n<DrawnAnnotation text="a" label="b" />\n'
+    expect(injectDrawnAnnotationLocators(chunk, 'slides.md', file)).toMatch(/__drawn-annotation-locator="[^"]+"/)
+  })
+
   it('skips unterminated tags without changing the source', () => {
     const unfinished = '<DrawnAnnotation text="x"'
     expect(findDrawnAnnotationTags(unfinished)).toEqual([])

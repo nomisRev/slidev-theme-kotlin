@@ -3,7 +3,8 @@ import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 /**
  * The small Markdown subset a `DrawnAnnotation` label and an inline
  * diagnostic message accept: paragraphs, `>` quotes, fenced code, backticked
- * inline code, `**strong**`, `*emphasis*`, and line breaks. Everything else
+ * inline code, `**strong**` / `__strong__`, `*emphasis*` / `_emphasis_`, and line
+ * breaks. Everything else
  * is text, and embedded HTML is always escaped, so rendering a prop never
  * creates executable or arbitrary DOM.
  *
@@ -96,12 +97,12 @@ function renderInline(text: string): string {
         continue
       }
     }
-    const marker = text.startsWith('**', index) ? '**' : text[index] === '*' ? '*' : undefined
+    const marker = emphasisMarker(text, index)
     if (marker) {
-      const close = text.indexOf(marker, index + marker.length)
+      const close = closingEmphasis(text, index + marker.length, marker)
       const inner = close > index + marker.length ? text.slice(index + marker.length, close) : ''
       if (inner && !/^\s|\s$/.test(inner)) {
-        const tag = marker === '**' ? 'strong' : 'em'
+        const tag = marker.length === 2 ? 'strong' : 'em'
         html += `<${tag}>${renderInline(inner)}</${tag}>`
         index = close + marker.length
         continue
@@ -111,6 +112,31 @@ function renderInline(text: string): string {
     index++
   }
   return html
+}
+
+const WORD = /[\p{L}\p{N}_]/u
+
+/**
+ * The `**`, `*`, `__`, or `_` run opening at `at`, if one may open there. As
+ * in Markdown, an underscore run inside a word (`snake_case`) is text.
+ */
+function emphasisMarker(text: string, at: number): string | undefined {
+  const char = text[at]
+  if (char !== '*' && char !== '_')
+    return undefined
+  if (char === '_' && at > 0 && WORD.test(text[at - 1]))
+    return undefined
+  return text[at + 1] === char ? char + char : char
+}
+
+/** Where `marker` closes the span opened before `from`, or -1; an underscore closes only at a word's end. */
+function closingEmphasis(text: string, from: number, marker: string): number {
+  for (let at = text.indexOf(marker, from); at >= 0; at = text.indexOf(marker, at + 1)) {
+    const after = text[at + marker.length]
+    if (marker[0] === '*' || after === undefined || !WORD.test(after))
+      return at
+  }
+  return -1
 }
 
 /** Where a backtick run of exactly `run.length` closes the span opened at `from`, or -1. */

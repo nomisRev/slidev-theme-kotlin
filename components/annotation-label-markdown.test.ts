@@ -54,6 +54,17 @@ describe('annotation label Markdown subset', () => {
     expect(renderAnnotationLabel('```kotlin\nval x = a < b\n```')).toBe('<pre><code class="language-kotlin">val x = a &lt; b\n</code></pre>\n')
   })
 
+  it('renders underscore emphasis and strong text', () => {
+    expect(renderAnnotationLabel('Function with an _expression body_')).toBe('<p>Function with an <em>expression body</em></p>\n')
+    expect(renderAnnotationLabel('`map` A to _many_ B\'s and _flatten_ nested lists')).toBe('<p><code>map</code> A to <em>many</em> B\'s and <em>flatten</em> nested lists</p>\n')
+    expect(renderAnnotationLabel('__really__ sure')).toBe('<p><strong>really</strong> sure</p>\n')
+  })
+
+  it('keeps an underscore inside a word as text', () => {
+    expect(renderAnnotationLabel('snake_case_name and RETURN_GENERATED_KEYS')).toBe('<p>snake_case_name and RETURN_GENERATED_KEYS</p>\n')
+    expect(renderAnnotationLabel('_open but no_close')).toBe('<p>_open but no_close</p>\n')
+  })
+
   it('escapes HTML inside code and emphasis too', () => {
     expect(renderAnnotationLabel('`<b>` and **<i>**')).toBe('<p><code>&lt;b&gt;</code> and <strong>&lt;i&gt;</strong></p>\n')
     expect(annotationLabelText('`<b>`')).toBe('<b>')

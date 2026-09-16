@@ -68,6 +68,18 @@ describe('splitTopLevel', () => {
     expect(split.statements).toBe('Talks.select(Talks.id, count)\n  .where { Talks.id eq id }\n  .groupBy(Talks.id)')
   })
 
+  it('treats an underscore discard as a statement, since `val _` is only legal locally', () => {
+    const split = splitTopLevel('fun sum(a: Int, b: Int): Int = a + b\n\nval _ = sum(1, 2)\nval three = sum(1, 2)')
+    expect(split.declarations).toBe('fun sum(a: Int, b: Int): Int = a + b\n\nval three = sum(1, 2)')
+    expect(split.statements).toBe('val _ = sum(1, 2)')
+  })
+
+  it('treats a destructuring declaration as a statement, since it is only legal locally', () => {
+    const split = splitTopLevel('val pair = 1 to 2\n\nval (a, b) = pair\nprintln(a + b)')
+    expect(split.declarations).toBe('val pair = 1 to 2')
+    expect(split.statements).toBe('val (a, b) = pair\n\nprintln(a + b)')
+  })
+
   it('attaches annotations and context lines to the declaration below', () => {
     const split = splitTopLevel('@JvmInline\nvalue class Title(val value: String)\n\ncontext(_: Transaction)\nfun previews() = Talks.selectAll()\n\n@Transactional\nprivate fun f() = 1')
     expect(split.declarations).toBe('@JvmInline\nvalue class Title(val value: String)\n\ncontext(_: Transaction)\nfun previews() = Talks.selectAll()\n\n@Transactional\nprivate fun f() = 1')
@@ -228,6 +240,17 @@ describe('collectSnippetFiles', () => {
     expect(files.map(file => [file.path, file.package])).toEqual([
       ['src/main/java/snippets/lesson-2/Person.java', 'deck.snippets.lesson2.slide5'],
       ['src/main/java/snippets/lesson-2/006-setters/Person.java', 'deck.snippets.lesson2.slide6'],
+    ])
+  })
+
+  it('names a Java file after a public type with modifiers, not after a nested one', () => {
+    const files = collectSnippetFiles([
+      slide(4, '/deck/lessons/lesson-2.md', 'Sealed', '```java\npublic sealed interface Shape permits Circle {}\n```'),
+      slide(5, '/deck/lessons/lesson-2.md', 'Nested', '```java\nclass Outer {\n  public record Point(int x, int y) {}\n}\n```'),
+    ], root, settings)
+    expect(files.map(file => file.path)).toEqual([
+      'src/main/java/snippets/lesson-2/Shape.java',
+      'src/main/java/snippets/lesson-2/006-nested.java',
     ])
   })
 

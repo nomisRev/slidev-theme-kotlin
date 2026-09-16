@@ -237,7 +237,9 @@ function exactOffset(source, tag, fileSource) {
   let end = lineEnd < 0 ? source.length : lineEnd + 1
   if (!fileSource.includes(source.slice(start, end))) return undefined
   for (let up = source.lastIndexOf('\n', start - 2) + 1; start > 0; up = source.lastIndexOf('\n', up - 2) + 1) {
-    if (!fileSource.includes(source.slice(up, end))) break
+    // A chunk opening with a blank line: the search above `start` finds that
+    // newline again and would never move.
+    if (up >= start || !fileSource.includes(source.slice(up, end))) break
     start = up
   }
   for (let down = source.indexOf('\n', end); end < source.length; down = source.indexOf('\n', down + 1)) {

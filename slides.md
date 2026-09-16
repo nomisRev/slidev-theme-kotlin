@@ -25,7 +25,7 @@ The Kotlin mascot is built into every theme layout.
 
 - Choose a mascot variant per slide
 - Move it between featured and corner positions
-- Use view transitions for a smooth hand-off
+- One mascot for the whole deck, only redrawn when a slide asks for another
 
 ---
 

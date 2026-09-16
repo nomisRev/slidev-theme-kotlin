@@ -226,6 +226,9 @@ export interface TopLevelSplit {
 const MODIFIERS = 'public|private|protected|internal|expect|actual|final|open|abstract|sealed|const|external|override|lateinit|tailrec|vararg|suspend|inner|enum|annotation|companion|inline|value|infix|operator|data|noinline|crossinline'
 const DECLARATION = new RegExp(`^(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*(?:(?:${MODIFIERS})\\s+)*(?:fun|val|var|object|class|interface|typealias)\\b`)
 const DECLARATION_PREFIX = /^(?:@[\w.]|context\s*\()/
+// `val _ = f()` discards a result and `val (a, b) = pair` destructures one;
+// underscore names and destructuring are only legal for locals.
+const LOCAL_ONLY = /^(?:val|var)\s+(?:_+\s*(?::|=)|\()/
 // A non-indented line that can only continue the construct above it.
 const CONTINUATION = /^(?:[.)\]}]|\?[.:]|&&|\|\||->|else\b|catch\b|finally\b)/
 // A line after which the construct is still open.
@@ -255,7 +258,7 @@ export function splitTopLevel(code: string): TopLevelSplit {
       continue
     const starts = topLevel && !blank && !previousOpen && !CONTINUATION.test(masked)
     if (starts || !chunks.length) {
-      const kind = DECLARATION.test(masked) || DECLARATION_PREFIX.test(masked) ? 'declaration' : 'statement'
+      const kind = !LOCAL_ONLY.test(masked) && (DECLARATION.test(masked) || DECLARATION_PREFIX.test(masked)) ? 'declaration' : 'statement'
       // An annotation or `context(...)` line belongs with what follows it.
       const last = chunks[chunks.length - 1]
       if (starts && last && last.kind === 'declaration' && last.lines.every(l => DECLARATION_PREFIX.test(l.trim()) || !l.trim()))
@@ -311,7 +314,7 @@ function identifier(slug: string): string {
 
 /** Java requires a public top-level type to have the same name as its source file. */
 function javaCompilationUnitName(code: string): string | undefined {
-  return code.match(/^\s*public\s+(?:class|interface|enum|record|@interface)\s+(\w+)/m)?.[1]
+  return code.match(/^public\s+(?:(?:final|abstract|sealed|non-sealed|static|strictfp)\s+)*(?:class|interface|enum|record|@interface)\s+(\w+)/m)?.[1]
 }
 
 // Attribute lists may hold `>` inside quotes (`message="a > b"`), so a tag

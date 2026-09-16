@@ -1,6 +1,7 @@
 /**
  * Exact-text matching across syntax-token spans, shared by `DrawnAnnotation`,
- * `InlineCompilerError` and `SmartCast`.
+ * `InlineCompilerError` and the `code-highlight.ts` components (`SmartCast`,
+ * `Warning`, `TypeHint`, `InlineValue`).
  *
  * Shiki renders one span per token, so a match regularly starts and ends in
  * different text nodes, and Magic Move renders line breaks as `<br>` elements
