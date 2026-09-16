@@ -45,7 +45,7 @@ export default defineConfig({
 })
 ```
 
-Open Slidev's annotation editor (or press **Alt+Shift+A**) to start a frozen
+Click the theme's **Edit annotations** launcher (or press **Alt+Shift+A**) to start a frozen
 edit session on the current slide and click state: Slidev navigation — arrow
 keys, space, page keys, click-to-navigate, swipes — is paused until you leave
 the editor. Drag a visible label, its width handle, or a connector control, or
@@ -68,8 +68,8 @@ serves the deck; builds and exports render saved geometry without editor code.
 
 While serving, an annotation that cannot find what it should mark (a `text`
 that no longer matches the fence, an unmatched `selector` or `target`, an
-`occurrence` past the last match, or an `InlineCompilerError` whose diagnostic
-is not shown) also puts a red chip in the top-left corner of its slide, next to
+`occurrence` past the last match, or an `InlineCompilerError`, `SmartCast`, `Warning`,
+`TypeHint`, or `InlineValue` whose target is not found) also puts a red chip in the top-left corner of its slide, next to
 the warning it prints on the console. Hover the chip for the full message. The
 chip appears only once the annotation's click has been reached and the slide
 has settled, so a Magic Move step that does not yet contain the text never
@@ -140,6 +140,10 @@ println([1, 2, 3].map { it + 1 })
 
 To show a value next to the line that produces it instead, as the debugger
 does, wrap the fence in [`InlineValue`](components/README.md#inlinevalue).
+The other IntelliJ decorations have a component each: [`SmartCast`](components/README.md#smartcast)
+paints the green smart-cast background behind exact code, [`Warning`](components/README.md#warning)
+the yellow warning background with an optional message, and [`TypeHint`](components/README.md#typehint)
+the grey `this: HTML` inlay hint after a lambda's brace.
 
 The identity border colours are exposed as theme variables and can be
 customized from a deck stylesheet. Each variable has a light and dark-mode
@@ -241,7 +245,13 @@ count once in the deck's stylesheet, or narrower on a single slide class:
 The calculation accounts for the standard layout and code padding. A custom
 layout with different horizontal spacing can override
 `--code-window-inline-space`. To bypass column-based sizing entirely, set an
-explicit `--code-window-font-size`, for example `1.25rem`.
+explicit `--code-window-font-size`, for example `1.25rem`. The font's advance
+width and the line height the calculation assumes are
+`--code-window-character-width` (`0.61`, JetBrains Mono's) and
+`--code-window-line-height` (`1.42`); a deck on another monospace font sets the
+first to that font's ratio. The editor surface itself reads `--editor-bg`,
+`--editor-fg`, `--editor-border`, and `--editor-shadow`, and one window's
+border colour can be overridden with `--code-window-border`.
 
 ### Magic Move between slides
 
@@ -354,6 +364,8 @@ kodee:
   - `corner` - Bottom right corner (regular-layout default)
   - `featured` - Prominently displayed (cover/intro default)
   - `custom` - Use with `x` and `y` coordinates
+
+- **scale**: Multiply the size, `1.2` for a fifth larger. Defaults to `1`.
 
 #### Custom Positioning
 
@@ -547,7 +559,9 @@ the file:
   and imports; they must therefore contain declarations rather than bare
   statements. Their own `package` line is replaced. A fence declaring a public
   top-level Java type is named after that type (as Java requires); otherwise it
-  uses the slide-based filename.
+  uses the slide-based filename. When a later slide of the same section declares
+  a public type an earlier slide already declared, its file goes in a directory
+  named after the slide, so both compile.
 - a slide with several fences in the same language tells them apart by their
   first meta word (`jdbc`, `r2dbc`) or a letter.
 
@@ -638,10 +652,24 @@ This will open the example presentation in your browser with hot-reload enabled.
 .
 ├── components/                   # Vue components
 │   ├── DrawnAnnotation.vue        # Hand-drawn marks, labels, and connectors
+│   ├── DrawnAnnotationEditor*.vue # Development-only editor launcher and toolbar
+│   ├── DrawnAnnotationProblems.vue # Development-only problem chips
+│   ├── drawn-annotation/          # Editor store, geometry, and browser writer
 │   ├── InlineCompilerError.vue    # Inline code diagnostics
+│   ├── SmartCast.vue              # Smart-cast background behind exact code
+│   ├── Warning.vue                # Warning background with an optional message
+│   ├── TypeHint.vue               # Inlay hint after a lambda's brace
+│   ├── InlineValue.vue            # Debugger inline value after a line
+│   ├── code-highlight.ts          # The mechanism the four above share
+│   ├── code-text-match.ts         # Text search shared with DrawnAnnotation
+│   ├── MagicMoveBetween.vue       # Cross-slide Magic Move code window
 │   ├── Kodee.vue                  # Main Kodee mascot component with animations
 │   └── KodeeWrapper.vue           # Wrapper component for Kodee integration
-├── slide-bottom.vue     # Per-slide Kodee layer shared by every layout
+├── global-top.vue       # Development-only editor toolbar and problem chips
+├── global-bottom.vue    # Deck-wide Kodee layer that follows the current slide
+├── slide-bottom.vue     # Per-slide Kodee for the overview and presenter preview
+├── plugins/             # Development-only source writer (`slidev-theme-kotlin/annotation-editor`)
+├── bin/                 # `slidev-kotlin-snippets` CLI
 ├── layouts/            # Slidev layout templates
 │   ├── cover.vue       # Cover slide layout
 │   ├── default.vue     # Default slide layout
@@ -653,13 +681,17 @@ This will open the example presentation in your browser with hot-reload enabled.
 │   └── kotlin-logo*.svg # Kotlin logos (light/dark modes)
 ├── index.html          # Head tags merged into every deck (font preconnect)
 ├── setup/              # Slidev setup files
+│   ├── main.ts         # App setup: per-slide analytics pageviews
+│   ├── preparser.ts    # The bare `magic-move` slide separator
 │   ├── shiki.ts        # Syntax highlighting configuration for Kotlin
 │   ├── transformers.ts # Cross-slide Magic Move and import folding passes
+│   ├── magic-move-between.ts   # Precompiled Magic Move steps
 │   ├── analytics.ts    # GoatCounter tag and per-slide pageviews
 │   ├── code-imports.ts # Folded imports: fence scanning and source edits
+│   ├── kotlin-snippets.ts      # Compilable snippet files per fence
 │   ├── static-content.ts       # Handout, llms.txt, sitemap generation
 │   ├── hash-route-redirect.ts  # Old history-mode links → hash routes
-│   └── vite-plugins.ts # Registers the two build plugins above
+│   └── vite-plugins.ts # Registers the three build plugins above
 ├── styles/             # Theme styles
 │   ├── index.ts        # Style entry point
 │   └── layout.css      # Layout styles
@@ -729,8 +761,11 @@ The theme is configured with the following defaults in `package.json`:
     "colorSchema": "both",
     "defaults": {
       "fonts": {
-        "sans": "Inter",
-        "mono": "JetBrains Mono"
+        "sans": "JetBrains Sans,Inter",
+        "mono": "JetBrains Mono Local,JetBrains Mono",
+        "local": "JetBrains Sans,JetBrains Mono Local",
+        "weights": "400,700,800",
+        "italic": true
       }
     }
   }
@@ -759,7 +794,10 @@ layout: cover
 
 ### Runtime Dependencies
 - `@shikijs/magic-move` (4.4.3) - Code-token morphing for Magic Move
-- `@slidev/types` (52.19.1) - Slidev type definitions
+- `@slidev/parser` (^52.19.1) - Deck parsing for the snippets CLI and lint script
+- `@slidev/types` (^52.19.1) - Slidev type definitions
+- `jiti` (2.7.0) - Runs the theme's TypeScript setup modules from the CLI
+- `markdown-it` (14.3.0) - Renders the static handout
 - `roughjs` (4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
 
 ### Development Dependencies
@@ -785,7 +823,7 @@ This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE
 
 - [Slidev Documentation](https://sli.dev)
 - [Kotlin Official Website](https://kotlinlang.org)
-- [Package on npm](https://www.npmjs.com/package/@nomisrev/slidev-theme-kotlin)
+- [Package on npm](https://www.npmjs.com/package/slidev-theme-kotlin)
 
 ---
 

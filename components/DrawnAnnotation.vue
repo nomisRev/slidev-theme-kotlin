@@ -57,9 +57,9 @@ import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
-import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
+import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
 import type { DrawnAnnotationGeometry, PersistedAnnotationGeometry } from './drawn-annotation/geometry'
-import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationAuthoringProblems, clearAnnotationSelection, clearLabelDraftFields, endAnnotationDraftGesture, migrateAnnotationLocator, registerAnnotationEditorActions, releaseAnnotationSelection, replaceLabelDraft, reportAnnotationAuthoringProblem, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
+import { annotationDraftChange, annotationEditMode, annotationEditorStatus, annotationDrafts, annotationLabelLayoutChange, beginAnnotationDraftGesture, claimAnnotationSelection, clearAnnotationAuthoringProblems, clearAnnotationSelection, clearLabelDraft, clearLabelDraftFields, endAnnotationDraftGesture, migrateAnnotationLocator, registerAnnotationEditorActions, releaseAnnotationSelection, replaceLabelDraft, reportAnnotationAuthoringProblem, selectAnnotation, selectedAnnotationId, selectedAnnotationPart, setLabelDraft } from './drawn-annotation/editor-store'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, toRef, useId, useSlots, watch, watchEffect } from 'vue'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Restrict
@@ -1753,6 +1753,16 @@ function manualConnector() {
     ? undefined
     : { x1, y1, x2, y2, cx: draft?.cx ?? saved.cx, cy: draft?.cy ?? saved.cy }
 }
+// A commit re-seeds the draft with what the writer saved, so the label stays
+// put until Slidev recompiles the Markdown. That remount lands here: a draft
+// the source now holds is spent, and dropping it lets a later hand edit of
+// the binding show, and keeps "Reload saved geometry" from asking to discard
+// changes that are already saved.
+if (isAnnotationEditorDevelopment && locator.value) {
+  const draft = annotationDrafts.get(locator.value)
+  if (draft && persistedGeometrySignature({ ...persistedLabelGeometry(), ...draft }) === persistedGeometrySignature(persistedLabelGeometry()))
+    clearLabelDraft(locator.value)
+}
 
 function measureLabel(toLocal: (rect: DOMRect) => Box, maxWidth?: number) {
   const cached = labelSizeCache.get(maxWidth ?? 'natural')
@@ -2086,9 +2096,15 @@ onMounted(async () => {
   showImmediately.value = isCurrentSlide.value
     && $clicks.value >= resolvedClick.value
     && withinRange.value
-  unsettle()
-  if (isCurrentSlide.value)
+  // Only the slide on screen settles now. Slidev mounts every slide of the
+  // deck, and a whole-show remount mounts them all again, so settling here
+  // unconditionally walked the document's animations twice per annotation
+  // for slides nobody is looking at. Becoming current settles (see the
+  // `isCurrentSlide` watch below).
+  if (isCurrentSlide.value) {
+    unsettle()
     restoreTransitionInk()
+  }
   scheduleUpdate()
 
   if (isCurrentSlide.value)

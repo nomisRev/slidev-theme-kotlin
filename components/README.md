@@ -333,7 +333,7 @@ entering an editor that cannot save.
 | `iterations` | `2` | how many times each shape is drawn over itself — the sketchy redraw |
 | `color` | `--drawn-annotation-color` | stroke and label colour, any CSS colour; the variable falls back to the text colour |
 | `stroke-width` | `2` | stroke width, in slide pixels |
-§| `duration` | `500` | how long drawing one stage takes, in milliseconds |
+| `duration` | `500` | how long drawing one stage takes, in milliseconds |
 
 Out of the box a mark looks exactly like Slidev's own `v-mark`: the defaults
 are Rough Notation's — a 2px stroke, roughness 1.5, every shape drawn twice,
@@ -350,11 +350,12 @@ is always seeded from the annotation's own props, so a mark keeps its shape
 while it follows a Magic Move transition; pass `seed` in `options` to pick one
 by hand.
 
-The default colour is the `--drawn-annotation-color` CSS variable, which this
-deck points at the theme purple in `style.css`. The variable is read where it
-is used, so any scope can redefine it — a single slide's class as well as
-`:root` — and where nobody defines it the strokes follow the surrounding
-text, which is Rough Notation's own default. An explicit `color` prop beats
+The default colour is the `--drawn-annotation-color` CSS variable, which the
+theme's `styles/layout.css` points at the theme primary
+(`--slidev-theme-primary`). The variable is read where it is used, so any
+scope can redefine it — a single slide's class as well as `:root` — and where
+nobody defines it the strokes follow the surrounding text, which is Rough
+Notation's own default. An explicit `color` prop beats
 all of this. When the token points at another variable, give it a hard
 fallback (`var(--fundamentals-purple, #7954f6)`): a token that resolves
 invalid makes the strokes vanish instead of falling back.
@@ -364,8 +365,8 @@ narrower scope:
 
 | CSS variable | default | meaning |
 | --- | --- | --- |
-| `--drawn-annotation-color` | text colour | stroke and label colour |
-| `--drawn-annotation-label-font` | `'JetBrains Sans'`, slide sans font | label font family |
+| `--drawn-annotation-color` | the theme primary | stroke and label colour |
+| `--drawn-annotation-label-font` | the slide's sans font (`--slidev-font-sans`) | label font family |
 | `--drawn-annotation-code-font` | Slidev's local-first JetBrains Mono stack | inline-code and quote font family |
 | `--drawn-annotation-label-size` | `28px` | label font size, in slide pixels |
 | `--drawn-annotation-label-weight` | `800` | label font weight |
@@ -378,12 +379,16 @@ plus one internal constant, `injectionClicksContext` from
 Move block's clicks — and `vue` and `@vueuse/core` already ship with Slidev.
 To move it into a theme:
 
-1. copy `DrawnAnnotation.vue`, `code-text-match.ts` (the text matching it
-   shares with `InlineCompilerError`), and `annotation-label-markdown.ts` into
-   the theme's `components/` directory, where Slidev auto-registers the
+1. copy `DrawnAnnotation.vue` and the modules it imports —
+   `code-text-match.ts` (the text matching it shares with
+   `InlineCompilerError`), `annotation-label-markdown.ts`,
+   `annotation-line-breaks.ts`, `transition-ink.ts`, and
+   `drawn-annotation/geometry.ts` and `drawn-annotation/editor-store.ts` —
+   into the theme's `components/` directory, where Slidev auto-registers the
    component for every deck that uses the theme;
-2. add `roughjs` and `markdown-it` to the theme's `dependencies` — they draw
-   the strokes and safely render Markdown labels respectively;
+2. add `roughjs` to the theme's `dependencies` — it draws the strokes; the
+   labels are rendered by the small Markdown renderer in
+   `annotation-label-markdown.ts`, so no Markdown library is needed;
 3. define `--drawn-annotation-color` (and, if wanted, the label variables
    above) in the theme's styles to pick the theme-wide default look, and copy
    the `.annotation-label-content` rules from `styles/layout.css`, which zero
