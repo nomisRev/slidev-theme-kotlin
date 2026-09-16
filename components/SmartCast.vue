@@ -43,4 +43,8 @@ const { messageHtml, messageShown, messageStyle } = useCodeHighlight(props, cont
   padding: 0.05em 0;
   transition: background-color .18s ease;
 }
+/* Darcula paints smart casts in its own, darker green; the message brightens
+   so it still reads on the dark slide. A deck's variables win in both schemes. */
+html.dark .smart-cast-token { background: var(--smart-cast-color, #294436); }
+html.dark .smart-cast-message { color: var(--smart-cast-message-color, #7bc47f); }
 </style>

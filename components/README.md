@@ -553,8 +553,8 @@ takes precedence over `at` and `until` when both forms are supplied.
 
 | CSS variable | default | meaning |
 | --- | --- | --- |
-| `--smart-cast-color` | IntelliJ's smart-cast green (`#dcf8df`) | highlight background colour |
-| `--smart-cast-message-color` | a darker green (`#3b7a45`) | colour of an optional `message` and its dot |
+| `--smart-cast-color` | IntelliJ Light's smart-cast green (`#dcf8df`), Darcula's (`#294436`) in dark mode | highlight background colour |
+| `--smart-cast-message-color` | a darker green (`#3b7a45`), a lighter one (`#7bc47f`) in dark mode | colour of an optional `message` and its dot |
 | `--smart-cast-message-size` | the annotated code's font size | message font size |
 
 Read where it is used, so any scope can redefine it — a single slide's class
@@ -597,8 +597,8 @@ Markdown as a `DrawnAnnotation` label: `` `Int` `` renders inline code and
 
 | CSS variable | default | meaning |
 | --- | --- | --- |
-| `--warning-color` | IntelliJ Light's warning yellow (`#faf4d7`) | highlight background colour |
-| `--warning-message-color` | a darker warning ochre (`#9a7b0f`) | colour of the message and its dot |
+| `--warning-color` | IntelliJ Light's warning yellow (`#faf4d7`), Darcula's olive (`#52503a`) in dark mode | highlight background colour |
+| `--warning-message-color` | a darker warning ochre (`#9a7b0f`), a lighter one (`#d4b44a`) in dark mode | colour of the message and its dot |
 | `--warning-message-size` | the annotated code's font size | message font size |
 
 Read where it is used, so any scope can redefine it — a single slide's class

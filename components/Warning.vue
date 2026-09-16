@@ -43,4 +43,8 @@ const { messageHtml, messageShown, messageStyle } = useCodeHighlight(props, cont
   padding: 0.05em 0;
   transition: background-color .18s ease;
 }
+/* Darcula paints warnings in its own, darker olive; the message brightens so
+   it still reads on the dark slide. A deck's variables win in both schemes. */
+html.dark .warning-token { background: var(--warning-color, #52503a); }
+html.dark .warning-message { color: var(--warning-message-color, #d4b44a); }
 </style>
