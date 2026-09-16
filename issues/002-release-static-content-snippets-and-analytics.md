@@ -1,6 +1,6 @@
 # Release the theme so the decks can pick up the static content, snippets CLI, and analytics
 
-**Status:** open
+**Status:** in progress (0.13.0 committed on `annotation-performance`, publish pending)
 **Blocks:** exposed-fundamentals/issues/EXPF-001, kotlin-fundamentals/issues/KOTF-001, ktor-fundamentals/issues/KTORF-001, advanced-dsl-in-kotlin/issues/ADVDS-001
 
 ## Problem
@@ -15,9 +15,9 @@ sitemap and the blog already links to sitemaps that 404.
 
 ## Work
 
-- [ ] Review and commit the working tree (it also contains an unrelated,
+- [x] Review and commit the working tree (it also contains an unrelated,
       untracked `components/DrawnAnnotationProblems.vue`).
-- [ ] Bump the version (the CHANGELOG has new features and a changed default
+- [x] Bump the version (the CHANGELOG has new features and a changed default
       of 80 code columns, so 0.13.0) and move "Unreleased" under it.
 - [ ] `npm publish`; confirm `bin`, `setup`, and `styles` are in the tarball
       and `npx slidev-kotlin-snippets` works from a consumer with pnpm too,

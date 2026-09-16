@@ -81,13 +81,15 @@ Code observations, none blocking:
 - [x] Replace the raw NUL byte in `editor-store.ts` with an escape.
 - [x] Point `FIXTURE_SLIDE` at the fixture again and make the browser test
       pass on `main` and on the branch.
-- [ ] Have the script find the fixture slide by content (the tag with
+- [x] Have the script find the fixture slide by content (the tag with
       `text="fun main"`) instead of a pinned number, so the next slide added
       in front of it does not break the test again.
 - [x] Add the "Unreleased" CHANGELOG entries for the three commits.
-- [ ] Decide on the automatic-route hit path (use `connectorAutoControl`) and
+- [x] Decide on the automatic-route hit path (use `connectorAutoControl`) and
       on clearing clean drafts once the source catches up, or record them as
-      follow-up issues.
+      follow-up issues. Clean drafts are cleared on the remount that follows
+      a commit (0.13.0); the automatic-route hit path is moot if
+      `issues/004` removes automatic routing.
 - [x] Fast-forward `main` to `integration-sync-main`. Still to do: delete
       `integration`, `integration-sync-main`, and the three feature branches.
 
