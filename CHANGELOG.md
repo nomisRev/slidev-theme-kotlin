@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Removed
+
+- The three Kotlin logo files under `public/`: nothing in the theme referenced them, and the README no longer lists them as a feature.
+
 ### Fixed
 
 - `SmartCast` and `Warning` follow the colour scheme: in dark mode the token background is Darcula's smart-cast green (`#294436`) and warning olive (`#52503a`) instead of the IntelliJ Light tints, which left Darcula's grey code nearly unreadable on a pastel bar, and the messages brighten to `#7bc47f` and `#d4b44a`. The same variables (`--smart-cast-color`, `--warning-color`, and the `-message-color` pair) still override both schemes, as `TypeHint` already did.

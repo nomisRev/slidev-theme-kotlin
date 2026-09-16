@@ -11,7 +11,6 @@ This theme provides a professional presentation template tailored for Kotlin dev
 - **Magic Move between slides**: Link slides with a `magic-move` separator and their code windows morph across the slide boundary, including several parallel snippets per slide
 - **Kotlin Syntax Highlighting**: Custom Shiki configuration optimized for Kotlin code
 - **Multiple Layouts**: Pre-built layouts including default, cover, and intro
-- **Kotlin Branding**: Official Kotlin logos for both light and dark modes
 - **JetBrains Fonts**: Prefers locally installed JetBrains Sans and JetBrains Mono, with Inter and Google-hosted JetBrains Mono fallbacks
 - **Drawn annotations**: Click-aware, hand-drawn marks, labels, and connectors for elements and code
 - **Inline compiler diagnostics**: IntelliJ-style squiggles and messages for static and Magic Move code blocks
@@ -677,8 +676,6 @@ This will open the example presentation in your browser with hot-reload enabled.
 ├── assets/             # Bundled theme assets
 │   ├── kodee-*.svg     # Kodee mascot variants (11 variants)
 │   └── code-window/    # Code-window identity icons, referenced from layout.css
-├── public/             # Static assets
-│   └── kotlin-logo*.svg # Kotlin logos (light/dark modes)
 ├── index.html          # Head tags merged into every deck (font preconnect)
 ├── setup/              # Slidev setup files
 │   ├── main.ts         # App setup: per-slide analytics pageviews
