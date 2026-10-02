@@ -24,7 +24,8 @@
  * Theme-specific markup is translated rather than dropped: a `DrawnAnnotation`
  * label becomes a quoted note about the code it points at, an
  * `InlineCompilerError` becomes its diagnostic, and imports folded on the
- * slides (see `code-imports.ts`) stay in the handout's fences, expanded.
+ * slides (see `code-imports.ts`) stay in the handout's fences, expanded. A
+ * `// Solution` region does not: it is compiled but never printed.
  */
 import type { ResolvedSlidevOptions, SlideInfo } from '@slidev/types'
 import type { HtmlTagDescriptor, Plugin } from 'vite'
@@ -35,6 +36,7 @@ import { basename, dirname, extname, relative, resolve } from 'node:path'
 import MarkdownIt from 'markdown-it'
 import { goatcounterTag, resolveAnalyticsSettings } from './analytics'
 import { codeWindowIcon } from './code-window-icon'
+import { withoutSolution } from './code-imports'
 import { parseFenceInfo } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
 
@@ -294,10 +296,10 @@ function highlightNote(title: string, raw: string): string {
   return `\n\n> **${title}**${target}: ${note}\n\n`
 }
 
-/** `TypeHint` renders `this: HTML` after a brace, or `context(Clock)` for a context block. */
+/** `TypeHint` renders `this: HTML` after a brace, `context(Clock)` for a context block, or `customer: Column<String>` for a `type`. */
 function typeHintNote(raw: string): string {
-  const { receiver, context } = parseAttributes(raw)
-  const hint = context ? `context(${context})` : receiver ? `this: ${receiver}` : ''
+  const { receiver, context, type, text } = parseAttributes(raw)
+  const hint = type ? `${text ?? ''}: ${type}` : context ? `context(${context})` : receiver ? `this: ${receiver}` : ''
   return hint ? `\n\n> **Type hint** ${code(hint)}\n\n` : ''
 }
 
@@ -402,10 +404,15 @@ export function fenceCaption(fence: ParsedFence): string {
   return [identity, fence.title].filter(Boolean).join(' · ')
 }
 
+/**
+ * Parse a fence block for the handout: imports and an `// Example` prefix
+ * stay in the code, a `// Solution` prefix leaves it (see `withoutSolution`).
+ */
 export function parseFenceBlock(block: string): ParsedFence {
   const lines = block.split(/\r?\n/)
   const info = lines[0].replace(/^ {0,3}(`{3,}|~{3,})/, '').trim()
-  return parseFenceInfo(info, lines.slice(1, -1).join('\n'), { foldImports: false })
+  const fence = parseFenceInfo(info, lines.slice(1, -1).join('\n'), { foldImports: false })
+  return { ...fence, code: withoutSolution(fence.code) }
 }
 
 /**

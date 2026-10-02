@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.13.1
+
+### Added
+
+- `InlineCompilerError` accepts a line range, `line="3-6"`, to underline a multi-line declaration. The indentation after a `\n` in `text` is now optional for every component that matches code text (`InlineCompilerError`, `DrawnAnnotation`, `SmartCast`, `Warning`, `TypeHint`, `InlineValue`). A multi-line diagnostic squiggles each line from its code instead of from column 0, and its message sits after the last line of the match instead of the first.
+- `TypeHint` takes `type` for IntelliJ's other inlay, the inferred type of a declaration: `<TypeHint :line="2" text="customer" type="Column<String>">` draws the grey `: Column<String>` pill right after `customer`, inside the line, so `by column { … }` moves right as it does in the IDE. It is for `val x by …` and other declarations whose type the code does not spell out. The pill is `::after` content of the matched token (a new `inlay` option on `code-highlight.ts` sets `data-code-inlay` on the match's last element), so it follows Magic Move with the token and never enters the text other components search. The handout renders it as `customer: Column<String>`.
+
+- A `// Solution` marker for exercise slides, next to `// Example`. Everything above it folds off the slide the same way and the Kotlin snippet CLI compiles it with the code below, so the assertions an exercise slide shows are checked against a real answer. Unlike an `// Example` prefix, the solution never reaches the handout or `llms-full.txt`: `parseFenceBlock` prints the fence from the marker down, keeping only the solution's `import` lines so the symbols still resolve for a reader. `withoutSolution` in `code-imports.ts` does the cut, and `SplitImports.solution` reports which marker folded.
 
 ### Removed
 
@@ -8,6 +15,8 @@
 
 ### Fixed
 
+- Java snippet filenames recognize indented public top-level types while ignoring nested declarations, comments, and string literals.
+- The Kotlin snippet CLI wraps a positional `val [a, b] = pair` in `main()` like it does `val (a, b) = pair`: the square-bracket form of `-Xname-based-destructuring` is just as illegal at top level, but the generator kept it there and the deck's build failed with "Destructuring declarations are only allowed for local variables/values".
 - The text on `cover` and `intro` slides no longer runs under the featured Kodee: the layouts keep it in a column of `--cover-text-width` (48% of the content box by default, clear of the mascot's arm) and wrap it there. The showcase's own cover subtitle, intro bullets, and closing title had been partly hidden behind the mascot since the deck was written. A deck widens the column from its stylesheet, or sets `100%` on the class of a slide that hides the mascot.
 - `SmartCast` and `Warning` follow the colour scheme: in dark mode the token background is Darcula's smart-cast green (`#294436`) and warning olive (`#52503a`) instead of the IntelliJ Light tints, which left Darcula's grey code nearly unreadable on a pastel bar, and the messages brighten to `#7bc47f` and `#d4b44a`. The same variables (`--smart-cast-color`, `--warning-color`, and the `-message-color` pair) still override both schemes, as `TypeHint` already did.
 

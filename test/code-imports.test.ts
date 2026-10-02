@@ -4,9 +4,11 @@ import {
   EXAMPLE_MARKER,
   foldImportEdits,
   shouldFoldImports,
+  SOLUTION_MARKER,
   splitLeadingImports,
   stripThemeFlags,
   takeThemeFlags,
+  withoutSolution,
 } from '../setup/code-imports'
 import { extractTopLevelFences, parseFenceInfo } from '../setup/magic-move-between'
 
@@ -48,6 +50,79 @@ describe('splitLeadingImports', () => {
     const split = splitLeadingImports('package p\nimport a.A\n\nclass C')
     expect(split.foldStartLine).toBe(1)
     expect(split.bodyStartLine).toBe(3)
+  })
+})
+
+describe('splitLeadingImports with a Solution marker', () => {
+  const exercise = [
+    'import kotlin.math.PI',
+    '',
+    'fun area(radius: Double): Double = PI * radius * radius',
+    '',
+    '// Solution: the slide shows only the checks',
+    'check(area(1.0) == PI)',
+  ].join('\n')
+
+  it('folds everything above the marker like an Example and flags it as a solution', () => {
+    const split = splitLeadingImports(exercise)
+    expect(split.imports).toEqual(['kotlin.math.PI'])
+    expect(split.body).toBe('check(area(1.0) == PI)')
+    expect(split.prefix).toBe('import kotlin.math.PI\n\nfun area(radius: Double): Double = PI * radius * radius')
+    expect(split.solution).toBe(true)
+    expect(split.foldStartLine).toBe(0)
+    expect(split.bodyStartLine).toBe(5)
+  })
+
+  it('does not flag an Example prefix or a plain import block', () => {
+    expect(splitLeadingImports('fun helper() = 1\n// Example\nhelper()').solution).toBeUndefined()
+    expect(splitLeadingImports('import a.A\n\nval x = A()').solution).toBeUndefined()
+  })
+
+  it('recognises the marker with the same spellings as Example', () => {
+    for (const marker of ['// Solution', '//Solution', '// solution: lower case', '  // Solution :  spaced  '])
+      expect(SOLUTION_MARKER.test(marker), marker).toBe(true)
+    for (const line of ['// Solutions', '// The Solution', 'val solution = 1', '/* Solution */'])
+      expect(SOLUTION_MARKER.test(line), line).toBe(false)
+  })
+
+  it('takes the first marker of either kind', () => {
+    const split = splitLeadingImports('val a = 1\n// Solution\nval b = a\n// Example\nval c = b')
+    expect(split.solution).toBe(true)
+    expect(split.body).toBe('val b = a\n// Example\nval c = b')
+    expect(splitLeadingImports('val a = 1\n// Example\nval b = a\n// Solution\nval c = b').solution).toBeUndefined()
+  })
+
+  it('is an ordinary comment with nothing above it', () => {
+    const code = '// Solution: nothing to fold\ncheck(true)'
+    expect(splitLeadingImports(code)).toEqual({ imports: [], body: code })
+  })
+})
+
+describe('withoutSolution', () => {
+  it('drops the solution and the marker but keeps its imports for the reader', () => {
+    expect(withoutSolution([
+      'import kotlin.math.PI',
+      'import a.A',
+      '',
+      'fun area(radius: Double): Double = PI * radius * radius',
+      '',
+      '// Solution',
+      'check(area(1.0) == PI)',
+    ].join('\n'))).toBe('import kotlin.math.PI\nimport a.A\n\ncheck(area(1.0) == PI)')
+  })
+
+  it('leaves a solution without imports as just the exercise', () => {
+    expect(withoutSolution('fun twoTerms(a: Int, c: Int): Int = a + c\n\n// Solution\ncheck(twoTerms(1, 1) == 2)')).toBe('check(twoTerms(1, 1) == 2)')
+  })
+
+  it('keeps an Example prefix, a plain import block, and a bare marker as written', () => {
+    for (const code of [
+      'import a.A\n\nfun helper(): A = A()\n\n// Example\nhelper()',
+      'import a.A\n\nval x = A()',
+      '// Solution\ncheck(true)',
+      'val x = 1',
+    ])
+      expect(withoutSolution(code)).toBe(code)
   })
 })
 
@@ -236,6 +311,18 @@ describe('foldImportEdits', () => {
       'val y = x',
       '```',
     ].join('\n'))
+  })
+
+  it('removes a Solution prefix from the slide together with the marker line', () => {
+    const source = [
+      '```kotlin',
+      'fun Int.isEven(): Boolean = this % 2 == 0',
+      '',
+      '// Solution',
+      'check(4.isEven())',
+      '```',
+    ].join('\n')
+    expect(applyEdits(source, foldImportEdits(source))).toBe('```kotlin\ncheck(4.isEven())\n```')
   })
 
   it('removes the Example prefix of every step of a classic magic-move block', () => {

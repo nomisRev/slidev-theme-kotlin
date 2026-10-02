@@ -13,7 +13,9 @@
  *   fence and a Kotlin fence on the same slide share that package, allowing
  *   them to demonstrate Java ↔ Kotlin interop;
  * - the imports written in the fence are kept, as is anything folded above
- *   a `// Example` marker, and the deck can add shared imports
+ *   a `// Example` or `// Solution` marker (an exercise slide's assertions
+ *   compile against the solution the handout never prints), and the deck
+ *   can add shared imports
  *   (`themeConfig.snippets.imports`) for tables and types the slides use
  *   without defining, kept in a hand-written support package;
  * - Kotlin top-level declarations stay top-level and bare statements are
@@ -100,6 +102,11 @@ type Mode = 'code' | 'block' | 'string' | 'raw'
  * char literals, so a caller can tell where top-level constructs begin.
  */
 export function scanKotlin(code: string): ScannedLine[] {
+  return scanSource(code, true)
+}
+
+/** Java shares the bracket/string scan, but has no string templates or nested block comments. */
+function scanSource(code: string, kotlin: boolean): ScannedLine[] {
   const result: ScannedLine[] = []
   let depth = 0
   let mode: Mode = 'code'
@@ -156,7 +163,7 @@ export function scanKotlin(code: string): ScannedLine[] {
         continue
       }
       if (mode === 'block') {
-        if (two === '/*') {
+        if (kotlin && two === '/*') {
           blockDepth++
           masked += '  '
           i += 2
@@ -174,7 +181,7 @@ export function scanKotlin(code: string): ScannedLine[] {
         }
         continue
       }
-      if (two === '${') {
+      if (kotlin && two === '${') {
         templates.push({ mode, depth })
         depth++
         mode = 'code'
@@ -226,9 +233,10 @@ export interface TopLevelSplit {
 const MODIFIERS = 'public|private|protected|internal|expect|actual|final|open|abstract|sealed|const|external|override|lateinit|tailrec|vararg|suspend|inner|enum|annotation|companion|inline|value|infix|operator|data|noinline|crossinline'
 const DECLARATION = new RegExp(`^(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*(?:(?:${MODIFIERS})\\s+)*(?:fun|val|var|object|class|interface|typealias)\\b`)
 const DECLARATION_PREFIX = /^(?:@[\w.]|context\s*\()/
-// `val _ = f()` discards a result and `val (a, b) = pair` destructures one;
+// `val _ = f()` discards a result, `val (a, b) = pair` destructures one, and
+// so does the positional `val [a, b] = pair` of `-Xname-based-destructuring`;
 // underscore names and destructuring are only legal for locals.
-const LOCAL_ONLY = /^(?:val|var)\s+(?:_+\s*(?::|=)|\()/
+const LOCAL_ONLY = /^(?:val|var)\s+(?:_+\s*(?::|=)|[([])/
 // A non-indented line that can only continue the construct above it.
 const CONTINUATION = /^(?:[.)\]}]|\?[.:]|&&|\|\||->|else\b|catch\b|finally\b)/
 // A line after which the construct is still open.
@@ -314,7 +322,10 @@ function identifier(slug: string): string {
 
 /** Java requires a public top-level type to have the same name as its source file. */
 function javaCompilationUnitName(code: string): string | undefined {
-  return code.match(/^public\s+(?:(?:final|abstract|sealed|non-sealed|static|strictfp)\s+)*(?:class|interface|enum|record|@interface)\s+(\w+)/m)?.[1]
+  const topLevel = scanSource(code, false)
+    .map(line => line.depthAtStart === 0 ? line.masked : '')
+    .join('\n')
+  return topLevel.match(/^\s*public\s+(?:(?:final|abstract|sealed|non-sealed|static|strictfp)\s+)*(?:class|interface|enum|record|@interface)\s+(\w+)/m)?.[1]
 }
 
 // Attribute lists may hold `>` inside quotes (`message="a > b"`), so a tag

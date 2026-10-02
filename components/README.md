@@ -445,14 +445,16 @@ Give `text` to mark an exact rendered fragment, even when Shiki split it across
 syntax-token spans. `occurrence` selects its one-based occurrence (default
 `1`). Add `line` to limit the text search to that one-based source line.
 
-A diagnostic can cover several lines: write the line break into `text` as
-`\n` (or a real newline in a bound string), indentation included, exactly as
-the code renders. Every line the match covers gets its own squiggle, and the
-message sits after the line the match starts on, as IntelliJ places its
-inline diagnostics. With `line`, that is the first line of the match.
+A diagnostic can cover several lines. The simplest way is a line range:
+`line="3-6"` underlines the code of lines 3 to 6. Or write the line break
+into `text` as `\n` (or a real newline in a bound string); the indentation
+after a line break may be left out. Every line gets its own squiggle, starting
+at its code rather than at its indentation, and the message sits after the
+last line of the match.
 
 ````md
-<InlineCompilerError text="when (state) {\n  is Loading -> spinner()\n}" message="'when' expression must be exhaustive">
+<InlineCompilerError line="3-6" message="Platform declaration clash">
+<InlineCompilerError text="when (state) {\nis Loading -> spinner()\n}" message="'when' expression must be exhaustive">
 ````
 
 Alternatively, give only `line` to underline the line's non-whitespace code.
@@ -463,8 +465,8 @@ time to settle.
 | prop | required | meaning |
 | --- | --- | --- |
 | `message` | yes | diagnostic shown beside the code and announced to screen readers; the same Markdown as a `DrawnAnnotation` label, so `` `Int` `` renders inline code and `\n` breaks the line |
-| `text` | one of `text` or `line` | exact rendered code text to underline; `\n` continues it on the next line |
-| `line` | one of `text` or `line` | one-based line number; also narrows a `text` search to that line (the first line of a multi-line match) |
+| `text` | one of `text` or `line` | exact rendered code text to underline; `\n` continues it on the next line, whose indentation is optional |
+| `line` | one of `text` or `line` | one-based line number, or an inclusive range like `"3-6"`; also narrows a `text` search to the lines starting at that line |
 | `occurrence` | no | one-based match of `text` to underline; defaults to `1` |
 
 ## Click timing
@@ -643,6 +645,27 @@ fun liveTalks(talks: List<Talk>): List<Talk> =
 </TypeHint>
 ````
 
+`type` draws IntelliJ's other inlay, the inferred type of a declaration, for
+a `val x by …` or any name whose type the code leaves out. `text` names the
+declaration (it has no default here) and the grey `: Column<String>` pill sits
+right after it, inside the line: the code that follows moves right, as in the
+IDE, instead of being covered.
+
+````md
+<TypeHint :line="2" text="customer" type="Column<String>">
+<TypeHint :line="3" text="hours" type="Column<Number>">
+
+```kotlin
+generateExcel("invoices.xlsx", invoices) {
+  val customer by column { it.customer }
+  val hours by column { it.hours }
+}
+```
+
+</TypeHint>
+</TypeHint>
+````
+
 The hint is the message of `SmartCast` and `Warning` in another shape: the
 same exact-text match across Shiki tokens, the same placement after the end
 of the line the match starts on, the same wait for a Magic Move step to
@@ -659,10 +682,11 @@ line (`body { }`), the pill sits after that code instead of covering it.
 
 | prop | required | meaning |
 | --- | --- | --- |
-| `receiver` | one of the two | the lambda's receiver type; rendered as `this: <receiver>` |
-| `context` | one of the two | what a `context(...)` block supplies; rendered as `context(<context>)` |
+| `receiver` | one of the three | the lambda's receiver type; rendered as `this: <receiver>` |
+| `context` | one of the three | what a `context(...)` block supplies; rendered as `context(<context>)` |
+| `type` | one of the three | a declaration's inferred type; rendered as `: <type>` inside the line, right after `text` |
 | `line` | no | one-based line number that narrows the `text` search |
-| `text` | no | exact rendered code the pill follows; defaults to `{` |
+| `text` | with `type` | exact rendered code the pill follows; defaults to `{` for `receiver` and `context` |
 | `occurrence` | no | one-based match of `text` on that line; defaults to `1` |
 
 ## Click timing

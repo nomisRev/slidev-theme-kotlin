@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TextSegment } from './code-text-match'
-import { findTextInSegments, lineCount, mergeVisualLines, segmentsOnLines, trimmedLineRange } from './code-text-match'
+import { findTextInSegments, lineCount, lineSpanMatch, mergeVisualLines, segmentsOnLines, trimmedLineRange } from './code-text-match'
 
 // The matcher only needs `document.createRange()` and the Range's boundary
 // setters, so a tiny stand-in keeps these tests free of a DOM environment.
@@ -86,12 +86,26 @@ describe('findTextInSegments', () => {
     expect(miss.matches).toBe(2)
   })
 
-  it('matches a needle that spans lines, line breaks and indentation included', () => {
+  it('matches a needle that spans lines, with or without the indentation', () => {
     const match = findTextInSegments(block(), 'val x = 1\n    val y', 1)
     expect(match.range).not.toBeNull()
     expect(match.line).toBe(2)
+    expect(match.endLine).toBe(3)
     expect(selected(match.range as unknown as FakeRange)).toBe('    val[4].. y[2]')
-    expect(findTextInSegments(block(), 'val x = 1\nval y', 1).matches).toBe(0)
+    for (const needle of ['val x = 1\nval y', 'val x = 1\n  val y', 'val x = 1\n        val y'])
+      expect(selected(findTextInSegments(block(), needle, 1).range as unknown as FakeRange)).toBe('    val[4].. y[2]')
+    expect(findTextInSegments(block(), 'val x = 1\nx', 1).matches).toBe(0)
+  })
+
+  it('matches regex characters literally', () => {
+    expect(findTextInSegments(block(), '() {', 1).matches).toBe(1)
+    expect(findTextInSegments(block(), '(.*)', 1).matches).toBe(0)
+  })
+
+  it('cuts a multi-line match into one trimmed range per line', () => {
+    const match = findTextInSegments(block(), 'main() {\nval x = 1\nval y', 1)
+    expect(match.lineRanges!.map(range => selected(range as unknown as FakeRange)))
+      .toEqual([' main[1]..() {[4]', '    val[4]..1[1]', '    val[4].. y[2]'])
   })
 
   it('narrows the search to one line and counts occurrences there', () => {
@@ -120,6 +134,21 @@ describe('findTextInSegments', () => {
   it('ends a match on the last real text node when it stops at a line break', () => {
     const match = findTextInSegments(block(), '() {\n', 1)
     expect(selected(match.range as unknown as FakeRange)).toBe('() {[0]..() {[4]')
+  })
+})
+
+describe('lineSpanMatch', () => {
+  it('spans the trimmed code of a line range, one range per line', () => {
+    const match = lineSpanMatch(block(), 1, 3)
+    expect(selected(match.range as unknown as FakeRange)).toBe('fun[0]..x[1]')
+    expect(match.line).toBe(1)
+    expect(match.endLine).toBe(3)
+    expect(match.lineRanges!.map(range => selected(range as unknown as FakeRange)))
+      .toEqual(['fun[0]..() {[4]', '    val[4]..1[1]', '    val[4]..x[1]'])
+  })
+
+  it('has no range over empty lines', () => {
+    expect(lineSpanMatch([token('   ', 1), newline(1), token('x', 2)], 1, 1).range).toBeNull()
   })
 })
 

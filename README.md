@@ -214,13 +214,31 @@ The window shows `fun doubled()…`. The comment is ordinary Kotlin, so the
 fence still compiles as written (see the snippet checker below), and the
 handout keeps it. A description after the colon is optional.
 
+An exercise slide shows the assertions and hides the answer. Put the answer
+above a `// Solution` comment instead: it folds exactly like `// Example`,
+the snippet checker compiles the assertions against it, but the handout and
+`llms-full.txt` print the fence without it (only its `import` lines survive,
+so a reader can still resolve the symbols), and nothing on the slide can
+reveal it:
+
+````md
+```kotlin
+fun Int.isEven(): Boolean = this % 2 == 0
+
+// Solution
+check(4.isEven())
+check(!7.isEven())
+```
+````
+
 Details:
 
 - Kotlin, Java, and Scala fences (`kotlin`, `kt`, `kts`, `java`, `scala`)
   fold. Without a marker, only a block of `import` lines at the top of the
   fence counts, and a `package` line or `@file:` annotation before it stays
   visible. With a marker, everything above it folds. Only the first
-  `// Example` line in a fence counts, and only when there is code above it.
+  `// Example` or `// Solution` line in a fence counts, and only when there
+  is code above it.
 - Line numbers, `{1|2-3}` highlight ranges, and annotation targets all
   count from the first line of real code, so folding never shifts them.
 - Cross-slide Magic Move chains and classic ````md magic-move```` blocks fold

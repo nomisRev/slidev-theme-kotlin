@@ -80,6 +80,12 @@ describe('splitTopLevel', () => {
     expect(split.statements).toBe('val (a, b) = pair\n\nprintln(a + b)')
   })
 
+  it('treats the positional `val [a, b]` and the full `(val a = x)` forms as statements too', () => {
+    const split = splitTopLevel('val pair = 1 to 2\n\nval [a, b] = pair\n(val x = first, val y = second) = pair\nprintln(a + b + x + y)')
+    expect(split.declarations).toBe('val pair = 1 to 2')
+    expect(split.statements).toBe('val [a, b] = pair\n\n(val x = first, val y = second) = pair\n\nprintln(a + b + x + y)')
+  })
+
   it('attaches annotations and context lines to the declaration below', () => {
     const split = splitTopLevel('@JvmInline\nvalue class Title(val value: String)\n\ncontext(_: Transaction)\nfun previews() = Talks.selectAll()\n\n@Transactional\nprivate fun f() = 1')
     expect(split.declarations).toBe('@JvmInline\nvalue class Title(val value: String)\n\ncontext(_: Transaction)\nfun previews() = Talks.selectAll()\n\n@Transactional\nprivate fun f() = 1')
@@ -182,6 +188,23 @@ describe('renderSnippetFile', () => {
     ].join('\n'))
   })
 
+  it('compiles a Solution prefix together with the exercise it solves', () => {
+    const fence = parseFenceInfo('kotlin', 'import a.A\n\nfun solve(): A = A()\n\n// Solution: the slide shows only the check\ncheck(solve() == A())\n')
+    expect(fence.code).toBe('check(solve() == A())')
+    expect(renderSnippetFile(fence, 'p.s1', source, settings).split('\n').slice(3).join('\n')).toBe([
+      'package p.s1',
+      '',
+      'import a.A',
+      '',
+      'fun solve(): A = A()',
+      '',
+      'suspend fun main() {',
+      '    check(solve() == A())',
+      '}',
+      '',
+    ].join('\n'))
+  })
+
   it('keeps the Example prefix of a show-imports fence, marker line aside', () => {
     const fence = parseFenceInfo('kotlin show-imports', 'import a.A\n\nfun helper(): A = A()\n\n// Example\nhelper()\n')
     expect(fence.prefix).toBeUndefined()
@@ -252,6 +275,26 @@ describe('collectSnippetFiles', () => {
       'src/main/java/snippets/lesson-2/Shape.java',
       'src/main/java/snippets/lesson-2/006-nested.java',
     ])
+  })
+
+  it('names indented public Java types by their class name, ignoring nested types and quoted declarations', () => {
+    const files = collectSnippetFiles([
+      slide(0, '/deck/slides.md', 'Indented class', '```java\n  public class Person {}\n```'),
+      slide(1, '/deck/slides.md', 'Indented interface', '```java\n\tpublic sealed interface Shape permits Circle {}\n```'),
+      slide(2, '/deck/slides.md', 'Nested at column zero', '```java\nclass Outer {\npublic record Point(int x, int y) {}\n}\n```'),
+      slide(3, '/deck/slides.md', 'Quoted declaration', '```java\nclass Examples {\n  String code = """\npublic class Fake {}\n""";\n  String template = "${";\n}\n  public class Real {}\n```'),
+      slide(4, '/deck/slides.md', 'Commented declaration', '```java\n/*\npublic class Fake {}\n*/\n  public final class Answer {}\n```'),
+      slide(5, '/deck/slides.md', 'Multiline modifiers', '```java\n  public\n  final class Multiline {}\n```'),
+    ], root, settings)
+    expect(files.map(file => file.path)).toEqual([
+      'src/main/java/snippets/slides/Person.java',
+      'src/main/java/snippets/slides/Shape.java',
+      'src/main/java/snippets/slides/003-nested-at-column-zero.java',
+      'src/main/java/snippets/slides/Real.java',
+      'src/main/java/snippets/slides/Answer.java',
+      'src/main/java/snippets/slides/Multiline.java',
+    ])
+    expect(files[0].content).toContain('public class Person {}')
   })
 
   it('tells parallel fences apart by their identity, else by letter', () => {

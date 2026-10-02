@@ -40,7 +40,7 @@ export interface ParsedFence {
   code: string
   /** Import targets folded off the top of `code` (see `code-imports.ts`). */
   imports: string[]
-  /** The code folded above a `// Example` marker, imports included, if the fence has one. */
+  /** The code folded above a `// Example` or `// Solution` marker, imports included, if the fence has one. */
   prefix?: string
 }
 

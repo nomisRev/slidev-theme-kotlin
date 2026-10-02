@@ -38,6 +38,14 @@ export interface TextMatch extends TextRange {
   matches: number
   /** Source line the match starts on, when the segments carry line numbers. */
   line?: number
+  /** Source line the match ends on, when the segments carry line numbers. */
+  endLine?: number
+  /**
+   * The match cut into one range per source line it covers, each without the
+   * line's indentation or trailing whitespace: one squiggle per line, starting
+   * at the code rather than at column 0. Lines with nothing left are skipped.
+   */
+  lineRanges?: Range[]
 }
 
 /** Tokens Magic Move is animating out; their text is on its way off the slide. */
@@ -166,30 +174,102 @@ export function rangeFromSegments(segments: TextSegment[], start: number, end: n
 }
 
 /**
+ * The needle as a pattern. A line after a `\n` in the needle may start with
+ * any indentation, whatever the needle itself writes there, so a multi-line
+ * target reads `fun f(\nname: String\n)` instead of repeating the code's
+ * exact leading spaces. Everything else matches literally.
+ */
+function needlePattern(needle: string) {
+  const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const [first, ...rest] = needle.split('\n')
+  const continued = rest.map(part => part.trim() ? `[ \\t]*${escape(part.trimStart())}` : escape(part))
+  return new RegExp([escape(first), ...continued].join('\n'), 'g')
+}
+
+/**
  * Finds the requested occurrence of `needle` in the flattened segments. With
  * `line`, only that source line is searched — or, for a needle that spans
  * several lines, the lines starting there — and occurrences are counted
- * inside that scope.
+ * inside that scope. Indentation after a line break in the needle is optional
+ * (see `needlePattern`).
  */
 export function findTextInSegments(segments: TextSegment[], needle: string, occurrence: number, line?: number): TextMatch {
   const scoped = line === undefined ? segments : segmentsOnLines(segments, line, lineCount(needle))
   const value = scoped.map(segment => segment.text).join('')
-  const starts: number[] = []
-  for (let index = value.indexOf(needle); index >= 0; index = value.indexOf(needle, index + 1))
-    starts.push(index)
+  const found: { start: number, end: number }[] = []
+  const pattern = needlePattern(needle)
+  for (let match = pattern.exec(value); match; match = pattern.exec(value)) {
+    found.push({ start: match.index, end: match.index + match[0].length })
+    // Overlapping occurrences count, as they did with `indexOf`.
+    pattern.lastIndex = match.index + 1
+  }
 
-  const start = starts[Math.max(1, occurrence) - 1]
-  if (start === undefined)
-    return { range: null, elements: [], matches: starts.length }
+  const hit = found[Math.max(1, occurrence) - 1]
+  if (hit === undefined)
+    return { range: null, elements: [], matches: found.length }
 
-  const { range, elements } = rangeFromSegments(scoped, start, start + needle.length)
+  const { range, elements } = rangeFromSegments(scoped, hit.start, hit.end)
   if (!range)
-    return { range: null, elements: [], matches: starts.length }
-  return { range, elements, matches: starts.length, line: startLine(scoped, start) }
+    return { range: null, elements: [], matches: found.length }
+  return {
+    range,
+    elements,
+    matches: found.length,
+    line: lineAt(scoped, hit.start),
+    endLine: lineAt(scoped, hit.end - 1),
+    lineRanges: trimmedLineRanges(scoped, hit.start, hit.end),
+  }
+}
+
+/**
+ * The trimmed code of source lines `from` … `to` as one match: it starts at
+ * the first line's code and ends after the last line's, and has one range per
+ * non-empty line. What a diagnostic on a whole statement or declaration
+ * underlines.
+ */
+export function lineSpanMatch(segments: TextSegment[], from: number, to: number): TextMatch {
+  const scoped = segmentsOnLines(segments, from, to - from + 1)
+  const value = scoped.map(segment => segment.text).join('')
+  const start = value.length - value.trimStart().length
+  const end = value.trimEnd().length
+  if (start >= end)
+    return { range: null, elements: [], matches: 0 }
+  const { range, elements } = rangeFromSegments(scoped, start, end)
+  if (!range)
+    return { range: null, elements: [], matches: 0 }
+  return {
+    range,
+    elements,
+    matches: 1,
+    line: lineAt(scoped, start),
+    endLine: lineAt(scoped, end - 1),
+    lineRanges: trimmedLineRanges(scoped, start, end),
+  }
+}
+
+/** Cuts `start` … `end` of the joined text at line breaks and trims each piece. */
+function trimmedLineRanges(segments: TextSegment[], start: number, end: number): Range[] {
+  const value = segments.map(segment => segment.text).join('')
+  const ranges: Range[] = []
+  let lineStart = start
+  while (lineStart < end) {
+    const breakAt = value.indexOf('\n', lineStart)
+    const lineEnd = breakAt < 0 || breakAt > end ? end : breakAt
+    const piece = value.slice(lineStart, lineEnd)
+    const from = lineStart + piece.length - piece.trimStart().length
+    const to = lineStart + piece.trimEnd().length
+    if (from < to) {
+      const { range } = rangeFromSegments(segments, from, to)
+      if (range)
+        ranges.push(range)
+    }
+    lineStart = lineEnd + 1
+  }
+  return ranges
 }
 
 /** The source line of the segment containing `offset` of the joined text. */
-function startLine(segments: TextSegment[], offset: number): number | undefined {
+function lineAt(segments: TextSegment[], offset: number): number | undefined {
   let position = 0
   for (const segment of segments) {
     const next = position + segment.text.length

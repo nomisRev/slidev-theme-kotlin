@@ -7,36 +7,49 @@ import { useCodeHighlight } from './code-highlight'
  * IntelliJ's lambda inlay hint: the grey `this: HTML` pill the IDE draws
  * right after the `{` of a lambda with receiver, or `context(Clock)` after
  * the block of a `context(...)` call, which brings a context into scope
- * without touching `this`. Made for DSL slides, where what each block brings
- * into scope is the whole point.
+ * without touching `this`. When code follows the `{` on its line, as in
+ * `formula { hours * rate }`, the pill sits inside the line between the two. Made for DSL slides, where what each block brings
+ * into scope is the whole point. With `type` it is instead the IDE's type
+ * inlay, `: Column<String>` right after the name in `text`, pushing the rest
+ * of the line to the right as IntelliJ does for a `val x by …`.
  */
 const props = defineProps<Omit<CodeHighlightProps, 'message'> & {
   /** The receiver type of the lambda, shown as `this: <receiver>`. */
   receiver?: string
   /** The context a `context(...)` block supplies, shown as `context(<context>)` — no `this:`, as IntelliJ renders it. */
   context?: string
+  /** The inferred type of the declaration named by `text`, shown inline as `: <type>` right after it. */
+  type?: string
 }>()
 const container = useTemplateRef<HTMLElement>('container')
 
-if (import.meta.env.MODE === 'development' && !props.receiver && !props.context)
-  console.warn('[TypeHint] Give `receiver` (rendered `this: …`) or `context` (rendered `context(…)`) — the hint is not shown.')
+if (import.meta.env.MODE === 'development' && !props.receiver && !props.context && !props.type)
+  console.warn('[TypeHint] Give `receiver` (rendered `this: …`), `context` (rendered `context(…)`), or `type` (rendered `: …` after `text`) — the hint is not shown.')
+if (import.meta.env.MODE === 'development' && props.type && !props.text)
+  console.warn('[TypeHint] A `type` hint needs `text`: the name it follows, such as `text="customer"`.')
 
 // The same exact-text match and message placement as `SmartCast` and
 // `Warning`, with nothing painted: the hint sits after the `{` that ends
-// its line, or after the line when more code follows the brace.
+// its line. When more code follows the brace, it is drawn inside the line
+// instead, right after the match, as is a `type` hint (the `.type-hint-inlay`
+// rule below), so the rest of the line moves right as it does in the IDE.
 const highlightProps = reactive({
   ...toRefs(props),
-  text: computed(() => props.text ?? '{'),
-  message: computed(() => props.receiver ? `this: ${props.receiver}` : props.context ? `context(${props.context})` : undefined),
+  text: computed(() => props.text ?? (props.type ? undefined : '{')),
+  message: computed(() => props.type ? undefined : props.receiver ? `this: ${props.receiver}` : props.context ? `context(${props.context})` : undefined),
 })
-const { message, messageShown, messageStyle } = useCodeHighlight(highlightProps, container, { component: 'TypeHint' })
+const { message, messageShown, messageStyle, inlaid } = useCodeHighlight(highlightProps, container, {
+  component: 'TypeHint',
+  highlightClass: props.type ? 'type-hint-inlay' : 'type-hint-lambda',
+  inlay: ({ endsLine }) => props.type ? `: ${props.type}` : endsLine ? undefined : highlightProps.message,
+})
 </script>
 
 <template>
   <div ref="container" class="type-hint-host">
     <slot />
     <Transition name="type-hint">
-      <span v-if="messageShown" class="type-hint" :style="messageStyle">{{ message }}</span>
+      <span v-if="messageShown && !inlaid" class="type-hint" :style="messageStyle">{{ message }}</span>
     </Transition>
   </div>
 </template>
@@ -69,6 +82,33 @@ const { message, messageShown, messageStyle } = useCodeHighlight(highlightProps,
 
 <style>
 html.dark .type-hint {
+  color: var(--type-hint-color, #8c8c8c);
+  background: var(--type-hint-background, #3c3f41);
+}
+/* The `type` inlay lives inside the code line (see `inlay` in
+   code-highlight.ts), so it is unscoped and takes the pill's look while
+   staying in the flow: the code after it moves right. */
+.type-hint-inlay[data-code-inlay]::after,
+.type-hint-lambda[data-code-inlay]::after {
+  content: attr(data-code-inlay);
+  display: inline-block;
+  margin-left: 0.05em;
+  padding: 0 0.45em;
+  border-radius: 0.5em;
+  color: var(--type-hint-color, #6c707e);
+  background: var(--type-hint-background, #ebecf0);
+  font-size: var(--type-hint-size, 0.85em);
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.45;
+  vertical-align: 0.05em;
+  white-space: pre;
+  pointer-events: none;
+  user-select: none;
+}
+.type-hint-lambda[data-code-inlay]::after { margin-left: 0.4em; }
+html.dark .type-hint-inlay[data-code-inlay]::after,
+html.dark .type-hint-lambda[data-code-inlay]::after {
   color: var(--type-hint-color, #8c8c8c);
   background: var(--type-hint-background, #3c3f41);
 }

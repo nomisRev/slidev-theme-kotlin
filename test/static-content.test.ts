@@ -114,6 +114,7 @@ describe('cleanProse', () => {
       '<SmartCast text="name" message="Smart cast to `String`" />',
       '<TypeHint :line="2" receiver="HTML" />',
       '<TypeHint :line="3" context="Clock" />',
+      '<TypeHint :line="4" text="customer" type="Column<String>" />',
       '<InlineValue text="numbers" value="List<Int> = [1, 2]" />',
     ].join('\n')
     expect(cleanProse(prose, base)).toBe([
@@ -121,6 +122,7 @@ describe('cleanProse', () => {
       '> **Smart cast** at `name`: Smart cast to `String`',
       '> **Type hint** `this: HTML`',
       '> **Type hint** `context(Clock)`',
+      '> **Type hint** `customer: Column<String>`',
       '> **Inline value** `numbers`: `List<Int> = [1, 2]`',
     ].join('\n\n'))
   })
@@ -157,6 +159,13 @@ describe('cleanSlideMarkdown', () => {
     expect(cleanSlideMarkdown(content, ctx)).toBe(
       '**JDBC · Talks.kt**\n\n```kotlin\nimport a.A\n\nval x = A()\n```\n\n```sql\nSELECT 1\n```',
     )
+  })
+
+  it('keeps an Example prefix in the code but drops a Solution prefix, imports aside', () => {
+    const example = '```kotlin\nimport a.A\n\nfun helper(): A = A()\n\n// Example\nhelper()\n```'
+    expect(cleanSlideMarkdown(example, ctx)).toBe(example)
+    const exercise = '```kotlin\nimport a.A\n\nfun solve(): A = A()\n\n// Solution: never printed\ncheck(solve() == A())\n```'
+    expect(cleanSlideMarkdown(exercise, ctx)).toBe('```kotlin\nimport a.A\n\ncheck(solve() == A())\n```')
   })
 
   it('puts every heading below the slide title and leaves fences alone', () => {

@@ -2,8 +2,8 @@
 /**
  * Export every Slidev slide/click state at two revisions for the theme deck and
  * its local consumer deck, then make a local visual-review bundle. Captures are
- * produced by the Slidev CLI exporter using `--format png --with-clicks`, so
- * every click state in Slidev's print view is written as a separate image.
+ * produced from Slidev's print view, waiting for each slide's transitions
+ * and motion reveals after scrolling it into view, including every click state.
  *
  * Usage:
  *   node scripts/visual-review.mjs [--base <git-ref>] [--check]
@@ -18,6 +18,7 @@ import { PNG } from 'pngjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const slidevCli = resolve(projectRoot, 'node_modules/@slidev/cli/bin/slidev.mjs')
+const screenshotHook = resolve(projectRoot, 'scripts/settled-screenshots.mjs')
 const consumerProjectRoot = resolve(projectRoot, '../kotlin-fundamentals')
 const reviewConsumer = existsSync(join(consumerProjectRoot, 'slides.md'))
 const outputRoot = resolve(projectRoot, '.visual')
@@ -58,6 +59,7 @@ function listPngs(dir) {
 function capture(cwd, destination) {
   empty(destination)
   const exported = spawnSync(process.execPath, [
+    '--import', screenshotHook,
     slidevCli,
     'export',
     'slides.md',
@@ -66,10 +68,7 @@ function capture(cwd, destination) {
     '--output', destination,
     '--wait-until', 'networkidle',
     '--timeout', '30000',
-  ], {
-    cwd,
-    stdio: 'inherit',
-  })
+  ], { cwd, stdio: 'inherit' })
   if (exported.error)
     throw exported.error
   if (exported.status !== 0)

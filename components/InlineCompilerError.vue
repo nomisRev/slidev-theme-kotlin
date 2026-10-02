@@ -4,7 +4,7 @@ import type { TextMatch } from './code-text-match'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useIsSlideActive, useNav, useSlideContext } from '@slidev/client'
 import { useMutationObserver, useResizeObserver } from '@vueuse/core'
-import { codeTextSegments, findTextInSegments, mergeVisualLines, trimmedLineRange } from './code-text-match'
+import { codeTextSegments, findTextInSegments, lineSpanMatch, mergeVisualLines, trimmedLineRange } from './code-text-match'
 import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
@@ -19,15 +19,16 @@ const isDevelopment = import.meta.env.MODE === 'development'
 const props = defineProps<{
   /**
    * One-based source line number inside the single fenced code block this
-   * component wraps. Alone, it underlines that line's code. With `text`, it
-   * narrows the search to that line — the first line of the match when `text`
-   * spans several.
+   * component wraps, or an inclusive range such as `"3-6"`. Alone, it
+   * underlines the code of that line or those lines. With `text`, it narrows
+   * the search to the lines starting at the first one.
    */
-  line?: number
+  line?: number | string
   /**
    * Exact rendered code text to underline. `\\n` (or a literal newline in a
-   * bound string) continues the match on the next source line; every line the
-   * match covers gets its own squiggle.
+   * bound string) continues the match on the next source line, whose
+   * indentation may be left out; every line the match covers gets its own
+   * squiggle.
    */
   text?: string
   /** Which occurrence of `text` to underline, 1-based. */
@@ -55,6 +56,19 @@ const props = defineProps<{
 const messageHtml = computed(() => renderAnnotationLabel(props.message))
 const messageText = computed(() => annotationLabelText(props.message))
 const text = computed(() => props.text === undefined ? undefined : normalizeAnnotationLineBreaks(props.text))
+// `line` is one line (`:line="3"`, `line="3"`) or an inclusive range
+// (`line="3-6"`). Null marks a value that is neither.
+const lineSpan = computed<{ from: number, to: number } | null | undefined>(() => {
+  const line = props.line
+  if (line === undefined)
+    return undefined
+  const match = /^\s*(\d+)\s*(?:[-–]\s*(\d+)\s*)?$/.exec(String(line))
+  if (!match)
+    return null
+  const from = Number(match[1])
+  const to = match[2] === undefined ? from : Number(match[2])
+  return from >= 1 && to >= from ? { from, to } : null
+})
 
 const slideContext = useSlideContext()
 const { $clicksContext, $clicks, $scale, $zoom } = slideContext
@@ -276,7 +290,7 @@ function requestedOccurrence() {
  * container — is never trusted either way.
  */
 interface ResolvedTarget extends TextMatch {
-  /** The code of the line the match starts on: the message sits after it. */
+  /** The code of the line the match ends on: the message sits after it. */
   lineRange: Range | null
   startNode?: Node
   endNode?: Node
@@ -310,26 +324,27 @@ function resolveTarget(host: HTMLElement): ResolvedTarget {
 }
 
 function searchTarget(code: HTMLElement): ResolvedTarget {
-  const line = props.line
-  if (line !== undefined && (!Number.isInteger(line) || line < 1))
+  const span = lineSpan.value
+  if (span === null)
     return NO_TARGET
   const needle = text.value
-  if (needle === '' || (needle === undefined && line === undefined))
+  if (needle === '' || (needle === undefined && span === undefined))
     return NO_TARGET
 
   const segments = codeTextSegments(code, isMagicMove)
   const match: TextMatch = needle === undefined
-    ? { ...trimmedLineRange(segments, line!), matches: 0, line }
-    : findTextInSegments(segments, needle, requestedOccurrence(), line)
+    ? lineSpanMatch(segments, span!.from, span!.to)
+    : findTextInSegments(segments, needle, requestedOccurrence(), span?.from)
   if (!match.range)
     return { ...match, lineRange: null }
 
   // The squiggle follows only the exact offending text, but placing the
   // diagnostic immediately after that text would cover the remainder of its
   // source line. The message is anchored after the line's final
-  // non-whitespace token instead, on the line the match starts.
-  const startLine = match.line ?? line
-  const lineRange = startLine === undefined ? null : trimmedLineRange(segments, startLine).range
+  // non-whitespace token instead, on the line the match ends: after a
+  // multi-line declaration, not in the middle of it.
+  const endLine = match.endLine ?? match.line ?? span?.to
+  const lineRange = endLine === undefined ? null : trimmedLineRange(segments, endLine).range
   return { ...match, lineRange, startNode: match.range.startContainer, endNode: match.range.endContainer }
 }
 
@@ -392,20 +407,19 @@ function sync() {
   // rendered edges, including offsets inside the first and last token. Its
   // client rects are merged per visual line because Shiki fragments one
   // range by token, and a match can continue on the next line.
-  const lines = mergeVisualLines(range.getClientRects())
+  // Each source line is measured on its own, trimmed of its indentation, so
+  // a continuation line's squiggle starts at its code rather than column 0.
+  const lines = (nextTarget.lineRanges?.length ? nextTarget.lineRanges : [range])
+    .flatMap(lineRange => mergeVisualLines(lineRange.getClientRects()))
   if (!lines.length)
     return
   const first = lines[0]
 
-  // The message goes after the end of the line the match starts on, like
+  // The message goes after the end of the line the match ends on, like
   // IntelliJ's inline diagnostics, so the rest of that line stays readable.
-  let messageRight = first.right
-  if (nextTarget.lineRange) {
-    for (const box of Array.from(nextTarget.lineRange.getClientRects())) {
-      if (box.width)
-        messageRight = Math.max(messageRight, box.right)
-    }
-  }
+  const anchorLines = nextTarget.lineRange ? mergeVisualLines(nextTarget.lineRange.getClientRects()) : []
+  const anchor = anchorLines[anchorLines.length - 1] ?? lines[lines.length - 1]
+  const messageRight = Math.max(anchor.right, lines[lines.length - 1].right)
 
   // The slide clips at its own edge; wrap the message within the remaining
   // room instead of letting it run off the canvas.
@@ -421,7 +435,7 @@ function sync() {
   const targetSize = targetElement ? getComputedStyle(targetElement).fontSize : '12px'
   position.value = {
     left: `${(messageRight - hostBox.left) / scale + 10}px`,
-    top: `${(first.top - hostBox.top + (first.bottom - first.top) / 2) / scale}px`,
+    top: `${(anchor.top - hostBox.top + (anchor.bottom - anchor.top) / 2) / scale}px`,
     maxWidth: `${Math.max(60, (slideBox.right - messageRight) / scale - 34)}px`,
     '--inline-compiler-error-target-size': targetSize || '12px',
   }
@@ -588,18 +602,18 @@ watch([visible, hasTarget, () => props.line, text, () => props.occurrence, textM
         const scope = props.line === undefined ? '' : ` on line ${props.line}`
         if (!needle)
           warnMissingTarget(`\`text\` must be non-empty for "${props.message}" — the diagnostic is not shown.`)
-        else if (props.line !== undefined && (!Number.isInteger(props.line) || props.line < 1))
-          warnMissingTarget(`\`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
+        else if (lineSpan.value === null)
+          warnMissingTarget(`\`line\` must be a positive integer or a range like "3-6" for "${props.message}" — the diagnostic is not shown.`)
         else if (textMatches.value > 0)
           warnMissingTarget(`Text "${props.text}" only matched ${textMatches.value} time${textMatches.value === 1 ? '' : 's'}${scope}, but \`occurrence\` asks for match ${requestedOccurrence()} — the diagnostic is not shown.`)
         else
-          warnMissingTarget(`Text "${props.text}" was not found${scope} for "${props.message}" — it must match the rendered code exactly${needle.includes('\n') ? ', line breaks and indentation included' : ''}.`)
+          warnMissingTarget(`Text "${props.text}" was not found${scope} for "${props.message}" — it must match the rendered code exactly${needle.includes('\n') ? ', line breaks included (indentation after a line break is optional)' : ''}.`)
       }
       else if (props.line === undefined) {
         warnMissingTarget(`Give either \`line\` or \`text\` for "${props.message}" — the diagnostic is not shown.`)
       }
-      else if (!Number.isInteger(props.line) || props.line < 1) {
-        warnMissingTarget(`\`line\` must be a positive integer for "${props.message}" — the diagnostic is not shown.`)
+      else if (lineSpan.value === null) {
+        warnMissingTarget(`\`line\` must be a positive integer or a range like "3-6" for "${props.message}" — the diagnostic is not shown.`)
       }
       else {
         warnMissingTarget(`No code tokens on line ${props.line} for "${props.message}" — the diagnostic is not shown. Empty lines cannot be annotated; check the \`line\` prop.`)

@@ -21,6 +21,13 @@
  * the marker line. The comment is valid Kotlin, so the fence still compiles
  * as written; the handout prints it in full.
  *
+ * A `// Solution` marker folds the same way but is for code the audience must
+ * not read: the solution of an exercise slide that shows only the assertions.
+ * The generated Kotlin sources keep it, so the assertions on the slide are
+ * compiled against it, while the handout and `llms-full.txt` print the fence
+ * without it (its import lines aside, so the symbols still resolve for a
+ * reader). Nothing on the slide can reveal it.
+ *
  * Add `show-imports` to the fence info to keep the imports visible on a slide
  * that is about them, or set `themeConfig.foldImports: false` to turn the
  * feature off for a whole deck.
@@ -49,6 +56,12 @@ const IMPORT_LINE = /^import[ \t]+(\S.*?)[ \t]*;?[ \t]*$/
  * counts, and only when there is code above it.
  */
 export const EXAMPLE_MARKER = /^[ \t]*\/\/[ \t]*[Ee]xample(?:[ \t]*:.*)?[ \t]*$/
+/**
+ * The comment that marks where an exercise starts and its solution ends:
+ * `// Solution`, with the same optional description. It folds like
+ * `// Example`, but the folded region is kept out of the handout.
+ */
+export const SOLUTION_MARKER = /^[ \t]*\/\/[ \t]*[Ss]olution(?:[ \t]*:.*)?[ \t]*$/
 const PRELUDE_LINE = /^(?:package[ \t]+\S|@file:)/
 const SHOW_IMPORTS = /(?:^|\s)show-imports(?=\s|$)/
 const THEME_FLAGS = new RegExp(`(?:^|\\s)(?:${THEME_FENCE_FLAGS.join('|')})(?=\\s|$)`, 'g')
@@ -63,6 +76,8 @@ export interface SplitImports {
    * folded region, imports included, without the marker line.
    */
   prefix?: string
+  /** `true` when `prefix` sits above a `// Solution` marker: compiled, never printed. */
+  solution?: boolean
   /** Zero-based index of the first folded line, when something folds. */
   foldStartLine?: number
   /** Zero-based index of the first line kept after the folded region. */
@@ -70,8 +85,9 @@ export interface SplitImports {
 }
 
 /**
- * Split the folded region off a snippet: everything above a `// Example`
- * marker when the snippet has one, otherwise its leading import block.
+ * Split the folded region off a snippet: everything above a `// Example` or
+ * `// Solution` marker when the snippet has one (the first of either kind
+ * counts), otherwise its leading import block.
  *
  * Without a marker, a `package` line or `@file:` annotation before the
  * imports stays in the body. Blank lines are allowed between imports; the
@@ -80,14 +96,29 @@ export interface SplitImports {
  */
 export function splitLeadingImports(code: string): SplitImports {
   const lines = code.split(/\r?\n/)
-  return splitAtExampleMarker(lines) ?? splitImportBlock(code, lines)
+  return splitAtMarker(lines) ?? splitImportBlock(code, lines)
+}
+
+/**
+ * The fence as the handout and `llms-full.txt` print it: a fence with a
+ * `// Solution` marker loses the solution and the marker, keeping only the
+ * solution's import lines above the code. Any other fence is returned as is,
+ * `// Example` prefix included.
+ */
+export function withoutSolution(code: string): string {
+  const split = splitAtMarker(code.split(/\r?\n/))
+  if (!split?.solution)
+    return code
+  const imports = split.imports.map(target => `import ${target}`)
+  return imports.length ? `${imports.join('\n')}\n\n${split.body}` : split.body
 }
 
 /** The marker split, or `undefined` when there is no marker or nothing above it. */
-function splitAtExampleMarker(lines: string[]): SplitImports | undefined {
-  const marker = lines.findIndex(line => EXAMPLE_MARKER.test(line))
+function splitAtMarker(lines: string[]): SplitImports | undefined {
+  const marker = lines.findIndex(line => EXAMPLE_MARKER.test(line) || SOLUTION_MARKER.test(line))
   if (marker < 0)
     return undefined
+  const solution = SOLUTION_MARKER.test(lines[marker])
   const above = lines.slice(0, marker)
   const first = above.findIndex(line => line.trim() !== '')
   // A marker with nothing above it is an ordinary comment.
@@ -104,10 +135,17 @@ function splitAtExampleMarker(lines: string[]): SplitImports | undefined {
     const match = line.match(IMPORT_LINE)
     return match ? [match[1]] : []
   })
-  return { imports, body: lines.slice(end).join('\n'), prefix: prefix.join('\n'), foldStartLine: 0, bodyStartLine: end }
+  return {
+    imports,
+    body: lines.slice(end).join('\n'),
+    prefix: prefix.join('\n'),
+    ...(solution && { solution }),
+    foldStartLine: 0,
+    bodyStartLine: end,
+  }
 }
 
-/** Split only the leading import block off a snippet, ignoring any `// Example` marker. */
+/** Split only the leading import block off a snippet, ignoring any `// Example` or `// Solution` marker. */
 export function splitImportBlock(code: string, lines: string[] = code.split(/\r?\n/)): SplitImports {
   let start = 0
   while (start < lines.length && (lines[start].trim() === '' || PRELUDE_LINE.test(lines[start])))
@@ -233,7 +271,7 @@ function foldFence(lines: Line[], open: number, close: number, info: string, edi
 
 export interface FoldOptions {
   /**
-   * Fold the imports (or the `// Example` prefix) of each fence. `false`
+   * Fold the imports (or the `// Example` / `// Solution` prefix) of each fence. `false`
    * (`themeConfig.foldImports: false`) leaves the code as written; the
    * theme's flags still leave the info line, since Slidev must never see them.
    */
@@ -242,7 +280,7 @@ export interface FoldOptions {
 
 /**
  * Compute the edits that strip the theme's flags from, and fold the imports
- * (or the `// Example` prefix) of, every code fence in a slide's Markdown:
+ * (or the `// Example` / `// Solution` prefix) of, every code fence in a slide's Markdown:
  * top-level three-backtick fences and the steps of a classic
  * ````md magic-move```` block. Fences nested in any other four-plus-backtick
  * or tilde block are left alone.

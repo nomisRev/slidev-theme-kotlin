@@ -5,7 +5,8 @@
  * colour and name, so each component is a thin wrapper that hands its props,
  * its host element, and its identity to `useCodeHighlight` and renders the
  * message it returns. `TypeHint` uses the same match and message placement
- * without painting anything: its inlay is the message.
+ * without painting anything: its inlay is the message. Its `type` hint is
+ * instead drawn inside the line, after the match (see `inlay`).
  */
 import type { ClicksInfo } from '@slidev/types'
 import type { Ref } from 'vue'
@@ -58,6 +59,16 @@ export interface CodeHighlightOptions {
    * visible part is the message: the match is then located but left untouched.
    */
   highlightClass?: string
+  /**
+   * Text of an inline inlay drawn right after the match, inside the code line,
+   * so the rest of the line moves right as it does in the IDE. It is set as
+   * `data-code-inlay` on the last painted element and rendered by the
+   * component's CSS as `::after` content, which keeps it out of the text every
+   * other component searches. Needs `highlightClass` to paint the match.
+   * `endsLine` tells whether the match is the last code on its line, for a
+   * component that only draws inside the line when code follows the match.
+   */
+  inlay?: (match: { endsLine: boolean }) => string | undefined
 }
 
 // Classes Shiki Magic Move keeps on its elements only while a step transition
@@ -127,7 +138,7 @@ function unwrap(el: HTMLElement) {
  * steps. `container` is the component's host element around the slot.
  */
 export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLElement | null>, options: CodeHighlightOptions) {
-  const { component, highlightClass } = options
+  const { component, highlightClass, inlay } = options
 
   // Markdown attributes cannot conveniently contain a literal line break, so
   // accept both a real newline (from a bound Vue string) and the `\\n` escape.
@@ -156,6 +167,10 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
   const hasTarget = computed(() => matched.value)
   // True while Shiki Magic Move is transitioning between steps.
   const animating = ref(false)
+  // Whether the current match is the last code on its line; see `inlay`.
+  const matchEndsLine = ref(true)
+  // Whether the inlay is drawn right now, in place of any message.
+  const inlaid = ref(false)
   const messageStyle = ref<CodeHighlightMessageStyle>({ left: '0px', top: '0px', maxWidth: 'none', '--code-highlight-target-size': '12px' })
 
   if (isDevelopment && props.on !== undefined && (props.at !== undefined || props.until !== undefined))
@@ -217,8 +232,10 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     matches: number
     /** The code of the line the match starts on: the message sits after it. */
     lineRange: Range | null
+    /** Whether the match ends where the code of its first line ends. */
+    endsLine: boolean
   }
-  const NO_TARGET: Target = { range: null, matches: 0, lineRange: null }
+  const NO_TARGET: Target = { range: null, matches: 0, lineRange: null, endsLine: true }
 
   /** Finds the exact text even when Shiki split it across token spans or lines. */
   function findTarget(host: HTMLElement): Target {
@@ -235,7 +252,8 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     // instead, on the line the match starts.
     const startLine = match.line ?? props.line
     const lineRange = match.range && startLine !== undefined ? trimmedLineRange(segments, startLine).range : null
-    return { range: match.range, matches: match.matches, lineRange }
+    const endsLine = !match.range || !lineRange || match.range.compareBoundaryPoints(Range.END_TO_END, lineRange) >= 0
+    return { range: match.range, matches: match.matches, lineRange, endsLine }
   }
 
   /** Places the message after the end of the match's first line, vertically centred on it. */
@@ -323,6 +341,19 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     if (!highlightClass)
       return
     const nextTargets = range ? paintRange(range) : []
+    // The inlay belongs after the match, so only its last element carries it.
+    // A data attribute is outside the class observer's filter, so writing it
+    // never retriggers a sync; it is written before the class below, whose
+    // mutation lets the other marks on this fence re-measure the moved line.
+    const inlayText = range ? inlay?.({ endsLine: matchEndsLine.value }) : undefined
+    inlaid.value = !!inlayText
+    const inlayTarget = inlayText ? nextTargets.at(-1) : undefined
+    for (const el of targets.value) {
+      if (el !== inlayTarget && el.hasAttribute('data-code-inlay'))
+        el.removeAttribute('data-code-inlay')
+    }
+    if (inlayTarget && inlayTarget.getAttribute('data-code-inlay') !== inlayText)
+      inlayTarget.setAttribute('data-code-inlay', inlayText!)
     for (const el of targets.value) {
       if (nextTargets.includes(el))
         continue
@@ -358,6 +389,7 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     }
     const target = findTarget(host)
     textMatches.value = target.matches
+    matchEndsLine.value = target.endsLine
     paint(target.range)
     // Magic Move ends a transition by removing its animation classes, which
     // the class observer below turns into one more sync: the settled edge.
@@ -398,7 +430,7 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     if (isDevelopment)
       clearAnnotationAuthoringProblems(id)
   })
-  watch([() => props.line, text, () => props.occurrence, message], sync)
+  watch([() => props.line, text, () => props.occurrence, message, () => inlay?.({ endsLine: matchEndsLine.value })], sync)
   watch(visible, sync)
   watch(isCurrentSlide, sync)
 
@@ -430,5 +462,5 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     }
   }, { immediate: true })
 
-  return { message, messageHtml, messageShown, messageStyle }
+  return { message, messageHtml, messageShown, messageStyle, inlaid }
 }
