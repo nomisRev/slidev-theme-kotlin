@@ -1,11 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
 
 ### Added
 
 - Code marks: a trailing `// [!kind …]` comment inside a Kotlin fence asks for an IDE decoration on that line — `[!smartcast result]`, `[!this Routing]`, `[!context ResourceScope]`, `[!error insertUser No context argument found]`, `[!warning …]`, `[!type …]`, `[!value …]`, and `[!suspend]` for `SuspendGutter`. The markdown transformer strips the comment and wraps the fence in the matching component with `:line` and `:occurrence` computed from the comment's position, so a mark moves with its line through a Magic Move chain and the author no longer counts lines, nests wrappers, or escapes quotes. `parseFenceInfo` strips the marks too (`ParsedFence.marks`), so the Kotlin snippet CLI, cross-slide Magic Move steps, and the handout never see them; a fence with an `[!error …]` mark stays out of the generated sources like a wrapped one, and the handout prints each mark as the note its component would leave. A `console` or `sql` fence attached directly under the marked fence is enclosed by the same wrapper. See "Code marks" in the README.
 - `SuspendGutter`, moved in from the functional-kotlin-services deck: `<SuspendGutter :lines="[2, 3]">` around one fence draws IntelliJ's suspend-call gutter icon beside each listed one-based source line, outside the code window's left border, following Magic Move steps and the light or dark scheme. `--suspend-gutter-size` and `--suspend-gutter-gap` place the icon; the handout drops the wrapper. `[!suspend]` marks are the way to write it from inside the fence.
+
+## 0.13.2
+
+### Added
+
 - An `arrow` modifier on a Kotlin fence, `` ```kotlin arrow ``, marks the code window with the [Arrow](https://arrow-kt.io) brand icon and outlines it in Arrow blue (`--code-window-arrow-color`, light `#2455cf`, dark `#497bf7`), next to the existing `gradle`, `jdbc`, and `r2dbc` modifiers. It is for slides whose Kotlin is really about `Raise`, `Resource`, `SuspendApp`, or another Arrow library; plain Kotlin keeps the Kotlin mark.
 - A `ktor` modifier, `` ```kotlin ktor ``, marks the code window with the Ktor icon and outlines it in Ktor purple (`--code-window-ktor-color`, light `#7f52ff`, dark `#a578ff`), for Ktor routing, plugin, and client code.
 
