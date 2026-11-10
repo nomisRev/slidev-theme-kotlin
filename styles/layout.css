@@ -12,6 +12,8 @@
     --code-window-r2dbc-color: #06b6d4;
     --code-window-gradle-color: #6c707e;
     --code-window-amper-color: #087cfa;
+    --code-window-arrow-color: #2455cf;
+    --code-window-ktor-color: #7f52ff;
     --code-window-java-color: #e66d17;
     --code-window-terminal-color: #6c707e;
     --code-window-maven-color: #3574f0;
@@ -57,6 +59,8 @@ html.dark {
     --code-window-r2dbc-color: #06b6d4;
     --code-window-gradle-color: #ced0d6;
     --code-window-amper-color: #087cfa;
+    --code-window-arrow-color: #497bf7;
+    --code-window-ktor-color: #a578ff;
     --code-window-java-color: #c77d55;
     --code-window-terminal-color: #ced0d6;
     --code-window-maven-color: #548af7;
@@ -141,6 +145,20 @@ html.dark {
 .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
     --code-window-icon: url('../assets/code-window/amper-icon.svg');
     --code-window-border: var(--code-window-amper-color);
+}
+
+/* `kotlin arrow`: Kotlin code that is really about an Arrow library. The mark
+   is Arrow's brand icon and the outline its blue; the same icon serves both
+   colour schemes. */
+.slidev-code-wrapper:is(.code-window-icon--arrow, :has(code.code-window-icon--arrow)) {
+    --code-window-icon: url('../assets/code-window/arrow.svg');
+    --code-window-border: var(--code-window-arrow-color);
+}
+
+/* `kotlin ktor`: Ktor's primary icon and purple identity border. */
+.slidev-code-wrapper:is(.code-window-icon--ktor, :has(code.code-window-icon--ktor)) {
+    --code-window-icon: url('../assets/code-window/ktor.svg');
+    --code-window-border: var(--code-window-ktor-color);
 }
 
 .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {
@@ -231,6 +249,10 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--gradle, :has(code.code-wind
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--amper, :has(code.code-window-icon--amper)) {
     --code-window-border: var(--code-window-amper-color);
+}
+
+html.dark .slidev-code-wrapper:is(.code-window-icon--arrow, :has(code.code-window-icon--arrow)) {
+    --code-window-border: var(--code-window-arrow-color);
 }
 
 html.dark .slidev-code-wrapper:is(.code-window-icon--java, :has(code.code-window-icon--java)) {

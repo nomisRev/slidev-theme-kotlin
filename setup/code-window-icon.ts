@@ -11,6 +11,10 @@ export function codeWindowIcon(language: string, meta = ''): string | undefined 
     return 'amper'
   if (language === 'xml' && modifier === 'maven')
     return 'maven'
+  if (['kotlin', 'kt', 'kts'].includes(language) && modifier === 'ktor')
+    return 'ktor'
+  if (['kotlin', 'kt', 'kts'].includes(language) && modifier === 'arrow')
+    return 'arrow'
   if (['kotlin', 'kt', 'kts'].includes(language))
     return 'kotlin'
   if (language === 'java')

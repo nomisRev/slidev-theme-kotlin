@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- An `arrow` modifier on a Kotlin fence, `` ```kotlin arrow ``, marks the code window with the [Arrow](https://arrow-kt.io) brand icon and outlines it in Arrow blue (`--code-window-arrow-color`, light `#2455cf`, dark `#497bf7`), next to the existing `gradle`, `jdbc`, and `r2dbc` modifiers. It is for slides whose Kotlin is really about `Raise`, `Resource`, `SuspendApp`, or another Arrow library; plain Kotlin keeps the Kotlin mark.
+- A `ktor` modifier, `` ```kotlin ktor ``, marks the code window with the Ktor icon and outlines it in Ktor purple (`--code-window-ktor-color`, light `#7f52ff`, dark `#a578ff`), for Ktor routing, plugin, and client code.
+
+### Changed
+
+- `TypeHint` draws its `this: …` and `context(…)` pill as an inlay attached to the matched token even when the `{` ends its line, instead of a floating message. A floating message hides while Magic Move runs; the inlay travels with its token and stays visible through the transition. The pill still pushes trailing code to the right as it did.
+
+### Fixed
+
+- Explicit `:connect="true"` creates an editable connector from matched text even with no label, target, or saved geometry. Empty labels are supported too.
+
+- `DrawnAnnotation` renders and edits an explicit `geometry.connector` without a `label` or `target`, including curved lines and arrowheads.
+
 ## 0.13.1
 
 ### Added

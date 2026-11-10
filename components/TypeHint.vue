@@ -28,11 +28,10 @@ if (import.meta.env.MODE === 'development' && !props.receiver && !props.context 
 if (import.meta.env.MODE === 'development' && props.type && !props.text)
   console.warn('[TypeHint] A `type` hint needs `text`: the name it follows, such as `text="customer"`.')
 
-// The same exact-text match and message placement as `SmartCast` and
-// `Warning`, with nothing painted: the hint sits after the `{` that ends
-// its line. When more code follows the brace, it is drawn inside the line
-// instead, right after the match, as is a `type` hint (the `.type-hint-inlay`
-// rule below), so the rest of the line moves right as it does in the IDE.
+// Use token-attached inlays even when the opening brace ends the line.
+// Floating messages are hidden during Magic Move, while an inlay travels
+// with its token and stays visible throughout the transition. When code
+// follows the match, the inlay also pushes it right as it does in the IDE.
 const highlightProps = reactive({
   ...toRefs(props),
   text: computed(() => props.text ?? (props.type ? undefined : '{')),
@@ -41,7 +40,7 @@ const highlightProps = reactive({
 const { message, messageShown, messageStyle, inlaid } = useCodeHighlight(highlightProps, container, {
   component: 'TypeHint',
   highlightClass: props.type ? 'type-hint-inlay' : 'type-hint-lambda',
-  inlay: ({ endsLine }) => props.type ? `: ${props.type}` : endsLine ? undefined : highlightProps.message,
+  inlay: () => props.type ? `: ${props.type}` : highlightProps.message,
 })
 </script>
 

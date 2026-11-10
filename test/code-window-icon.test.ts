@@ -8,6 +8,16 @@ describe('codeWindowIcon', () => {
     expect(codeWindowIcon('kotlin', 'jdbc {1,3}')).toBe('jdbc')
   })
 
+  it('marks Kotlin code about an Arrow library with the Arrow icon', () => {
+    expect(codeWindowIcon('kotlin', 'arrow')).toBe('arrow')
+    expect(codeWindowIcon('kotlin', 'arrow {2-4}')).toBe('arrow')
+  })
+
+  it('marks Ktor code with the Ktor icon', () => {
+    expect(codeWindowIcon('kotlin', 'ktor')).toBe('ktor')
+    expect(codeWindowIcon('kts', 'ktor {1}')).toBe('ktor')
+  })
+
   it('renders a console fence as an output panel', () => {
     expect(codeWindowIcon('console')).toBe('output')
   })

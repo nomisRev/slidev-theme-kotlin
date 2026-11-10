@@ -117,7 +117,11 @@ SELECT * FROM presentations;
 ````
 
 `kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle`, `jdbc`,
-or `r2dbc` modifier uses the Gradle, JDBC, or R2DBC identity respectively.
+or `r2dbc` modifier uses the Gradle, JDBC, or R2DBC identity respectively, and
+with an `arrow` modifier the [Arrow](https://arrow-kt.io) icon, for Kotlin
+code that is really about `Raise`, `Resource`, or another Arrow library.
+Use `kotlin ktor` (also `kt ktor` or `kts ktor`) for the Ktor icon and purple
+border on Ktor code. These modifiers also work with Magic Move.
 `yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the Amper, Java,
 Terminal, Maven, and PostgreSQL icons respectively. All other fences remain plain
 code surfaces.
@@ -153,6 +157,8 @@ value:
   --code-window-kotlin-color: #834df0;
   --code-window-gradle-color: #6c707e;
   --code-window-amper-color: #087cfa;
+  --code-window-arrow-color: #2455cf;
+  --code-window-ktor-color: #7f52ff;
   --code-window-java-color: #e66d17;
   --code-window-terminal-color: #6c707e;
   --code-window-maven-color: #3574f0;

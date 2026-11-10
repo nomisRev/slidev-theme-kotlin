@@ -390,7 +390,7 @@ const transitionInkIdentity = computed(() => JSON.stringify([
 ]))
 // A source-only mark exposes no visual-editor operation. It remains valid:
 // only labels and connectors have geometry that an editor can manipulate.
-const editorRelevant = computed(() => hasLabel.value || (connect.value && hasTarget.value))
+const editorRelevant = computed(() => hasLabel.value || (connect.value && (hasTarget.value || props.connect === true || !!manualConnector())))
 
 if (props.on !== undefined && (props.at !== undefined || props.until !== undefined))
   warn('`on` is `at` and `until` in one, so the separate `at` / `until` given here are ignored. Use either `on` alone, or `at` and `until`.')
@@ -592,7 +592,7 @@ const LABEL_HEAD_START = 0.1
 const LABEL_FADE_DURATION = 250
 
 // Whether a leader line is drawn at all: it needs somewhere to go.
-const connectsLine = computed(() => connect.value && (hasTarget.value || hasLabel.value))
+const connectsLine = computed(() => connect.value && (hasTarget.value || hasLabel.value || props.connect === true || !!manualConnector()))
 const hasTargetStage = computed(() => hasTarget.value && targetMarkType.value !== 'none')
 
 // A label that waits for a click of its own starts writing straight away. One
@@ -1289,7 +1289,10 @@ function measureGeometry(root: HTMLElement, overlayBox: DOMRect, width: number, 
     ? Array.from(match.range.getClientRects()).filter(rect => rect.width > 0.5 && rect.height > 0.5)
     : source
       ? [source.getBoundingClientRect()]
-      : []
+      // A geometry-only line needs a canvas, but no source element to mark.
+      : sourceMarkType.value === 'none' && !props.text && props.selector === '[data-annotate]' && manualConnector()
+        ? [root.getBoundingClientRect()]
+        : []
 
   if (!rects.length) {
     // The text is not on the slide right now — a Magic Move step that does not
@@ -1541,10 +1544,22 @@ function paintDestinationInto(
     placedLabelRegistry.delete(placementToken)
   }
 
-  if (!destination || !connect.value)
-    return
-
+  // Explicitly enabling a connector also works without a label or target.
+  // Seed a short route from the mark; dragging materializes its endpoints in
+  // geometry.connector through the same editor path as labelled connectors.
   const savedConnector = manualConnector()
+  if (!destination && !savedConnector && props.connect === true) {
+    const slide = slideRoot()
+    const bounds = toLocal(slide ? slideRect(slide) : root.getBoundingClientRect())
+    const distance = Math.max(28, props.gap * 2)
+    const x = clamp(markBox.cx + (markBox.cx < bounds.cx ? distance : -distance), bounds.left + 8, bounds.right - 8)
+    const y = markBox.cy < bounds.cy
+      ? Math.min(markBox.bottom + distance, bounds.bottom - 8)
+      : Math.max(markBox.top - distance, bounds.top + 8)
+    destination = makeBox(x, y, x, y)
+  }
+  if (!connect.value || (!destination && !savedConnector))
+    return
   let start: Point
   let end: Point
   let c2x: number
@@ -1575,6 +1590,8 @@ function paintDestinationInto(
     }
   }
   else {
+    if (!destination)
+      return
     const route = routeLeader(markBox, destination, endPoint)
     if (!route)
       return

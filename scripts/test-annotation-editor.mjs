@@ -16,7 +16,7 @@
 import { spawn } from 'node:child_process'
 import { randomInt } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { copyFile, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from '@slidev/parser'
@@ -48,7 +48,25 @@ function fixtureSlide() {
   return index + 1
 }
 
-await copyFile(resolve(root, 'slides.md'), copy)
+const showcase = await readFile(resolve(root, 'slides.md'), 'utf8')
+const labelFreeSlide = parseSync(showcase, 'slides.md').slides.length + 1
+await writeFile(copy, showcase + `
+
+---
+layout: default
+---
+
+# Text connectors without labels
+
+<DrawnAnnotation text="body" :connect="true" />
+<DrawnAnnotation text="fail" label="" :connect="true" />
+<DrawnAnnotation text="plain" />
+<DrawnAnnotation text="hidden" :connect="false" />
+
+<div style="margin-top: 100px; display: flex; gap: 100px">
+<span>body</span><span>fail</span><span>plain</span><span>hidden</span>
+</div>
+`)
 const server = spawn(process.execPath, [
   'node_modules/@slidev/cli/bin/slidev.mjs', entry, '--port', String(port),
 ], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -537,6 +555,32 @@ async function run() {
       fail('Arrow-key navigation did not come back after leaving the edit session.')
     await page.keyboard.press('ArrowRight')
     await activeLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+
+    // Explicit connectors need neither a label nor pre-authored geometry.
+    await page.goto(`${origin}/${labelFreeSlide}`)
+    const labelFree = page.locator(`.slidev-page-${labelFreeSlide} .drawn-annotation`)
+    await labelFree.nth(0).locator('.annotation-leader').first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await labelFree.nth(1).locator('.annotation-leader').first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    if (await labelFree.locator('.annotation-label').count()) fail('Label-free connectors rendered a label.')
+    for (const index of [2, 3]) {
+      if (await labelFree.nth(index).locator('.annotation-leader').count()) fail('A mark-only annotation gained a connector.')
+    }
+    await sleep(1000)
+    await page.screenshot({ path: '/tmp/text-connectors-without-labels.png' })
+    await page.getByRole('button', { name: 'Edit annotations', exact: true }).click()
+    const endpoint = labelFree.nth(0).locator('.annotation-connector-editor circle').first()
+    await endpoint.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
+    await drag(page, endpoint, 40, 20)
+    await doneButton.click()
+    await doneButton.waitFor({ state: 'hidden', timeout: STEP_TIMEOUT })
+    const savedTextConnector = await waitFor(async () => {
+      const source = await readFile(copy, 'utf8')
+      const tag = source.match(/<DrawnAnnotation text="body"[^>]*>/)?.[0]
+      return tag?.includes('connector:') ? tag : undefined
+    })
+    if (!savedTextConnector || /label[=:]/.test(savedTextConnector)) fail('The label-free connector did not save its endpoints independently.')
+    await page.reload()
+    await labelFree.nth(0).locator('.annotation-leader').first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
 
     const renderWarnings = vueWarnings.filter(warning => /was accessed during render but is not defined/.test(warning))
     if (renderWarnings.length)

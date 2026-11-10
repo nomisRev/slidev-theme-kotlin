@@ -109,6 +109,37 @@ Mono stack instead of the label's sans face:
 </DrawnAnnotation>
 ```
 
+## Connectors without labels
+
+To start a connector at matched text without a label, explicitly enable it:
+
+```vue
+<DrawnAnnotation text="body" :connect="true" />
+```
+
+Place the annotation before the content containing `body`, or wrap that
+content in its default slot. An omitted or empty `label` works. The line starts
+with a short automatic route from the matched text; drag its handles in the
+visual editor to position it and save `geometry.connector`. Plain text marks
+without an explicit `:connect="true"` keep their mark-only behavior.
+
+Omit `label` and supply `geometry.connector` to draw a connector with fixed
+endpoints, without a target element. Coordinates are fractions of the slide's
+width and height. Use `type="none"` to hide the source mark and `:connect="true"`
+to enable the line even when the deck disables connectors by default.
+
+```vue
+<DrawnAnnotation
+  type="none"
+  :connect="true"
+  :geometry="{ connector: { start: { x: 0.3, y: 0.4 }, end: { x: 0.7, y: 0.6 } } }"
+/>
+```
+
+An optional `control: { x, y }` inside `connector` curves the line. These
+connectors support the same click timing and visual-editor handles as labelled
+connectors. To connect to an element instead, use `target` without `label`.
+
 ## Where the label goes
 
 A label is placed out of the slide's normal flow. Automatic placement is
