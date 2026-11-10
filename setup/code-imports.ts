@@ -206,7 +206,7 @@ export interface SourceEdit {
   text: string
 }
 
-interface Line {
+export interface Line {
   /** Offset of the line's first character. */
   start: number
   /** Offset just past the line's last character, before its terminator. */
@@ -216,7 +216,8 @@ interface Line {
   text: string
 }
 
-function scanLines(source: string): Line[] {
+/** The lines of a slide's source with their offsets, for edits that address exact ranges. */
+export function scanLines(source: string): Line[] {
   const lines: Line[] = []
   const parts = source.split(/(\r?\n)/)
   let offset = 0

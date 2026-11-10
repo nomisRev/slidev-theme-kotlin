@@ -145,8 +145,10 @@ To show a value next to the line that produces it instead, as the debugger
 does, wrap the fence in [`InlineValue`](components/README.md#inlinevalue).
 The other IntelliJ decorations have a component each: [`SmartCast`](components/README.md#smartcast)
 paints the green smart-cast background behind exact code, [`Warning`](components/README.md#warning)
-the yellow warning background with an optional message, and [`TypeHint`](components/README.md#typehint)
-the grey `this: HTML` inlay hint after a lambda's brace.
+the yellow warning background with an optional message, [`TypeHint`](components/README.md#typehint)
+the grey `this: HTML` inlay hint after a lambda's brace, and [`SuspendGutter`](components/README.md#suspendgutter)
+the suspend-call icon in the gutter beside a line. All of them can also be
+written as [code marks](#code-marks) inside the fence.
 
 The identity border colours are exposed as theme variables and can be
 customized from a deck stylesheet. Each variable has a light and dark-mode
@@ -433,6 +435,62 @@ fun main() = println("Hello, Kotlin!")
 
 The full prop reference, timing behavior, and troubleshooting guide are in [`components/README.md`](components/README.md). The bundled [`slides.md`](slides.md) includes working examples of code annotations, connectors, labels, sequential reveals, and Magic Move integration.
 
+### Code marks
+
+Every IDE decoration (`SmartCast`, `Warning`, `InlineCompilerError`,
+`TypeHint`, `InlineValue`, `SuspendGutter`) can also be asked for from inside the fence, as a
+trailing `// [!kind …]` comment on the line it belongs to:
+
+````md
+```kotlin
+fun Application.users() = routing { // [!this Routing]
+  route(Api.Users.create) { // [!this TypedRespondScope<CreateUser, User>]
+    when (val result = insertUser(body)) {
+      is Success -> respond(result.user) // [!smartcast result]
+      AlreadyExists -> fail(UserAlreadyExists)
+    }
+  }
+}
+```
+````
+
+The comment never reaches the slide, the handout, or the generated Kotlin
+sources: the theme takes it out and wraps the fence in the components it
+asks for, with `:line` (and `:occurrence`) computed from where the comment
+sits. A mark therefore moves with its line through a Magic Move chain, a
+fence with five marks needs no five closing tags in reverse order, and quotes
+inside the marked text need no `&quot;`. The kinds:
+
+| Mark | Component |
+| --- | --- |
+| `[!smartcast TEXT]` | `SmartCast` on every occurrence of `TEXT` on the line |
+| `[!warning TEXT MESSAGE]` | `Warning` on the first occurrence, with the message |
+| `[!error TEXT MESSAGE]` | `InlineCompilerError`; the fence stays out of the generated Kotlin |
+| `[!this TYPE]` / `[!context TYPE]` | `TypeHint` after the line's last `{` |
+| `[!type NAME TYPE]` | `TypeHint` with the inferred type after `NAME` |
+| `[!value TEXT VALUE]` | `InlineValue` after the line |
+| `[!suspend]` | one line of `SuspendGutter`, collected over the fence into `:lines` |
+
+The first argument is one word, or quoted with `"…"` or `` `…` `` when it
+holds spaces or brackets (`` [!error `["a", "bb"]` No `of` operator] ``); the
+last argument runs to the closing `]`, so a message or a type with spaces
+needs no quotes. `key=value` options right after the kind pass through as
+attributes: `[!smartcast on=1 result]`, `[!smartcast occurrence=3 user]`,
+`[!this occurrence=1 Routing]`, `[!error color=red email2 Unresolved reference]`.
+Several marks share one comment (`// [!context ResourceScope] [!suspend]`),
+and a comment line that holds nothing but marks applies to the next code
+line and leaves the slide entirely, for a diagnostic too long to sit after
+the code. A `console` or `sql` fence that starts on the line right after the
+Kotlin fence is enclosed by the same wrapper, as a hand-written one would be,
+so the output panel stays attached to its code; a following code fence is
+wrapped on its own. Quotes and brackets inside a mark must balance, and a
+`[!…]` comment with a kind the theme does not know (Shiki's `[!code …]`
+notation among them) stays in the code. A mark whose text is not on its
+line, or that does not parse, is reported on the console when the slide is
+built. Marks inside classic ````md magic-move```` blocks
+are not supported; the wrappers below still are, and the two can be mixed in
+one deck.
+
 ### Using InlineCompilerError
 
 `<InlineCompilerError>` is auto-registered for every deck using the theme. Wrap one code block to underline a source line or exact text with an IntelliJ-style diagnostic; it follows both static Shiki blocks and Magic Move steps.
@@ -695,6 +753,7 @@ This will open the example presentation in your browser with hot-reload enabled.
 │   ├── Warning.vue                # Warning background with an optional message
 │   ├── TypeHint.vue               # Inlay hint after a lambda's brace
 │   ├── InlineValue.vue            # Debugger inline value after a line
+│   ├── SuspendGutter.vue          # Suspend-call gutter icons beside listed lines
 │   ├── code-highlight.ts          # The mechanism the four above share
 │   ├── code-text-match.ts         # Text search shared with DrawnAnnotation
 │   ├── MagicMoveBetween.vue       # Cross-slide Magic Move code window
@@ -711,7 +770,8 @@ This will open the example presentation in your browser with hot-reload enabled.
 │   └── intro.vue       # Introduction slide layout
 ├── assets/             # Bundled theme assets
 │   ├── kodee-*.svg     # Kodee mascot variants (11 variants)
-│   └── code-window/    # Code-window identity icons, referenced from layout.css
+│   ├── code-window/    # Code-window identity icons, referenced from layout.css
+│   └── gutter/         # Suspend-call icons for SuspendGutter, light and dark
 ├── index.html          # Head tags merged into every deck (font preconnect)
 ├── setup/              # Slidev setup files
 │   ├── main.ts         # App setup: per-slide analytics pageviews

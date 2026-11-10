@@ -36,9 +36,11 @@ import { basename, dirname, extname, relative, resolve } from 'node:path'
 import MarkdownIt from 'markdown-it'
 import { goatcounterTag, resolveAnalyticsSettings } from './analytics'
 import { codeWindowIcon } from './code-window-icon'
-import { withoutSolution } from './code-imports'
+import { EXAMPLE_MARKER, SOLUTION_MARKER, withoutSolution } from './code-imports'
 import { parseFenceInfo } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
+import { CODE_MARK_KINDS } from './code-marks'
+import type { CodeMark } from './code-marks'
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -327,7 +329,9 @@ const WARNING_TAG = new RegExp(`<Warning\\b${ATTRIBUTES}/?>`, 'g')
 const TYPE_HINT_TAG = new RegExp(`<TypeHint\\b${ATTRIBUTES}/?>`, 'g')
 const INLINE_VALUE_TAG = new RegExp(`<InlineValue\\b${ATTRIBUTES}/?>`, 'g')
 const KODEE_TAG = new RegExp(`<(?:Kodee|KodeeWrapper)\\b${ATTRIBUTES}/?>`, 'g')
-const CLOSING_TAGS = /<\/(?:DrawnAnnotation|InlineCompilerError|SmartCast|Warning|TypeHint|InlineValue|Kodee|KodeeWrapper)>/g
+// The gutter icons mark lines the reader can see; the handout leaves no note.
+const SUSPEND_GUTTER_TAG = new RegExp(`<SuspendGutter\\b${ATTRIBUTES}/?>`, 'g')
+const CLOSING_TAGS = /<\/(?:DrawnAnnotation|InlineCompilerError|SmartCast|Warning|TypeHint|InlineValue|SuspendGutter|Kodee|KodeeWrapper)>/g
 
 export function translateComponents(content: string): string {
   return content
@@ -338,6 +342,7 @@ export function translateComponents(content: string): string {
     .replace(TYPE_HINT_TAG, (_, raw) => typeHintNote(raw))
     .replace(INLINE_VALUE_TAG, (_, raw) => inlineValueNote(raw))
     .replace(KODEE_TAG, '')
+    .replace(SUSPEND_GUTTER_TAG, '')
     .replace(CLOSING_TAGS, '')
 }
 
@@ -379,10 +384,33 @@ export function cleanProse(text: string, base: string): string {
   return result.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-/** Render a parsed fence back to Markdown, with its caption. */
+/** The note a `// [!kind …]` mark leaves in the handout: what the component it becomes would say. */
+export function codeMarkNote(mark: CodeMark): string {
+  const spec = CODE_MARK_KINDS[mark.kind]
+  if (!spec || spec.lines)
+    return ''
+  const attrs: Record<string, string> = {}
+  spec.slots.forEach((slot, index) => {
+    if (mark.args[index] !== undefined)
+      attrs[slot] = mark.args[index]
+  })
+  Object.assign(attrs, mark.options)
+  const raw = Object.entries(attrs).map(([key, value]) => `${key}="${value.replace(/"/g, '&quot;')}"`).join(' ')
+  switch (spec.component) {
+    case 'InlineCompilerError': return compilerErrorNote(raw)
+    case 'SmartCast': return highlightNote('Smart cast', raw)
+    case 'Warning': return highlightNote('Warning', raw)
+    case 'TypeHint': return typeHintNote(raw)
+    case 'InlineValue': return inlineValueNote(raw)
+    default: return ''
+  }
+}
+
+/** Render a parsed fence back to Markdown, with its caption and the notes of its marks. */
 function fenceMarkdown(fence: ParsedFence): string {
   const caption = fenceCaption(fence)
-  return `${caption ? `**${caption}**\n\n` : ''}\`\`\`${fence.lang}\n${fence.code}\n\`\`\``
+  const notes = fence.marks.map(codeMarkNote).filter(Boolean).map(note => note.trim()).join('\n\n')
+  return `${caption ? `**${caption}**\n\n` : ''}\`\`\`${fence.lang}\n${fence.code}\n\`\`\`${notes ? `\n\n${notes}` : ''}`
 }
 
 const IDENTITY_LABELS: Record<string, string> = {
@@ -412,7 +440,13 @@ export function parseFenceBlock(block: string): ParsedFence {
   const lines = block.split(/\r?\n/)
   const info = lines[0].replace(/^ {0,3}(`{3,}|~{3,})/, '').trim()
   const fence = parseFenceInfo(info, lines.slice(1, -1).join('\n'), { foldImports: false })
-  return { ...fence, code: withoutSolution(fence.code) }
+  // The marks of a solution leave with it: their notes would give it away.
+  const codeLines = fence.code.split(/\r?\n/)
+  const marker = codeLines.findIndex(line => EXAMPLE_MARKER.test(line) || SOLUTION_MARKER.test(line))
+  const marks = marker >= 0 && SOLUTION_MARKER.test(codeLines[marker])
+    ? fence.marks.filter(mark => mark.line > marker + 1)
+    : fence.marks
+  return { ...fence, code: withoutSolution(fence.code), marks }
 }
 
 /**

@@ -3,6 +3,7 @@ import { defineCodeblockTransformer, defineTransformersSetup } from '@slidev/typ
 import type { KeyedTokensInfo } from '@shikijs/magic-move/types'
 import { toKeyedTokens } from '@shikijs/magic-move/core'
 import { foldImportEdits } from './code-imports'
+import { codeMarkEdits } from './code-marks'
 import { codeWindowIcon } from './code-window-icon'
 import { extractTopLevelFences, resolveChain } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
@@ -254,12 +255,26 @@ export default defineTransformersSetup(() => ({
     // range, so this pass must not run after the ordinal markers below. All
     // three edit sets address disjoint ranges of the original source. The
     // theme's fence flags are stripped even when folding is off.
-    for (const edit of foldImportEdits(source, { fold: foldImportsEnabled(transformerOptions.data.config.themeConfig) })) {
+    const fold = foldImportsEnabled(transformerOptions.data.config.themeConfig)
+    for (const edit of foldImportEdits(source, { fold })) {
       if (edit.text)
         s.overwrite(edit.start, edit.end, edit.text)
       else
         s.remove(edit.start, edit.end)
     }
+    // Code marks (`// [!smartcast result]`) leave their lines, which the fold
+    // never touches, and their components wrap the fence from outside it.
+    const marks = codeMarkEdits(source, { fold })
+    for (const edit of marks.removals)
+      s.remove(edit.start, edit.end)
+    for (const insertion of marks.insertions) {
+      if (insertion.side === 'left')
+        s.appendLeft(insertion.at, insertion.text)
+      else
+        s.appendRight(insertion.at, insertion.text)
+    }
+    for (const problem of marks.problems)
+      console.warn(`[slidev-theme-kotlin] slide ${slide.index + 1}: ${problem}`)
     // `pre` is a MarkdownTransformer and therefore runs before Slidev parses
     // this slide into codeblock contexts. Only linked slides need markers.
     // Ordinal markers land on top-level three-backtick fences and icon classes

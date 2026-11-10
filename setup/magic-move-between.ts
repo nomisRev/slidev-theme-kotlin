@@ -18,6 +18,8 @@
  */
 import { parseSync } from '@slidev/parser'
 import { shouldFoldImports, splitLeadingImports, takeThemeFlags } from './code-imports'
+import { parseCodeMarks } from './code-marks'
+import type { CodeMark } from './code-marks'
 
 export interface ParsedFence {
   /** The Shiki language, i.e. the first word of the fence info. */
@@ -42,6 +44,8 @@ export interface ParsedFence {
   imports: string[]
   /** The code folded above a `// Example` or `// Solution` marker, imports included, if the fence has one. */
   prefix?: string
+  /** The `// [!kind …]` marks taken out of `code` (see `code-marks.ts`), with lines counted in `code`. */
+  marks: CodeMark[]
 }
 
 export interface FenceParseOptions {
@@ -178,8 +182,12 @@ export function parseFenceInfo(rawInfo: string, code: string, options: FencePars
     ? true
     : /\blines: *false\b/.test(optionsRaw ?? '') ? false : undefined
   const trimmed = code.replace(/\r?\n$/, '')
-  const { imports, body, prefix } = fold ? splitLeadingImports(trimmed) : { imports: [], body: trimmed, prefix: undefined }
-  return { lang, meta, info, flags, title, lines, ranges, optionsRaw, code: body, imports, ...(prefix !== undefined && { prefix }) }
+  const split = fold ? splitLeadingImports(trimmed) : { imports: [], body: trimmed, prefix: undefined }
+  // Marks leave the code everywhere it is used — rendered, compiled, or
+  // printed — and their lines count in the code as displayed, after the fold.
+  const { code: body, marks } = parseCodeMarks(split.body)
+  const prefix = split.prefix === undefined ? undefined : parseCodeMarks(split.prefix).code
+  return { lang, meta, info, flags, title, lines, ranges, optionsRaw, code: body, imports: split.imports, marks, ...(prefix !== undefined && { prefix }) }
 }
 
 /**

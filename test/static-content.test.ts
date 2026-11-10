@@ -116,6 +116,8 @@ describe('cleanProse', () => {
       '<TypeHint :line="3" context="Clock" />',
       '<TypeHint :line="4" text="customer" type="Column<String>" />',
       '<InlineValue text="numbers" value="List<Int> = [1, 2]" />',
+      '<SuspendGutter :lines="[2, 3]">',
+      '</SuspendGutter>',
     ].join('\n')
     expect(cleanProse(prose, base)).toBe([
       '> **Warning** at `names: List<String>`: Unused parameter',
@@ -166,6 +168,11 @@ describe('cleanSlideMarkdown', () => {
     expect(cleanSlideMarkdown(example, ctx)).toBe(example)
     const exercise = '```kotlin\nimport a.A\n\nfun solve(): A = A()\n\n// Solution: never printed\ncheck(solve() == A())\n```'
     expect(cleanSlideMarkdown(exercise, ctx)).toBe('```kotlin\nimport a.A\n\ncheck(solve() == A())\n```')
+  })
+
+  it('drops the notes of code marks that sit in a Solution prefix', () => {
+    const exercise = '```kotlin\nfun secret() = 42 // [!value secret 42]\n\n// Solution\nfun main() {\n  check(secret() == 42) // [!warning secret Unused result]\n}\n```'
+    expect(cleanSlideMarkdown(exercise, ctx)).toBe('```kotlin\nfun main() {\n  check(secret() == 42)\n}\n```\n\n> **Warning** at `secret`: Unused result')
   })
 
   it('puts every heading below the slide title and leaves fences alone', () => {

@@ -460,6 +460,14 @@ error and anchors its message beside the relevant code. Wrap exactly one fenced
 code block; the component supports ordinary Shiki fences and `magic-move`
 blocks, and remains hidden when its target is not part of the current step.
 
+The wrapper can also be written as a code mark inside the fence,
+`// [!error userName Unresolved reference: userName]` on the line itself; the
+same goes for `SmartCast` (`[!smartcast …]`), `Warning` (`[!warning …]`),
+`TypeHint` (`[!this …]`, `[!context …]`, `[!type …]`) and `InlineValue`
+(`[!value …]`). The theme turns the comment into the wrapper below with the
+line computed, so a mark follows its line through a Magic Move chain. See
+"Code marks" in the top-level README.
+
 ````md
 <InlineCompilerError text="userName" message="Unresolved reference: userName" :on="1">
 
@@ -793,3 +801,47 @@ Exactly as for `SmartCast`: `at`, `until`, and `on`.
 
 The value uses the code font. Read where they are used, so any scope can
 redefine them — a single slide's class as well as `:root`.
+
+# `SuspendGutter`
+
+IntelliJ marks a call that may suspend with a small icon in the editor gutter.
+`SuspendGutter` draws that icon beside the listed lines of one fence:
+
+````md
+<SuspendGutter :lines="[2, 3]">
+
+```kotlin
+suspend fun program() {
+  delay(100)
+  yield()
+}
+```
+
+</SuspendGutter>
+````
+
+The lines are one-based source lines of the fence, blank lines included and
+regardless of a displayed `startLine`; duplicates, blank, and missing lines are
+ignored. The component does not analyse Kotlin: the author names the
+suspension points worth a glance. From inside the fence the same slide reads
+`delay(100) // [!suspend]`, and the theme collects the marks of a fence into
+one wrapper.
+
+The icon sits outside the code window's left border, so the window and its
+padding stay where they are. It follows the current Magic Move step, hides
+while tokens are moving, and swaps between the light and dark JetBrains
+variants with the colour scheme.
+
+## Props
+
+| prop | required | meaning |
+| --- | --- | --- |
+| `lines` | yes | one-based source lines of the fence to mark |
+| `label` | no | accessible label and tooltip, `Suspension point` by default |
+
+## Styling
+
+| CSS variable | default | meaning |
+| --- | --- | --- |
+| `--suspend-gutter-size` | `1em` of the code font | icon width and height |
+| `--suspend-gutter-gap` | `0.35em` | space between the icon and the window border |

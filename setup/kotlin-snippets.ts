@@ -24,7 +24,8 @@
  *
  * Fences with `no-compile` in their info (prose-like sketches, library
  * internals), `gradle` build-script fences, and fences an
- * `InlineCompilerError` wraps (shown broken on purpose) are skipped. The CLI in
+ * `InlineCompilerError` wraps or an `[!error …]` mark asks for (shown broken
+ * on purpose) are skipped. The CLI in
  * `bin/kotlin-snippets.mjs` runs `collectSnippetFiles` over a deck and
  * `syncSnippetFiles` writes or checks the result.
  */
@@ -32,6 +33,7 @@ import type { SlideInfo } from '@slidev/types'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join, relative } from 'node:path'
 import { NO_COMPILE_FLAG, splitImportBlock, splitLeadingImports } from './code-imports'
+import { hasCompilerErrorMark } from './code-marks'
 import { extractTopLevelFences } from './magic-move-between'
 import type { ParsedFence } from './magic-move-between'
 import { expandMagicMoveBlocks, plainTitle } from './static-content'
@@ -344,7 +346,7 @@ export function withoutCompilerErrorFences(content: string): string {
 export function isCompilable(fence: ParsedFence): boolean {
   if (!['kotlin', 'kt', 'java'].includes(fence.lang))
     return false
-  if (fence.flags.includes(NO_COMPILE_FLAG))
+  if (fence.flags.includes(NO_COMPILE_FLAG) || hasCompilerErrorMark(fence.marks))
     return false
   return !fence.meta.split(/\s+/).includes('gradle')
 }
