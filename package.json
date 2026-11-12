@@ -9,7 +9,8 @@
     }
   },
   "bin": {
-    "slidev-kotlin-snippets": "./bin/kotlin-snippets.mjs"
+    "slidev-kotlin-snippets": "./bin/kotlin-snippets.mjs",
+    "slidev-kotlin-present": "./bin/present.mjs"
   },
   "keywords": [
     "slidev-theme",
@@ -30,6 +31,7 @@
     "global-bottom.vue",
     "index.html",
     "layouts",
+    "remote",
     "setup",
     "styles",
     "slide-bottom.vue",
@@ -42,6 +44,8 @@
     "lint": "node scripts/lint-slides.mjs slides.md slides.fixtures.md",
     "build": "npm run lint && slidev build slides.md && node scripts/assert-production-annotation-editor.mjs",
     "dev": "slidev slides.md --open",
+    "present": "node bin/present.mjs",
+    "test:remote": "node scripts/test-remote.mjs",
     "export": "slidev export slides.md",
     "export:slide": "node scripts/export-slide.mjs",
     "screenshot": "slidev export slides.md --format png --with-clicks",
@@ -56,7 +60,9 @@
     "@slidev/types": "^52.19.1",
     "jiti": "2.7.0",
     "markdown-it": "14.3.0",
-    "roughjs": "4.6.6"
+    "nosleep.js": "0.12.0",
+    "roughjs": "4.6.6",
+    "uqr": "0.1.3"
   },
   "devDependencies": {
     "@slidev/cli": "52.19.1",

@@ -18,6 +18,17 @@
 ### Added
 
 - `node scripts/transition-blink.mjs` records every Magic Move step of `scripts/transition-blink.fixture.md` frame by frame and reports each annotation that goes missing while its code stays put (`--transition fade|view-transition`, `--backward`, `--only <page>`, `--frames --strip 0,300,900` for a filmstrip in `.visual/transition-blink/`).
+- A phone remote for presenting, moved in from the advanced-dsl-in-kotlin and functional-kotlin-services decks. `slidev-kotlin-present` serves a built deck on the local network, prints the display link plus a remote link with its QR code for every network address, and relays navigation from the phone to each open display. On a phone or tablet the `presenter` route shows the remote (upcoming slide or reveal, notes, tap right to advance, left to go back); a laptop keeps Slidev's presenter console. See `docs/presenting.md`. Compared with the decks' copies:
+  - Driving the deck needs a write secret that only leaves the server in the printed remote link (`?k=`). The session endpoint and the served `index.html` no longer carry it, a page without it only watches, and a rotated secret (`--new-secret`) expires old links. The secret is kept in `node_modules/.cache/slidev-kotlin-present/secret` so a restarted server keeps the phone connected.
+  - Scanning the code joins the talk at its current slide instead of sending the display back to slide 1, and a display ignores a slide number past the end of the deck.
+  - The remote keeps the phone awake from the first tap (NoSleep: the Wake Lock API where the page is a secure context, a silent looping video on `http://<lan address>`).
+  - Stepping back onto a slide with reveals lands on its last click after a reload too, and the display shows that final state at once rather than replaying the reveals.
+  - Works with `--router-mode hash` and a `--base` other than `/`; the server reads the base from the build.
+  - The server reads `index.html` per request, so a rebuild needs a reload and not a restart; answers byte-range requests and more media types; reports a port in use in one line; requests from the remote time out after four seconds instead of hanging.
+  - The remote is themed with `--remote-control-*` custom properties, has dark values, and turns off double-tap zoom, selection and the tap highlight.
+- The demo deck has a "Your phone is the clicker" slide, the README a "Presenting from your phone" section, and `docs/presenting.md` the status line, the options, and who can read what.
+- `npm run test:remote` drives a built deck through the server in separate Chromium contexts (`--dist <dir>` tests another deck's build).
+
 
 ## 0.14.0
 

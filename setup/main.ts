@@ -2,6 +2,7 @@ import { defineAppSetup } from '@slidev/types'
 // @ts-ignore Slidev's virtual module, typed by @slidev/client's shim when it is loaded
 import { slides } from '#slidev/slides'
 import { countSlideView, slideNumberFromRoute } from './analytics'
+import { setupRemoteSync } from './remote-sync'
 
 /**
  * Count one GoatCounter pageview per slide (see `analytics.ts`). The hook
@@ -13,9 +14,12 @@ import { countSlideView, slideNumberFromRoute } from './analytics'
  * carries no slide data, so the title comes from the slides list, the way
  * Slidev's own table of contents reads it.
  */
-export default defineAppSetup(({ router }) => {
+export default defineAppSetup((context) => {
+  const { router } = context
   if (typeof window === 'undefined')
     return
+  // Phone remote for a deck served by `slidev-kotlin-present` (see `remote-sync.ts`).
+  setupRemoteSync(context)
   let last: number | undefined
   router.afterEach((to) => {
     const no = slideNumberFromRoute(to.path)

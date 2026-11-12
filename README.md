@@ -41,6 +41,7 @@ themeConfig:
 - [Layouts](#layouts)
 - [Customising](#customising)
 - [Publishing a deck](#publishing-a-deck)
+- [Presenting from your phone](#presenting-from-your-phone)
 - [Compiling the snippets](#compiling-the-snippets)
 - [Tips](#tips)
 - [Developing the theme](#developing-the-theme)
@@ -508,6 +509,29 @@ themeConfig:
 What each file contains, `robots.txt`, and what is counted are in
 [`docs/publishing.md`](docs/publishing.md).
 
+## Presenting from your phone
+
+`slidev-kotlin-present` serves a built deck on your local network and turns
+your phone into the clicker. No internet connection is needed.
+
+```bash
+slidev build
+npx slidev-kotlin-present
+```
+
+It prints a **Display** link and a QR code. Open the link on the laptop, scan
+the code with your phone, and tap: the right half of the screen advances, the
+left half goes back. The phone shows what the next tap reveals, your speaker
+notes, and whether the display follows.
+
+Only a page opened from the QR code can move the slides. The laptop and the
+phone must be on the same network; when the venue's Wi-Fi keeps them apart,
+use your phone's hotspot.
+
+On a laptop, `/presenter/1` is still Slidev's presenter console. The status
+line, the options, and who can read what are in
+[`docs/presenting.md`](docs/presenting.md).
+
 ## Compiling the snippets
 
 `slidev-kotlin-snippets` turns the Kotlin and Java fences of a deck into
@@ -563,6 +587,8 @@ visual review and is not published.
 | `npm run build` | Lint and build the demo deck |
 | `npm test` | Unit tests |
 | `npm run test:annotation-editor` | Browser test of the visual editor |
+| `npm run test:remote` | Browser test of the phone remote, after `npm run build` |
+| `npm run present` | Present the built demo deck with the phone remote |
 | `npm run visual:review` | Compare screenshots of the working tree with the last commit |
 | `npm run export` | Export the demo deck to PDF |
 | `npm run screenshot` | Export every slide and click state as PNG |

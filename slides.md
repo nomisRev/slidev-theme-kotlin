@@ -422,6 +422,49 @@ fun welcome(user: User) = user.displayName
 </DrawnAnnotation>
 
 ---
+kodee: false
+---
+
+# Your phone is the clicker
+
+Build the deck, scan a code, and tap. No clicker to pack, no internet needed.
+
+<div class="grid grid-cols-[3fr_2fr] gap-x-8 items-center">
+<div>
+
+1. Run `slidev build`, then `npx slidev-kotlin-present`
+2. Open the **Display** link on the laptop
+3. Scan the QR code with your phone
+4. Tap right to advance, left to go back
+
+The phone shows what the next tap reveals, your speaker notes, and whether the display follows.
+
+</div>
+<div>
+
+<img src="./docs/phone-remote.png" alt="The phone remote: the upcoming slide on top, the speaker notes below, and the connection status" class="phone-remote-shot">
+
+</div>
+</div>
+
+<style>
+.phone-remote-shot {
+  display: block;
+  height: 370px;
+  margin: 0 auto;
+  border: 6px solid #27282c;
+  border-radius: 28px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 20%);
+}
+</style>
+
+<!--
+Speaker notes show up on the phone, under the upcoming slide.
+
+Only a page opened from the QR code can move the slides.
+-->
+
+---
 kodee: welcome
 ---
 

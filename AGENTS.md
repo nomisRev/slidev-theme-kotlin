@@ -11,4 +11,4 @@
 - Visual review captures `/<slide>?clicks=<n>`, not `?print=clicks`. When `../kotlin-fundamentals` exists it is rendered as a consumer deck too.
 - Prefer `transition: fade`: with `view-transition`, Slidev 52 swaps its slideshow container between a `div` and a `TransitionGroup` after a click-then-navigate, which remounts every preloaded slide and stalls for 150 ms or more.
 - `.pi/extensions/inspect-shiki-token-scopes.ts` inspects Shiki token scopes when changing highlighting.
-- Repo map: `setup/` holds the build-time transforms, `components/code-highlight.ts` is the mechanism the IDE decorations share, `plugins/` is the development-only source writer, `bin/` is the snippets CLI.
+- Repo map: `setup/` holds the build-time transforms, `components/code-highlight.ts` is the mechanism the IDE decorations share, `plugins/` is the development-only source writer, `bin/` holds the snippets CLI and `slidev-kotlin-present`, whose phone remote is `remote/` plus `setup/remote-sync.ts` and `setup/routes.ts` (`npm run test:remote` after a build).
