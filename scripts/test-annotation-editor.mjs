@@ -177,7 +177,7 @@ async function run() {
     }
 
     async function enterEditMode() {
-      await page.getByRole('button', { name: 'Edit annotations' }).click()
+      await page.keyboard.press('Alt+Shift+KeyA')
       // Editable means the component received a locator from the Vite
       // transform; a missing or bound attribute leaves it presentation-only.
       await editableLabel.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
@@ -567,7 +567,7 @@ async function run() {
     }
     await sleep(1000)
     await page.screenshot({ path: '/tmp/text-connectors-without-labels.png' })
-    await page.getByRole('button', { name: 'Edit annotations', exact: true }).click()
+    await page.keyboard.press('Alt+Shift+KeyA')
     const endpoint = labelFree.nth(0).locator('.annotation-connector-editor circle').first()
     await endpoint.waitFor({ state: 'visible', timeout: STEP_TIMEOUT })
     await drag(page, endpoint, 40, 20)

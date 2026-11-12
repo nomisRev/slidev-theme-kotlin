@@ -276,7 +276,7 @@ function cancelEditSessionOnEscape(event: KeyboardEvent) {
  * from firing; other window-level listeners (selection clearing, drag
  * handlers on captured pointers) are unaffected.
  */
-const EDITOR_UI_SELECTOR = '.drawn-annotation-toolbar, .drawn-annotation-editor-launcher, .annotation-label.is-editable, .annotation-connector-editor'
+const EDITOR_UI_SELECTOR = '.drawn-annotation-toolbar, .annotation-label.is-editable, .annotation-connector-editor'
 function blockNavigationInput(event: Event) {
   if (!annotationEditMode.value)
     return

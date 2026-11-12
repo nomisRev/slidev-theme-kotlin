@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- The development-only **Edit annotations** launcher, the pencil button in the top-right corner of every slide with an annotation. **Alt+Shift+A** opens and closes the annotation editor as before.
+
 ## 0.14.0
 
 ### Added

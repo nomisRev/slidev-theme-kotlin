@@ -16,7 +16,6 @@ for (const file of jsFiles) {
   // with a production v-if.
   if (contents.includes('/__drawn-annotation-source')
     || contents.includes('drawn-annotation-toolbar')
-    || contents.includes('Edit annotations')
     || contents.includes('drawn-annotation-problem')
     || contents.includes('Annotation problems on this slide'))
     editorChunks.push(file)
