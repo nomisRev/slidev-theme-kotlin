@@ -1,6 +1,6 @@
 {
   "name": "slidev-theme-kotlin",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "type": "module",
   "exports": {
     "./annotation-editor": {
@@ -9,8 +9,8 @@
     }
   },
   "bin": {
-    "slidev-kotlin-snippets": "./bin/kotlin-snippets.mjs",
-    "slidev-kotlin-present": "./bin/present.mjs"
+    "slidev-kotlin-snippets": "bin/kotlin-snippets.mjs",
+    "slidev-kotlin-present": "bin/present.mjs"
   },
   "keywords": [
     "slidev-theme",

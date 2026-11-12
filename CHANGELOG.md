@@ -1,11 +1,22 @@
 # Changelog
 
-## 0.14.0
+## 0.14.1
+
+### Fixed
+
+- Annotations on code that does not move no longer blink through a Magic Move step, across a cross-slide chain or inside a classic `md magic-move` block, with `transition: fade` and `transition: view-transition` alike. `SuspendGutter` icons stay beside their line instead of clearing for the whole move. `SmartCast` and `Warning` highlights and `TypeHint` inlays are repainted in the same frame Magic Move resets their token. `SmartCast`, `Warning`, and `InlineValue` messages stay on screen and follow their line. Across a chain, a message, an `InlineCompilerError` squiggle and message, and `DrawnAnnotation` ink that the neighbouring slide also has are handed over in the first frame of the move rather than after it, and are left out of the slide's fade; under `view-transition` they get their own layer above the code window's snapshot (`view-transition-class`, Chrome 125+ and Safari 18.2+). An annotation the neighbouring slide does not have still waits for the move and draws in afterwards.
+
+### Changed
+
+- The README is rewritten for deck authors: a quick start, one section per feature with an example, one "Customising" section for the CSS variables, and a `themeConfig` reference table. The reference detail moved to `docs/code-marks.md`, `docs/snippets.md`, and `docs/publishing.md`, which ship with the package.
+- The demo deck `slides.md` is a 19-slide tour, down from 63: one slide per feature, with code marks, `SuspendGutter`, the `ktor`, `arrow`, `jdbc`, and `r2dbc` icons, a slide that shows the visual annotation editor in use, and a closing slide for the snippets CLI, the handout, and analytics. The edge-case and per-prop slides moved to `slides.fixtures.md`, which `npm run visual:review` captures under `fixtures/` and `npm run lint` checks, and which is not published.
+
+### Removed
+
+- The development-only **Edit annotations** launcher, the pencil button in the top-right corner of every slide with an annotation. **Alt+Shift+A** opens and closes the annotation editor as before.
 
 ### Added
 
-- Code marks: a trailing `// [!kind …]` comment inside a Kotlin fence asks for an IDE decoration on that line — `[!smartcast result]`, `[!this Routing]`, `[!context ResourceScope]`, `[!error insertUser No context argument found]`, `[!warning …]`, `[!type …]`, `[!value …]`, and `[!suspend]` for `SuspendGutter`. The markdown transformer strips the comment and wraps the fence in the matching component with `:line` and `:occurrence` computed from the comment's position, so a mark moves with its line through a Magic Move chain and the author no longer counts lines, nests wrappers, or escapes quotes. `parseFenceInfo` strips the marks too (`ParsedFence.marks`), so the Kotlin snippet CLI, cross-slide Magic Move steps, and the handout never see them; a fence with an `[!error …]` mark stays out of the generated sources like a wrapped one, and the handout prints each mark as the note its component would leave. A `console` or `sql` fence attached directly under the marked fence is enclosed by the same wrapper. See "Code marks" in the README.
-- `SuspendGutter`, moved in from the functional-kotlin-services deck: `<SuspendGutter :lines="[2, 3]">` around one fence draws IntelliJ's suspend-call gutter icon beside each listed one-based source line, outside the code window's left border, following Magic Move steps and the light or dark scheme. `--suspend-gutter-size` and `--suspend-gutter-gap` place the icon; the handout drops the wrapper. `[!suspend]` marks are the way to write it from inside the fence.
 - `node scripts/transition-blink.mjs` records every Magic Move step of `scripts/transition-blink.fixture.md` frame by frame and reports each annotation that goes missing while its code stays put (`--transition fade|view-transition`, `--backward`, `--only <page>`, `--frames --strip 0,300,900` for a filmstrip in `.visual/transition-blink/`).
 - A phone remote for presenting, moved in from the advanced-dsl-in-kotlin and functional-kotlin-services decks. `slidev-kotlin-present` serves a built deck on the local network, prints the display link plus a remote link with its QR code for every network address, and relays navigation from the phone to each open display. On a phone or tablet the `presenter` route shows the remote (upcoming slide or reveal, notes, tap right to advance, left to go back); a laptop keeps Slidev's presenter console. See `docs/presenting.md`. Compared with the decks' copies:
   - Driving the deck needs a write secret that only leaves the server in the printed remote link (`?k=`). The session endpoint and the served `index.html` no longer carry it, a page without it only watches, and a rotated secret (`--new-secret`) expires old links. The secret is kept in `node_modules/.cache/slidev-kotlin-present/secret` so a restarted server keeps the phone connected.
@@ -18,18 +29,13 @@
 - The demo deck has a "Your phone is the clicker" slide, the README a "Presenting from your phone" section, and `docs/presenting.md` the status line, the options, and who can read what.
 - `npm run test:remote` drives a built deck through the server in separate Chromium contexts (`--dist <dir>` tests another deck's build).
 
-### Changed
 
-- The README is rewritten for deck authors: a quick start, one section per feature with an example, one "Customising" section for the CSS variables, and a `themeConfig` reference table. The reference detail moved to `docs/code-marks.md`, `docs/snippets.md`, and `docs/publishing.md`, which ship with the package.
-- The demo deck `slides.md` is a 19-slide tour, down from 63: one slide per feature, with code marks, `SuspendGutter`, the `ktor`, `arrow`, `jdbc`, and `r2dbc` icons, a slide that shows the visual annotation editor in use, and a closing slide for the snippets CLI, the handout, and analytics. The edge-case and per-prop slides moved to `slides.fixtures.md`, which `npm run visual:review` captures under `fixtures/` and `npm run lint` checks, and which is not published.
+## 0.14.0
 
-### Fixed
+### Added
 
-- Annotations on code that does not move no longer blink through a Magic Move step, across a cross-slide chain or inside a classic `md magic-move` block, with `transition: fade` and `transition: view-transition` alike. `SuspendGutter` icons stay beside their line instead of clearing for the whole move. `SmartCast` and `Warning` highlights and `TypeHint` inlays are repainted in the same frame Magic Move resets their token. `SmartCast`, `Warning`, and `InlineValue` messages stay on screen and follow their line. Across a chain, a message, an `InlineCompilerError` squiggle and message, and `DrawnAnnotation` ink that the neighbouring slide also has are handed over in the first frame of the move rather than after it, and are left out of the slide's fade; under `view-transition` they get their own layer above the code window's snapshot (`view-transition-class`, Chrome 125+ and Safari 18.2+). An annotation the neighbouring slide does not have still waits for the move and draws in afterwards.
-
-### Removed
-
-- The development-only **Edit annotations** launcher, the pencil button in the top-right corner of every slide with an annotation. **Alt+Shift+A** opens and closes the annotation editor as before.
+- Code marks: a trailing `// [!kind …]` comment inside a Kotlin fence asks for an IDE decoration on that line — `[!smartcast result]`, `[!this Routing]`, `[!context ResourceScope]`, `[!error insertUser No context argument found]`, `[!warning …]`, `[!type …]`, `[!value …]`, and `[!suspend]` for `SuspendGutter`. The markdown transformer strips the comment and wraps the fence in the matching component with `:line` and `:occurrence` computed from the comment's position, so a mark moves with its line through a Magic Move chain and the author no longer counts lines, nests wrappers, or escapes quotes. `parseFenceInfo` strips the marks too (`ParsedFence.marks`), so the Kotlin snippet CLI, cross-slide Magic Move steps, and the handout never see them; a fence with an `[!error …]` mark stays out of the generated sources like a wrapped one, and the handout prints each mark as the note its component would leave. A `console` or `sql` fence attached directly under the marked fence is enclosed by the same wrapper. See "Code marks" in the README.
+- `SuspendGutter`, moved in from the functional-kotlin-services deck: `<SuspendGutter :lines="[2, 3]">` around one fence draws IntelliJ's suspend-call gutter icon beside each listed one-based source line, outside the code window's left border, following Magic Move steps and the light or dark scheme. `--suspend-gutter-size` and `--suspend-gutter-gap` place the icon; the handout drops the wrapper. `[!suspend]` marks are the way to write it from inside the fence.
 
 ## 0.13.2
 
