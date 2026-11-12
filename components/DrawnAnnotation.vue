@@ -54,7 +54,8 @@ import { RoughGenerator } from 'roughjs/bin/generator'
 import { findTextInSegments } from './code-text-match'
 import type { TextSegment } from './code-text-match'
 import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
-import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
+import { useCarriedLayer } from './carried-layer'
+import { handOverTransitionInk, rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
 import { localLabelWidthToSlideFraction, localPointToSlideFraction, nudgeConnector, nudgeLabelWidth, persistedGeometrySignature, quadraticControlForCubic, slideFractionPointToLocal, translateConnector, validateDrawnAnnotationGeometry } from './drawn-annotation/geometry'
@@ -476,6 +477,17 @@ const settled = ref(!props.wait)
 // Let the incoming SVG appear complete after the move, rather than replaying
 // its stroke-dash entrance from scratch.
 const skipEntranceAnimation = ref(false)
+// Ink taken over from an equivalent annotation is on screen already, so it
+// opens the entrance without waiting for the slide to settle: it stays put,
+// or travels with its tokens, while the code around it is still moving.
+const inkCarried = ref(false)
+// The neighbouring page took this annotation's ink over. Its copy is the one
+// on screen now, so this one goes at once instead of fading out beneath it.
+const handedOver = ref(false)
+// Under a view transition the strokes and the label each need a layer of
+// their own to stay above the code window; see carried-layer.ts.
+const inkLayer = useCarriedLayer(inkCarried)
+const labelLayer = useCarriedLayer(inkCarried)
 // An annotation with `until` is only shown while the thing it points at is on
 // screen: past that click every stage hides again, in one step.
 // `on` is the same thing derived from the resolved clicks, so the shorthand
@@ -524,7 +536,7 @@ function entrance(isReached: ComputedRef<boolean>) {
   watchEffect(() => {
     if (!isReached.value)
       opened.value = false
-    else if (settled.value)
+    else if (settled.value || inkCarried.value)
       opened.value = true
   })
   return computed(() => isReached.value && opened.value)
@@ -989,6 +1001,9 @@ let lastVisibleMarkTransitionBox: TransitionInkBox | undefined
 // Ink left behind by an unmounted instance of this annotation is still to be
 // taken back (see restoreTransitionInk).
 let restorePending = false
+// The pending hand-off is from the neighbouring Magic Move page, whose code
+// is still moving: the ink is taken over, but nothing has settled yet.
+let restoreWhileMoving = false
 // Animation frame during which handed-over ink is being revealed. `unsettle`
 // leaves `skipEntranceAnimation` alone while it is set: a click that lands
 // in the same frame would otherwise clear the skip before the browser has
@@ -1119,6 +1134,8 @@ function settleAfterMagicMove() {
     return
   magicMoveWasObserved = false
   settled.value = true
+  // Carried only for the move it arrived with; the entrance stays open.
+  inkCarried.value = false
   invalidateTextMatch()
   updateGeometry()
   inheritTransitionInk()
@@ -1131,8 +1148,10 @@ function settleAfterMagicMove() {
 function unsettle(grace = 0) {
   const run = ++settleRun
   magicMoveWasObserved = false
-  if (!restoreHold)
+  if (!restoreHold) {
     skipEntranceAnimation.value = false
+    inkCarried.value = false
+  }
   // A click can restyle the slide, so measured label sizes and content
   // obstacles go stale here — once per click, which leaves them shared by
   // every frame of the animation.
@@ -1333,7 +1352,9 @@ function measureGeometry(root: HTMLElement, overlayBox: DOMRect, width: number, 
   // click always recomputes, because other content can have moved around a
   // stationary mark.
   const markKey = `${width}x${height}|${shapeBoxes.map(box => `${box.left.toFixed(2)},${box.top.toFixed(2)},${box.right.toFixed(2)},${box.bottom.toFixed(2)}`).join(';')}`
-  if (!settled.value && geometry.ready && markKey === lastMarkKey)
+  // A pending hand-off still has to compare this very box with the ink left
+  // behind, which for a mark that stays is exactly the unchanged one.
+  if (!settled.value && geometry.ready && markKey === lastMarkKey && !restorePending)
     return
   lastMarkKey = markKey
 
@@ -1348,7 +1369,9 @@ function measureGeometry(root: HTMLElement, overlayBox: DOMRect, width: number, 
     && lastMarkTransitionBox && takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox)) {
     restorePending = false
     skipEntranceAnimation.value = true
-    settled.value = true
+    inkCarried.value = true
+    if (!restoreWhileMoving)
+      settled.value = true
     // Handed-over ink is complete from its first frame on, so it skips the
     // hidden first paint that a fresh entrance needs (see below).
     geometryPainted.value = true
@@ -1441,7 +1464,10 @@ function isCrossSlideMagicMove() {
 function inheritTransitionInk() {
   if (!isCurrentSlide.value || !withinRange.value || !lastMarkTransitionBox || !isCrossSlideMagicMove())
     return
-  skipEntranceAnimation.value = takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox)
+  // Ink carried on arrival has consumed its record; a miss here must not
+  // take the skip away from it again.
+  if (takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastMarkTransitionBox))
+    skipEntranceAnimation.value = true
 }
 
 /**
@@ -1464,6 +1490,7 @@ function inheritTransitionInk() {
  */
 function restoreTransitionInk() {
   restorePending = true
+  restoreWhileMoving = false
   invalidateTextMatch()
   updateGeometry()
   if (restorePending) {
@@ -2174,6 +2201,10 @@ function connectObservers() {
         invalidateTextMatch()
       if (isMagicMoveInProgress())
         magicMoveWasObserved = true
+      // The neighbouring page's ink is taken over in the very frame the code
+      // starts to move, measured where the tokens set off from.
+      if (restorePending && restoreWhileMoving)
+        updateGeometry()
       track()
       settleAfterMagicMove()
     })
@@ -2260,13 +2291,21 @@ watch($clicks, () => {
 watch(isCurrentSlide, (current) => {
   if (current) {
     lastVisibleMarkTransitionBox = undefined
+    handedOver.value = false
     connectObservers()
     unsettle(VIEW_TRANSITION_START_GRACE)
+    // Ink the neighbouring Magic Move page left behind is taken over by the
+    // first measurement that finds the mark where that page had it, instead
+    // of once the move is over: nothing that stays may disappear meanwhile.
+    restoreWhileMoving = isCrossSlideMagicMove()
+    restorePending = restoreWhileMoving
     track()
   }
   else {
     if (lastVisibleMarkTransitionBox && isCrossSlideMagicMove())
-      rememberTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastVisibleMarkTransitionBox)
+      handOverTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastVisibleMarkTransitionBox, () => {
+        handedOver.value = true
+      })
     lastVisibleMarkTransitionBox = undefined
     disconnectObservers()
     // Cancel in-flight measurement too: a settle pass or tracking loop begun
@@ -2790,7 +2829,7 @@ if (isAnnotationEditorDevelopment) {
   <div
     ref="container"
     class="drawn-annotation"
-    :class="{ 'is-fading-out': fadingOut, 'is-edit-frozen': annotationEditMode, 'skip-entrance-animation': skipEntranceAnimation }"
+    :class="{ 'is-fading-out': fadingOut, 'is-edit-frozen': annotationEditMode, 'skip-entrance-animation': skipEntranceAnimation, 'is-handed-over': handedOver }"
       >
     <!-- The marker takes part in Slidev's click ordering while component state
          drives the drawing. This avoids a mount-time v-click class race. -->
@@ -2799,12 +2838,14 @@ if (isAnnotationEditorDevelopment) {
     <svg
       ref="overlay"
       class="annotation-overlay annotation-ignore"
+      :class="{ 'magic-move-carried': inkCarried }"
       :viewBox="`0 0 ${geometry.width} ${geometry.height}`"
       preserveAspectRatio="none"
       :aria-hidden="!(connectorEditable && annotationEditMode)"
       :role="connectorEditable && annotationEditMode ? 'group' : undefined"
       :aria-label="connectorEditable && annotationEditMode ? `Connector editor for ${locator}` : undefined"
       :style="{
+        ...inkLayer,
         '--annotation-color': props.color,
         '--annotation-width': `${props.strokeWidth}px`,
         '--leader-delay': `${delays.leader}ms`,
@@ -2920,7 +2961,7 @@ if (isAnnotationEditorDevelopment) {
       v-if="hasLabel"
       ref="labelEl"
       class="annotation-label annotation-ignore"
-      :class="{ 'is-active': labelActive && geometry.ready, 'is-placed': geometry.labelPlaced, 'is-editable': editable && annotationEditMode, 'is-selected-for-editing': selectedForEditing }"
+      :class="{ 'magic-move-carried': inkCarried, 'is-active': labelActive && geometry.ready, 'is-placed': geometry.labelPlaced, 'is-editable': editable && annotationEditMode, 'is-selected-for-editing': selectedForEditing }"
       :data-click="resolvedLabelClick"
       @pointerdown="beginLabelDrag($event)"
       @pointermove="moveLabelDrag"
@@ -2928,6 +2969,7 @@ if (isAnnotationEditorDevelopment) {
       @pointercancel="cancelLabelDrag"
       @click="stopEditorClick"
       :style="{
+        ...labelLayer,
         '--annotation-color': props.color,
         '--label-delay': `${delays.label}ms`,
         '--label-fade': `${LABEL_FADE_DURATION}ms`,
@@ -3022,6 +3064,12 @@ if (isAnnotationEditorDevelopment) {
 .skip-entrance-animation .annotation-label {
   transition-duration: 0ms !important;
   transition-delay: 0ms !important;
+}
+
+/* The neighbouring Magic Move page shows this ink now (see `handedOver`). */
+.is-handed-over .annotation-overlay,
+.is-handed-over .annotation-label {
+  visibility: hidden !important;
 }
 
 .is-active .annotation-mark {

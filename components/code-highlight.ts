@@ -17,6 +17,9 @@ import { codeTextSegments, findTextInSegments, mergeVisualLines, trimmedLineRang
 import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 import { renderAnnotationLabel } from './annotation-label-markdown'
 import { clearAnnotationAuthoringProblems, reportAnnotationAuthoringProblem } from './drawn-annotation/editor-store'
+import { useCarriedLayer } from './carried-layer'
+import { handOverTransitionInk, takeTransitionInk } from './transition-ink'
+import type { TransitionInkBox } from './transition-ink'
 
 // Slidev's build renderer can leave `import.meta.env.DEV` true. Authoring
 // warnings belong to Vite's explicit serve mode only, the same boundary
@@ -72,8 +75,8 @@ export interface CodeHighlightOptions {
 }
 
 // Classes Shiki Magic Move keeps on its elements only while a step transition
-// is playing; the message waits for the tokens to settle instead of chasing
-// them frame by frame, since the highlight itself already travels with them.
+// is playing. A message that is not on screen yet waits for the tokens to
+// settle; one that is stays, and follows its line frame by frame.
 const MAGIC_MOVE_ANIMATING = [
   '.shiki-magic-move-enter-active',
   '.shiki-magic-move-leave-active',
@@ -204,7 +207,30 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
       return true
     return fromStart ? $clicks.value < info.end : info.isActive.value
   })
-  const messageShown = computed(() => visible.value && hasTarget.value && !animating.value && !!message.value)
+  // A new message must not appear on top of code that is still moving. Once
+  // it is shown, however, it stays through later Magic Move steps: taking it
+  // away for every step makes the message of a line that never moved blink.
+  const revealed = ref(false)
+  // The message was on screen on the neighbouring Magic Move slide: it is
+  // shown complete from the first frame, without its entrance fade.
+  const carried = ref(false)
+  const messageShown = computed(() => revealed.value && !!message.value)
+  // Each slide of a cross-slide Magic Move chain has its own instance of this
+  // component. A message on screen when its slide is left is handed to the
+  // equivalent instance on the neighbouring slide (see transition-ink.ts).
+  const transitionInkIdentity = computed(() => JSON.stringify([component, props.line, text.value, props.occurrence, message.value]))
+  let lastTransitionBox: TransitionInkBox | undefined
+  // Set on arrival from a neighbouring slide, until the message is revealed.
+  let carryPending = false
+  // The window of a chain slide starts its move a frame after the slide is
+  // entered. Until it had the time to, only a carried message is shown: one
+  // that is new here waits for the move, like on any other step.
+  let arrivalHold: ReturnType<typeof setTimeout> | undefined
+  // Only the entrance is skipped: a message that goes fades out as usual.
+  watch(revealed, (isRevealed) => {
+    if (!isRevealed)
+      carried.value = false
+  }, { flush: 'sync' })
 
   // The wrapped code block renders in one of two shapes, discovered lazily
   // because Magic Move only renders after mount. The <pre>/<code> element
@@ -282,6 +308,14 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     const targetElement = range.startContainer instanceof HTMLElement
       ? range.startContainer
       : range.startContainer.parentElement
+    lastTransitionBox = slideBox.width && slideBox.height
+      ? {
+          left: (first.left - slideBox.left) / slideBox.width,
+          top: (first.top - slideBox.top) / slideBox.height,
+          right: (messageRight - slideBox.left) / slideBox.width,
+          bottom: (first.bottom - slideBox.top) / slideBox.height,
+        }
+      : undefined
     messageStyle.value = {
       left: `${(messageRight - hostBox.left) / scale + 10}px`,
       top: `${(first.top - hostBox.top + (first.bottom - first.top) / 2) / scale}px`,
@@ -385,6 +419,7 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
       return
     if (!visible.value) {
       clear()
+      revealed.value = false
       return
     }
     const target = findTarget(host)
@@ -393,8 +428,46 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     paint(target.range)
     // Magic Move ends a transition by removing its animation classes, which
     // the class observer below turns into one more sync: the settled edge.
+    const wasAnimating = animating.value
     animating.value = !!host.querySelector(MAGIC_MOVE_ANIMATING)
     placeMessage(host, target)
+    // Carried only for the move it arrived with; see carried-layer.ts.
+    if (wasAnimating && !animating.value)
+      carried.value = false
+    if (!message.value)
+      return
+    if (!matched.value) {
+      // Magic Move can leave a retained target briefly unmatched while it
+      // swaps its DOM; only a settled step without the target hides it.
+      if (!animating.value)
+        revealed.value = false
+    }
+    else if (!revealed.value) {
+      if (carryPending && lastTransitionBox && takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTransitionBox))
+        carried.value = true
+      if (carried.value || (!animating.value && arrivalHold === undefined))
+        revealed.value = true
+    }
+    if (revealed.value)
+      carryPending = false
+    trackMessage()
+  }
+
+  // CSS transforms move the tokens without a mutation to observe, so a
+  // message on screen is placed again every frame of a Magic Move step.
+  let trackFrame: number | undefined
+  function trackMessage() {
+    if (!animating.value || !revealed.value || trackFrame !== undefined)
+      return
+    trackFrame = requestAnimationFrame(() => {
+      trackFrame = undefined
+      sync()
+    })
+  }
+
+  function isCrossSlideMagicMove() {
+    const host = container.value
+    return !!host && !!(host.closest('.slidev-layout') ?? host).querySelector('.magic-move-between')
   }
 
   // Observer bursts are coalesced into one sync per frame: a Magic Move step
@@ -411,7 +484,18 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
   // The code lines do not exist until Shiki Magic Move renders its first step,
   // and are replaced for every subsequent step; re-painting on every mutation
   // keeps the highlight on the current step's tokens instead of stale ones.
-  useMutationObserver(container, scheduleSync, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+  // Two changes cannot wait for the next frame, or the frame in between is
+  // painted without the highlight: Magic Move resetting the text of a token
+  // this component had split (which drops the painted wrapper), and a step
+  // starting to move, which is when a message on screen has to follow.
+  useMutationObserver(container, () => {
+    const host = container.value
+    if (host && visible.value
+      && (targets.value.some(el => !el.isConnected) || (!animating.value && host.querySelector(MAGIC_MOVE_ANIMATING))))
+      sync()
+    else
+      scheduleSync()
+  }, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
   // A resize moves the tokens, never the text: repaint is a no-op, the message moves.
   useResizeObserver(container, scheduleSync)
 
@@ -426,13 +510,41 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     $clicksContext?.unregister(id)
     if (pendingSync !== undefined)
       cancelAnimationFrame(pendingSync)
+    if (trackFrame !== undefined)
+      cancelAnimationFrame(trackFrame)
     clearTimeout(missingTargetWarning)
+    clearTimeout(arrivalHold)
     if (isDevelopment)
       clearAnnotationAuthoringProblems(id)
   })
   watch([() => props.line, text, () => props.occurrence, message, () => inlay?.({ endsLine: matchEndsLine.value })], sync)
   watch(visible, sync)
   watch(isCurrentSlide, sync)
+  // The hand-off between the slides of a chain. Synchronous, so the slide
+  // being left has recorded its message before the `sync` above, which runs
+  // with the next render, lets the slide being entered look for it.
+  watch(isCurrentSlide, (current) => {
+    const host = container.value
+    if (current) {
+      carried.value = false
+      carryPending = isCrossSlideMagicMove()
+      host?.removeAttribute('data-magic-move-handed-over')
+      clearTimeout(arrivalHold)
+      arrivalHold = carryPending
+        ? setTimeout(() => {
+            arrivalHold = undefined
+            sync()
+          }, 100)
+        : undefined
+    }
+    else if (revealed.value && lastTransitionBox && isCrossSlideMagicMove()) {
+      // Once the neighbouring slide shows the message, the copy left here
+      // goes at once instead of fading out beneath it (see layout.css).
+      handOverTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTransitionBox, () => {
+        host?.setAttribute('data-magic-move-handed-over', '')
+      })
+    }
+  }, { flush: 'sync' })
 
   // A target that is absent from the current code step has nothing to paint, so
   // the highlight stays off. Silent in production, but tell the slide author
@@ -462,5 +574,7 @@ export function useCodeHighlight(props: CodeHighlightProps, container: Ref<HTMLE
     }
   }, { immediate: true })
 
-  return { message, messageHtml, messageShown, messageStyle, inlaid }
+  const carriedLayer = useCarriedLayer(carried)
+  const placedMessageStyle = computed(() => ({ ...messageStyle.value, ...carriedLayer.value }))
+  return { message, messageHtml, messageShown, messageStyle: placedMessageStyle, messageCarried: carried, inlaid }
 }

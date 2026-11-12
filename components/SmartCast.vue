@@ -7,14 +7,14 @@ const props = defineProps<CodeHighlightProps>()
 const container = useTemplateRef<HTMLElement>('container')
 
 // Everything but the colours is shared with `Warning`; see code-highlight.ts.
-const { messageHtml, messageShown, messageStyle } = useCodeHighlight(props, container, { component: 'SmartCast', highlightClass: 'smart-cast-token' })
+const { messageHtml, messageShown, messageStyle, messageCarried } = useCodeHighlight(props, container, { component: 'SmartCast', highlightClass: 'smart-cast-token' })
 </script>
 
 <template>
   <div ref="container" class="smart-cast-host">
     <slot />
-    <Transition name="smart-cast-message">
-      <span v-if="messageShown" class="smart-cast-message" :style="messageStyle"><i>●</i><span class="annotation-label-content" v-html="messageHtml" /></span>
+    <Transition :name="messageCarried ? 'carried' : 'smart-cast-message'">
+      <span v-if="messageShown" class="smart-cast-message" :class="{ 'magic-move-carried': messageCarried }" :style="messageStyle"><i>●</i><span class="annotation-label-content" v-html="messageHtml" /></span>
     </Transition>
   </div>
 </template>

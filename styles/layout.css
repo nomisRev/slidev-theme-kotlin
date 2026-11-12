@@ -401,6 +401,23 @@ html.dark .slidev-code-wrapper:is(.code-window-icon--postgresql, :has(code.code-
     background: transparent;
 }
 
+/* Cross-slide Magic Move under `transition: view-transition`: an annotation
+   carried over from the neighbouring slide is a snapshot of its own, stacked
+   above the code window (see components/carried-layer.ts). It was on screen
+   already, so it is shown complete instead of fading in as a new element. */
+::view-transition-new(.magic-move-carried) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Cross-slide Magic Move: a message or diagnostic the neighbouring slide has
+   taken over is drawn there now, at full strength from its first frame. The
+   copy left on the slide being left goes at once, or the two overlap for the
+   length of its exit fade. */
+[data-magic-move-handed-over] > :is(.smart-cast-message, .warning-message, .inline-value, .type-hint, .inline-compiler-error-underlines, .inline-compiler-error-message) {
+  visibility: hidden;
+}
+
 /* Let a click-ranged annotation finish its exit fade before the content it
    replaces begins its own click transition. */
 .slidev-layout:has(.drawn-annotation.is-fading-out)

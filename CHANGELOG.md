@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Annotations on code that does not move no longer blink through a Magic Move step, across a cross-slide chain or inside a classic `md magic-move` block, with `transition: fade` and `transition: view-transition` alike. `SuspendGutter` icons stay beside their line instead of clearing for the whole move. `SmartCast` and `Warning` highlights and `TypeHint` inlays are repainted in the same frame Magic Move resets their token. `SmartCast`, `Warning`, and `InlineValue` messages stay on screen and follow their line. Across a chain, a message, an `InlineCompilerError` squiggle and message, and `DrawnAnnotation` ink that the neighbouring slide also has are handed over in the first frame of the move rather than after it, and are left out of the slide's fade; under `view-transition` they get their own layer above the code window's snapshot (`view-transition-class`, Chrome 125+ and Safari 18.2+). An annotation the neighbouring slide does not have still waits for the move and draws in afterwards.
+
 ### Changed
 
 - The README is rewritten for deck authors: a quick start, one section per feature with an example, one "Customising" section for the CSS variables, and a `themeConfig` reference table. The reference detail moved to `docs/code-marks.md`, `docs/snippets.md`, and `docs/publishing.md`, which ship with the package.
@@ -10,6 +14,10 @@
 ### Removed
 
 - The development-only **Edit annotations** launcher, the pencil button in the top-right corner of every slide with an annotation. **Alt+Shift+A** opens and closes the annotation editor as before.
+
+### Added
+
+- `node scripts/transition-blink.mjs` records every Magic Move step of `scripts/transition-blink.fixture.md` frame by frame and reports each annotation that goes missing while its code stays put (`--transition fade|view-transition`, `--backward`, `--only <page>`, `--frames --strip 0,300,900` for a filmstrip in `.visual/transition-blink/`).
 
 ## 0.14.0
 

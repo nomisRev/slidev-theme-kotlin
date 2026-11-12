@@ -311,8 +311,10 @@ function copyCode() {
    animation. Keep the root of a morphing slide opaque and fade the content
    around the window instead: every element that neither is nor contains a
    morphing window, at the topmost level where that holds, so nested opacities
-   never compound. The root keeps Slidev's own `transition` declaration, which
-   is where Vue reads the transition's duration from. These rules target the
+   never compound. An annotation carried over from the neighbouring slide
+   (`.magic-move-carried`) is on screen already and stays out of the fade the
+   same way. The root keeps Slidev's own `transition` declaration, which is
+   where Vue reads the transition's duration from. These rules target the
    slide root, an ancestor of this component, so they cannot be scoped. */
 .slidev-page.fade-enter-from:has(.magic-move-between--arriving),
 .slidev-page.fade-leave-to:has(.magic-move-between--departing) {
@@ -320,14 +322,14 @@ function copyCode() {
 }
 
 :is(.slidev-page.fade-enter-active, .slidev-page.fade-enter-active *):has(.magic-move-between--arriving)
-  > :not(.magic-move-between--arriving, :has(.magic-move-between--arriving)),
+  > :not(.magic-move-between--arriving, :has(.magic-move-between--arriving), .magic-move-carried),
 :is(.slidev-page.fade-leave-active, .slidev-page.fade-leave-active *):has(.magic-move-between--departing)
   > :not(.magic-move-between--departing, :has(.magic-move-between--departing)) {
   transition: opacity var(--slidev-transition-duration) ease;
 }
 
 :is(.slidev-page.fade-enter-from, .slidev-page.fade-enter-from *):has(.magic-move-between--arriving)
-  > :not(.magic-move-between--arriving, :has(.magic-move-between--arriving)),
+  > :not(.magic-move-between--arriving, :has(.magic-move-between--arriving), .magic-move-carried),
 :is(.slidev-page.fade-leave-to, .slidev-page.fade-leave-to *):has(.magic-move-between--departing)
   > :not(.magic-move-between--departing, :has(.magic-move-between--departing)) {
   opacity: 0;

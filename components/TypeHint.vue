@@ -37,7 +37,7 @@ const highlightProps = reactive({
   text: computed(() => props.text ?? (props.type ? undefined : '{')),
   message: computed(() => props.type ? undefined : props.receiver ? `this: ${props.receiver}` : props.context ? `context(${props.context})` : undefined),
 })
-const { message, messageShown, messageStyle, inlaid } = useCodeHighlight(highlightProps, container, {
+const { message, messageShown, messageStyle, messageCarried, inlaid } = useCodeHighlight(highlightProps, container, {
   component: 'TypeHint',
   highlightClass: props.type ? 'type-hint-inlay' : 'type-hint-lambda',
   inlay: () => props.type ? `: ${props.type}` : highlightProps.message,
@@ -47,8 +47,8 @@ const { message, messageShown, messageStyle, inlaid } = useCodeHighlight(highlig
 <template>
   <div ref="container" class="type-hint-host">
     <slot />
-    <Transition name="type-hint">
-      <span v-if="messageShown && !inlaid" class="type-hint" :style="messageStyle">{{ message }}</span>
+    <Transition :name="messageCarried ? 'carried' : 'type-hint'">
+      <span v-if="messageShown && !inlaid" class="type-hint" :class="{ 'magic-move-carried': messageCarried }" :style="messageStyle">{{ message }}</span>
     </Transition>
   </div>
 </template>

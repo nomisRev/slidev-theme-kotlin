@@ -7,7 +7,8 @@ import { useMutationObserver, useResizeObserver } from '@vueuse/core'
 import { codeTextSegments, findTextInSegments, lineSpanMatch, mergeVisualLines, trimmedLineRange } from './code-text-match'
 import { normalizeAnnotationLineBreaks } from './annotation-line-breaks'
 import { annotationLabelText, renderAnnotationLabel } from './annotation-label-markdown'
-import { rememberTransitionInk, takeTransitionInk } from './transition-ink'
+import { useCarriedLayer } from './carried-layer'
+import { handOverTransitionInk, rememberTransitionInk, takeTransitionInk } from './transition-ink'
 import type { TransitionInkBox } from './transition-ink'
 import { clearAnnotationAuthoringProblems, reportAnnotationAuthoringProblem } from './drawn-annotation/editor-store'
 
@@ -99,6 +100,17 @@ const hasTarget = computed(() => !!targetRange.value)
 // True while Shiki Magic Move is transitioning between steps.
 const animating = ref(false)
 const skipEntranceAnimation = ref(false)
+// The diagnostic was taken over from the neighbouring Magic Move slide, where
+// it was on screen already: it keeps out of the slide's own fade.
+const carried = ref(false)
+// The neighbouring Magic Move slide took this diagnostic over. Its copy is
+// the one on screen now, so this one goes at once instead of fading out
+// beneath it, which thickens the squiggle for as long as the fade takes.
+const handedOver = ref(false)
+// Under a view transition the squiggle and the message each need a layer of
+// their own to stay above the code window; see carried-layer.ts.
+const underlinesLayer = useCarriedLayer(carried)
+const messageLayer = useCarriedLayer(carried)
 const transitionInkIdentity = computed(() => JSON.stringify([
   props.line, props.text, props.occurrence, props.message,
 ]))
@@ -178,7 +190,6 @@ let warnedClassDrift = false
 // frame while Magic Move moves retained tokens, so an already-visible
 // diagnostic stays attached to its target rather than waiting for the final
 // mutation at the end of the transition.
-let magicMoveFrame: number | undefined
 
 // The wrapped code block renders in one of two shapes, discovered lazily
 // because Magic Move only renders after mount. The <pre>/<code> element
@@ -225,7 +236,10 @@ function isMagicMoveAnimating(host: HTMLElement) {
 function inheritTransitionInk(host: HTMLElement) {
   if (!visible.value || !lastTargetTransitionBox || !isCrossSlideMagicMove(host))
     return
-  skipEntranceAnimation.value = takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTargetTransitionBox)
+  // A diagnostic carried on arrival has consumed its record; a miss here
+  // must not take the skip away from it again.
+  if (takeTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastTargetTransitionBox))
+    skipEntranceAnimation.value = true
 }
 
 /**
@@ -256,6 +270,7 @@ function restoreTransitionInk() {
   restorePending = false
   clearTimeout(revealTimer)
   skipEntranceAnimation.value = true
+  carried.value = true
   revealed.value = true
 }
 
@@ -376,6 +391,8 @@ function sync() {
   const wasAnimating = animating.value
   animating.value = isMagicMoveAnimating(host)
   if (wasAnimating && !animating.value) {
+    // Carried only for the move it arrived with.
+    carried.value = false
     inheritTransitionInk(host)
     // A preloaded page's visibility watcher can run before Slidev commits the
     // incoming route, then be invalidated by that commit. This is the actual
@@ -461,12 +478,10 @@ function sync() {
 let pendingSync: number | undefined
 
 function trackMagicMove() {
-  if (!animating.value || magicMoveFrame !== undefined)
-    return
-  magicMoveFrame = requestAnimationFrame(() => {
-    magicMoveFrame = undefined
-    sync()
-  })
+  // Shares the frame with any observer-triggered sync: one measurement per
+  // frame follows the tokens just as well as two.
+  if (animating.value)
+    scheduleSync()
 }
 function scheduleSync() {
   pendingSync ??= requestAnimationFrame(() => {
@@ -484,7 +499,13 @@ function scheduleSync() {
 useMutationObserver(container, (records) => {
   if (records.some(record => record.type !== 'attributes'))
     invalidateTarget()
-  scheduleSync()
+  // A diagnostic arriving from the neighbouring Magic Move slide is taken
+  // over in the very frame the code starts to move, measured where its tokens
+  // set off from; waiting for the next frame would paint one without it.
+  if (restorePending && isCurrentSlide.value)
+    sync()
+  else
+    scheduleSync()
 }, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] })
 // The getter re-observes automatically whenever the line or text is retargeted.
 useResizeObserver(() => [container.value, ...targets.value], scheduleSync)
@@ -506,8 +527,6 @@ onBeforeUnmount(() => {
   $clicksContext?.unregister(id)
   if (pendingSync !== undefined)
     cancelAnimationFrame(pendingSync)
-  if (magicMoveFrame !== undefined)
-    cancelAnimationFrame(magicMoveFrame)
   clearTimeout(revealTimer)
   clearTimeout(missingTargetWarning)
   if (isDevelopment)
@@ -569,12 +588,21 @@ watch(isCurrentSlide, (current) => {
   if (current) {
     lastVisibleTargetTransitionBox = undefined
     skipEntranceAnimation.value = false
+    carried.value = false
+    handedOver.value = false
+    // What the neighbouring Magic Move slide left behind is taken over by
+    // the first measurement that finds the target where that slide had it,
+    // rather than once the move is over (see restoreTransitionInk).
+    const host = container.value
+    restorePending = !!host && isCrossSlideMagicMove(host)
     scheduleSync()
     return
   }
   const host = container.value
   if (host && lastVisibleTargetTransitionBox && isCrossSlideMagicMove(host))
-    rememberTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastVisibleTargetTransitionBox)
+    handOverTransitionInk(transitionInkIdentity.value, slideContext.$page.value, lastVisibleTargetTransitionBox, () => {
+      handedOver.value = true
+    })
   lastVisibleTargetTransitionBox = undefined
   revealed.value = false
 }, { flush: 'sync' })
@@ -624,7 +652,7 @@ watch([visible, hasTarget, () => props.line, text, () => props.occurrence, textM
 </script>
 
 <template>
-  <div ref="container" class="inline-compiler-error-host">
+  <div ref="container" class="inline-compiler-error-host" :data-magic-move-handed-over="handedOver || undefined">
     <slot />
     <!-- Screen readers only announce a live region reliably when its content
          changes while it is already mounted, so this one exists permanently
@@ -637,6 +665,8 @@ watch([visible, hasTarget, () => props.line, text, () => props.occurrence, textM
       <span
         v-if="revealed"
         class="inline-compiler-error-underlines"
+        :class="{ 'magic-move-carried': carried }"
+        :style="underlinesLayer"
         aria-hidden="true"
       >
         <span
@@ -651,7 +681,8 @@ watch([visible, hasTarget, () => props.line, text, () => props.occurrence, textM
       <span
         v-if="revealed"
         class="inline-compiler-error-message"
-        :style="position"
+        :class="{ 'magic-move-carried': carried }"
+        :style="[position, messageLayer]"
         aria-hidden="true"
       ><i>●</i><span class="annotation-label-content" v-html="messageHtml" /></span>
     </Transition>

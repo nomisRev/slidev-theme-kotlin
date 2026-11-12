@@ -15,6 +15,9 @@ const host = useTemplateRef<HTMLElement>('host')
 const markers = ref<{ line: number, top: string, left: string, fontSize: string }[]>([])
 const { $scale, $zoom, $clicks } = useSlideContext()
 const moving = '.shiki-magic-move-enter-active, .shiki-magic-move-leave-active, .shiki-magic-move-move, .shiki-magic-move-container-resize, .shiki-magic-move-container-restyle'
+const entering = '.shiki-magic-move-enter-from, .shiki-magic-move-enter-active'
+// True while Magic Move is moving the code; see `sync`.
+let wasMoving = false
 let frame: number | undefined
 let mutations: MutationObserver | undefined
 let resize: ResizeObserver | undefined
@@ -27,11 +30,17 @@ function sync() {
   const pre = root.querySelector<HTMLElement>('pre.slidev-code')
   const magic = pre?.classList.contains('shiki-magic-move-container') ?? false
   const code = magic ? pre : pre?.querySelector<HTMLElement>('code')
-  // Wait for Magic Move to settle, as the theme's other annotations do.
-  if (!pre || !code || root.querySelector(moving)) {
+  if (!pre || !code) {
     markers.value = []
     return
   }
+  // A marker follows its line through a Magic Move step, measured again every
+  // frame: the tokens move by CSS transform, which no observer reports. Taking
+  // the markers away until the code has settled made every one of them blink,
+  // including those of lines that never moved.
+  wasMoving = !!root.querySelector(moving)
+  if (wasMoving)
+    schedule()
   const scale = $scale.value * $zoom.value || 1
   const rootBox = root.getBoundingClientRect()
   const preBox = pre.getBoundingClientRect()
@@ -46,7 +55,10 @@ function sync() {
     const { range } = trimmedLineRange(segments, line)
     const box = Array.from(range?.getClientRects() ?? []).find(rect => rect.width && rect.height)
     // Blank and missing lines have no suspension point to annotate.
-    if (!box)
+    if (!range || !box)
+      continue
+    // A line Magic Move is still writing gets its marker once it is there.
+    if (wasMoving && range.startContainer.parentElement?.closest(entering))
       continue
     const center = box.top + box.height / 2
     // Respect scrollable code windows as well as the editor's own bounds.
@@ -76,10 +88,16 @@ onMounted(async () => {
     return
   mutations = new MutationObserver((records) => {
     // Only code mutations matter; updating our own overlay must not loop.
-    if (records.some(record => {
+    if (!records.some(record => {
       const target = record.target instanceof Element ? record.target : record.target.parentElement
       return !target?.closest('.suspend-gutter-markers')
     }))
+      return
+    // The frame in which the code sets off is measured before it is painted:
+    // the markers are then where the lines start from, not where they end up.
+    if (!wasMoving && host.value?.querySelector(moving))
+      sync()
+    else
       schedule()
   })
   mutations.observe(host.value, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style'] })
@@ -103,7 +121,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="host" class="suspend-gutter">
     <slot />
-    <div class="suspend-gutter-markers">
+    <div class="suspend-gutter-markers magic-move-carried">
       <span
         v-for="marker in markers"
         :key="marker.line"
@@ -124,6 +142,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .suspend-gutter { position: relative; }
 .suspend-gutter-markers { pointer-events: none; }
+/* The neighbouring slide of a cross-slide Magic Move chain is morphing this
+   window's code and draws the markers itself (they keep out of its fade, as
+   `.magic-move-carried`), so the ones left here would only ghost beneath. */
+.suspend-gutter:has(.magic-move-between--departing) .suspend-gutter-markers { visibility: hidden; }
 .suspend-gutter-marker {
   position: absolute;
   z-index: 1;

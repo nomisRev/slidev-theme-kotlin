@@ -19,14 +19,14 @@ const highlightProps = reactive({
   ...toRefs(props),
   message: computed(() => props.value),
 })
-const { message, messageShown, messageStyle } = useCodeHighlight(highlightProps, container, { component: 'InlineValue' })
+const { message, messageShown, messageStyle, messageCarried } = useCodeHighlight(highlightProps, container, { component: 'InlineValue' })
 </script>
 
 <template>
   <div ref="container" class="inline-value-host">
     <slot />
-    <Transition name="inline-value">
-      <span v-if="messageShown" class="inline-value" :style="messageStyle">{{ message }}</span>
+    <Transition :name="messageCarried ? 'carried' : 'inline-value'">
+      <span v-if="messageShown" class="inline-value" :class="{ 'magic-move-carried': messageCarried }" :style="messageStyle">{{ message }}</span>
     </Transition>
   </div>
 </template>
