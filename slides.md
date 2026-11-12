@@ -194,6 +194,27 @@ fun doubled() =
 `// Solution` does the same for the answer of an exercise, and keeps it out of the handout too.
 
 ---
+kodee: false
+---
+
+# Walk through the code, click by click
+
+Line ranges after the language dim everything else. A `|` starts the next click.
+
+`` ```kotlin {1-2,6|4} ``
+
+```kotlin {1-2,6|4}{lines:true}
+val numbers = listOf(1, 2, 3)
+val doubled = numbers.map { it * 2 }
+
+val evens = numbers.filter { it % 2 == 0 }
+
+println(doubled)
+```
+
+First lines 1, 2 and 6, then line 4. `{lines:true}` adds the numbers.
+
+---
 kodee: wink
 ---
 
