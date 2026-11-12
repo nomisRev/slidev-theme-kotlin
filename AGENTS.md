@@ -5,3 +5,10 @@
 - You can find Slidev SKILLS here, node_modules/@slidev/cli/skills/slidev/SKILL.md
 - In doubt read code in node_modules to understand the libraries you need to work with
 - Visual configuration (colours, sizes, column counts, fonts) is exposed as a CSS custom property that a deck overrides from its own stylesheet, never as a `themeConfig` or frontmatter key. Frontmatter is only for things CSS cannot express, such as the Kodee variant.
+- `README.md`, `docs/*.md`, `components/README.md` and `slides.md` are for human deck authors: say what to type and what appears. Implementation rationale goes in code comments or the CHANGELOG.
+- `slides.md` is the public showcase (GitHub Pages). Regression and edge-case slides go in `slides.fixtures.md`.
+- Verify with `npm test` (unit), `npm run test:annotation-editor` (browser) and `npm run visual:check -- --base origin/main` (pixels). `npm run build` lints and asserts that no editor code ships.
+- Visual review captures `/<slide>?clicks=<n>`, not `?print=clicks`. When `../kotlin-fundamentals` exists it is rendered as a consumer deck too.
+- Prefer `transition: fade`: with `view-transition`, Slidev 52 swaps its slideshow container between a `div` and a `TransitionGroup` after a click-then-navigate, which remounts every preloaded slide and stalls for 150 ms or more.
+- `.pi/extensions/inspect-shiki-token-scopes.ts` inspects Shiki token scopes when changing highlighting.
+- Repo map: `setup/` holds the build-time transforms, `components/code-highlight.ts` is the mechanism the IDE decorations share, `plugins/` is the development-only source writer, `bin/` is the snippets CLI.

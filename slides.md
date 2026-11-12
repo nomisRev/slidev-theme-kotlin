@@ -11,9 +11,9 @@ themeConfig:
 
 # Kotlin Slidev Theme
 
-## A compact showcase of Kotlin-ready slides
+## Slides that look like your IDE
 
-`slidev-theme-kotlin`
+`npm install slidev-theme-kotlin`
 
 ---
 layout: intro
@@ -21,200 +21,35 @@ layout: intro
 
 # Meet Kodee
 
-The Kotlin mascot is built into every theme layout.
+The Kotlin mascot comes with every layout.
 
-- Choose a mascot variant per slide
-- Move it between featured and corner positions
-- One mascot for the whole deck, only redrawn when a slide asks for another
-
----
-
-# Kotlin-first code highlighting
-
-```kotlin
-sealed interface Result<out T> {
-    data class Success<T>(val value: T) : Result<T>
-    data class Failure(val message: String) : Result<Nothing>
-}
-
-fun greet(name: String): Result<String> =
-    Result.Success("Hello, $name!")
-```
+- One line of config turns Kodee on for the whole deck
+- Kodee glides from one slide to the next instead of popping in
 
 ---
-kodee: false
+kodee:
+  variant: jumping
+  size: large
+  position: featured
 ---
 
-# Imports fold out of the way
+# Kodee follows your story
 
-Write the imports; the slide drops them and the handout keeps them.
+Each slide picks an expression, a size, and a place.
 
-```kotlin
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
+`greeting` `wink` `wave` `jumping`
 
-fun numbers(): Flow<Int> = flowOf(1, 2, 3)
+`sitting` `drinking` `heart` `in-love`
 
-fun doubled(): Flow<Int> = numbers().map { it * 2 }
-```
+`welcome` `winter` `tiny`
+
+Or `kodee: false`, when a slide needs the room.
 
 ---
 kodee: false
 ---
 
-# Fold the setup, show the example
-
-A `// Example` comment marks where the example starts; everything above it folds with the imports.
-
-```kotlin
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
-
-fun numbers(): Flow<Int> = flowOf(1, 2, 3)
-
-// Example: reuse the flow above without showing it
-fun doubled(): Flow<Int> = numbers().map { it * 2 }
-```
-
----
-kodee: false
----
-
-# Kotlin and Gradle fence aliases
-
-## `kotlin`
-
-```kotlin
-fun main() = println("Kotlin")
-```
-
----
-kodee: false
----
-
-# Kotlin and Gradle fence aliases
-
-## `kotlin gradle`
-
-```kotlin gradle
-plugins { kotlin("jvm") }
-```
-
----
-kodee: false
----
-
-# Kotlin and Gradle fence aliases
-
-## `kt`
-
-```kt
-val answer = 42
-```
-
----
-kodee: false
----
-
-# Kotlin and Gradle fence aliases
-
-## `kt gradle`
-
-```kt gradle
-repositories { mavenCentral() }
-```
-
----
-kodee: false
----
-
-# Kotlin and Gradle fence aliases
-
-## `kts`
-
-```kts
-val language = "Kotlin"
-```
-
----
-kodee: false
----
-
-# Kotlin and Gradle fence aliases
-
-## `kts gradle`
-
-```kts gradle
-kotlin { jvmToolchain(21) }
-```
-
----
-kodee: false
----
-
-# Tooling fence identities
-
-## `yaml toolchain`
-
-```yaml toolchain
-product: jvm/app
-```
-
----
-kodee: false
----
-
-# Tooling fence identities
-
-## `java`
-
-```java
-record User(String name) {}
-```
-
----
-kodee: false
----
-
-# Tooling fence identities
-
-## `bash`
-
-```bash
-./gradlew test
-```
-
----
-kodee: false
----
-
-# Tooling fence identities
-
-## `xml maven`
-
-```xml maven
-<artifactId>demo</artifactId>
-```
-
----
-kodee: false
----
-
-# Tooling fence identities
-
-## `sql`
-
-```sql
-SELECT * FROM presentations;
-```
-
----
-kodee: false
----
-
-# Output is a run panel, not a second editor
+# Code looks like your IDE
 
 ```kotlin
 val numbers = listOf(1, 2, 3)
@@ -227,75 +62,144 @@ println(numbers.groupBy { it % 2 })
 {1=[1, 3], 0=[2]}
 ```
 
-A `console` fence takes IntelliJ's Run tool window colours and the run icon, without the editor's outline and shadow.
-
----
-kodee: wink
----
-
-# Magic Move for code walkthroughs
-
-````md magic-move
-```kotlin
-fun <T> List<T>.secondOrNull(): T? = null
-```
-
-```kotlin
-fun <T> List<T>.secondOrNull(): T? =
-    if (size >= 2) this[1] else null
-```
-
-```kotlin{2}
-fun <T> List<T>.secondOrNull(): T? =
-    getOrNull(1)
-```
-````
-
----
-kodee: wink
----
-
-# Magic Move between slides
-
-Link slides with a `magic-move` separator and the code morphs across them.
-
-```kotlin
-class Person
-```
-
----
-magic-move
----
-
-# Magic Move between slides
-
-Each linked slide is a full slide: headings and prose can change too.
-
-```kotlin
-class Person(val name: String)
-```
-
----
-magic-move
----
-
-# Magic Move between slides
-
-The last slide of the chain needs no marker — and `{all|2}` click highlighting still works.
-
-```kotlin {all|2}
-class Person(val name: String) {
-    fun introduce() = println("I am $name")
-}
-```
+IntelliJ's editor for the code, its Run window for a `console` fence. Light and dark.
 
 ---
 kodee: false
 ---
 
-# Parallel snippets move together
+# Every code window says what it is
 
-Code windows pair up by position across the linked slides.
+A word after the language picks the icon and the border colour.
+
+<div class="grid grid-cols-3 gap-x-5">
+<div>
+
+`kotlin`
+
+```kotlin
+val answer = 42
+```
+
+`kotlin gradle`
+
+```kotlin gradle
+kotlin("jvm")
+```
+
+`kotlin ktor`
+
+```kotlin ktor
+get("/") { }
+```
+
+`kotlin arrow`
+
+```kotlin arrow
+either { bind() }
+```
+
+</div>
+<div>
+
+`kotlin jdbc`
+
+```kotlin jdbc
+transaction { }
+```
+
+`kotlin r2dbc`
+
+```kotlin r2dbc
+rows.asFlow()
+```
+
+`java`
+
+```java
+record User() {}
+```
+
+`sql`
+
+```sql
+SELECT * FROM talks;
+```
+
+</div>
+<div>
+
+`bash`
+
+```bash
+./gradlew test
+```
+
+`yaml toolchain`
+
+```yaml toolchain
+product: jvm/app
+```
+
+`xml maven`
+
+```xml maven
+<version>1</version>
+```
+
+</div>
+</div>
+
+---
+kodee: false
+---
+
+# Write complete code, show what matters
+
+Imports, and everything above a `// Example` comment, stay off the slide. The handout keeps them.
+
+<div class="grid grid-cols-2 gap-x-5">
+<div>
+
+You write
+
+```text
+import kotlinx.coroutines.flow.*
+
+fun numbers() = flowOf(1, 2, 3)
+
+// Example
+fun doubled() =
+    numbers().map { it * 2 }
+```
+
+</div>
+<div>
+
+The slide shows
+
+```kotlin
+import kotlinx.coroutines.flow.*
+
+fun numbers() = flowOf(1, 2, 3)
+
+// Example
+fun doubled() =
+    numbers().map { it * 2 }
+```
+
+</div>
+</div>
+
+`// Solution` does the same for the answer of an exercise, and keeps it out of the handout too.
+
+---
+kodee: wink
+---
+
+# Magic Move between slides
+
+Put `magic-move` in the separator between two slides and the code morphs across them.
 
 ```kotlin
 class Person
@@ -309,9 +213,9 @@ CREATE TABLE PERSON
 magic-move
 ---
 
-# Parallel snippets move together
+# Magic Move between slides
 
-Code windows pair up by position across the linked slides.
+Each step is a full slide, so the title and the text can change with the code.
 
 ```kotlin
 class Person(val name: String)
@@ -324,138 +228,88 @@ CREATE TABLE PERSON(
 ```
 
 ---
-kodee:
-  variant: jumping
-  size: large
-  position: featured
+magic-move
 ---
 
-# Animate your story
+# Magic Move between slides
 
-Kodee can change expression, size, and placement from one slide to the next.
-
----
-kodee: jumping
----
-
-# Reveal details as you present
-
-<div v-click>
+Several code windows move together: the first into the first, the second into the second.
 
 ```kotlin
-val language = "Kotlin"
+class Person(val name: String, val age: Int)
 ```
 
-</div>
-
-<div v-click="2">
-
-```kotlin
-val message = "Hello, $language!"
-```
-
-</div>
-
-<div v-click="3">
-
-The theme works with Slidev's standard click animations.
-
-</div>
-
----
-layout: two-cols-header
-kodee: heart
----
-
-# Compose layouts with familiar Slidev syntax
-
-::left::
-
-## Theme features
-
-- Kotlin branding
-- Shiki highlighting
-- Kodee animations
-- Cover and intro layouts
-
-::right::
-
-```kotlin
-val theme = Theme(
-    language = "Kotlin",
-    mascot = "Kodee",
-    slides = "Slidev"
+```sql
+CREATE TABLE PERSON(
+    name VARCHAR(255) NOT NULL,
+    age  INT NOT NULL
 )
 ```
 
 ---
-layout: cover
-kodee: wave
+kodee: false
 ---
 
-# Ready to present Kotlin
+# Show what the IDE shows
 
-## Install the theme and make it your own
+A trailing `// [!…]` comment asks for the decoration on its line, and never reaches the slide.
 
-`npm install slidev-theme-kotlin`
+```kotlin
+suspend fun render(shape: Shape) = buildString { // [!this StringBuilder]
+  when (shape) {
+    is Circle -> append(shape.radius) // [!smartcast shape]
+    is Square -> append(shape.side) // [!smartcast shape]
+  }
+  delay(100) // [!suspend]
+}
+```
 
----
-kodee: sitting
----
-
-# Sit down with Kotlin
-
-Build calm, readable APIs with concise language features.
-
----
-kodee: drinking
----
-
-# Take a Kotlin break
-
-A small expression can still say a lot.
+Here: `[!this StringBuilder]`, `[!smartcast shape]`, and `[!suspend]`.
 
 ---
-kodee: in-love
+kodee: false
 ---
 
-# Fall in love with null safety
+# Warnings and errors
 
-Use Kotlin's type system to make invalid states harder to represent.
+```kotlin
+fun greet(name: String): Int {
+    val greeting = "Hello" // [!warning greeting Variable 'greeting' is never used]
+    return name // [!error name Type mismatch: required Int, found String]
+}
+```
 
----
-kodee: welcome
----
-
-# Welcome to the Kotlin ecosystem
-
-From server-side services to multiplatform apps, Kotlin meets you where you are.
-
----
-kodee: winter
----
-
-# Kotlin works in every season
-
-Keep your code expressive as your project grows.
+`[!warning greeting …]` and `[!error name …]`. A snippet with an error is left out of the compiled sources.
 
 ---
-kodee: tiny
+kodee: false
 ---
 
-# Even tiny Kodee joins in
+# Values, like the debugger
 
-Every bundled mascot variant is ready to use in your slides.
+<InlineValue :line="1" text="listOf(1, 2, 3)" value="[2, 3, 4]">
+<InlineValue :line="2" text="listOf(1, 2, 3)" value="[[1, 2], [2, 3], [3, 4]]" :at="1">
+<InlineValue :line="3" text="listOf(1, 2, 3)" value="[1, 2, 2, 3, 3, 4]" :at="2">
+
+```kotlin
+listOf(1, 2, 3).map { it + 1 }
+listOf(1, 2, 3).map { listOf(it, it + 1) }
+listOf(1, 2, 3).flatMap { listOf(it, it + 1) }
+```
+
+</InlineValue>
+</InlineValue>
+</InlineValue>
+
+Every decoration is also a component, for when it should appear on a click.
 
 ---
-
-# Drawn annotations
-
-`DrawnAnnotation` is bundled with the theme: it can mark an element or exact code text, then explain it with a label or connector.
-
+kodee: heart
 ---
 
 # Annotate Kotlin code
+
+`DrawnAnnotation` circles the exact text you name and writes a label next to it.
 
 <DrawnAnnotation type="circle" text="fun main" label="the entry point of every Kotlin program" :on="1">
 
@@ -469,168 +323,85 @@ fun main() {
 
 ---
 
-# Connect two elements
-
-<DrawnAnnotation
-  source-type="circle"
-  selector="[data-source]"
-  target="[data-target]"
-  :target-mark="false"
-  arrow
-  label="B follows from A"
-  :at="1"
-  :label-at="2"
->
-
-<div>Element <b data-source>A</b> is annotated and the arrow lands on <b data-target>B</b>.</div>
-
-</DrawnAnnotation>
-
----
-
-# Four ways to mark something
+# Five ways to mark something
 
 <DrawnAnnotation type="underline" selector="[data-underline]" :at="1">
 <DrawnAnnotation type="circle" selector="[data-circle]" :at="2">
 <DrawnAnnotation type="box" selector="[data-box]" :at="3">
 <DrawnAnnotation type="strike-through" selector="[data-strike]" :at="4">
+<DrawnAnnotation type="circle" selector="[data-own]" :options="{ roughness: 2.6, seed: 12 }" :stroke-width="4" color="#eb55e6" :at="5">
 
 - An <b data-underline>underline</b> is the default and quietest mark.
 - A <b data-circle>circle</b> emphasizes one thing.
 - A <b data-box>box</b> frames an entire phrase.
 - A <b data-strike>strike-through</b> crosses out what no longer holds.
+- Or <b data-own>your own</b> colour, width, and roughness.
 
 </DrawnAnnotation>
 </DrawnAnnotation>
-</DrawnAnnotation>
-</DrawnAnnotation>
-
----
-
-# Labels use simple local placement
-
-<DrawnAnnotation type="underline" selector="[data-pinned]" label="placed near its mark" :at="1">
-<DrawnAnnotation type="underline" selector="[data-quiet]" label="named without a line" :connect="false" placement="right" :at="2">
-<DrawnAnnotation type="circle" selector="[data-auto]" label="placed by the local fallback" :at="3">
-
-> You can <b data-pinned>put a label</b> where you want it.
->
-> Or have it <b data-quiet>written on its own</b> with no leader line.
->
-> Otherwise it finds <b data-auto>its own place</b> on the slide.
-
 </DrawnAnnotation>
 </DrawnAnnotation>
 </DrawnAnnotation>
 
 ---
 
-# Annotate a Magic Move step
+# Labels and arrows
 
-<DrawnAnnotation type="underline" text="val greeting" label="read-only; its type is inferred" insert :on="2">
+<DrawnAnnotation type="underline" selector="[data-near]" label="with a line to its mark" :at="1">
+<DrawnAnnotation type="underline" selector="[data-quiet]" label="or without one" :connect="false" placement="down" :at="2">
+<DrawnAnnotation source-type="circle" selector="[data-from]" target="[data-to]" :target-mark="false" arrow :at="3">
 
-````md magic-move [Main.kt]
-```kotlin [Main.kt]
-fun main() {
-    println("Hello, Kotlin!")
-}
-```
+A label lands <b data-near>next to its mark</b>
 
-```kotlin [Main.kt]
-fun main() {
-    val greeting = "Hello, Kotlin!"
-    println(greeting)
-}
-```
+<div class="mt-28">
 
-```kotlin [Main.kt]
-fun main() {
-    val greeting = "Hello, Kotlin!"
-    println(greeting.uppercase())
-}
-```
-````
+It can also stand <b data-quiet>on its own</b>
+
+</div>
+
+<div class="mt-28">
+
+An arrow connects <b data-from>one element</b> <span class="mx-20">to</span> <b data-to>another</b>
+
+</div>
 
 </DrawnAnnotation>
-
----
-
-# Sequential marks share one click
-
-<DrawnAnnotation type="circle" selector="[data-circled]" :at="1">
-<DrawnAnnotation type="underline" selector="[data-underlined]" :at="1">
-
-The <b data-circled>circle</b> is drawn first; the <b data-underlined>underline</b> follows on the same click.
-
 </DrawnAnnotation>
 </DrawnAnnotation>
 
 ---
+kodee: false
+---
 
-# Control the sketch
+# Drag labels into place
 
-<DrawnAnnotation type="box" selector="[data-clean]" :options="{ roughness: 0, bowing: 0 }" :iterations="1" placement="right" label="clean geometric strokes" :at="1">
-<DrawnAnnotation type="circle" selector="[data-wobbly]" :options="{ roughness: 2.6, seed: 12 }" :stroke-width="4" :duration="1600" color="#eb55e6" placement="right" label="wobblier, slower, and pink" :at="2">
+No coordinates to type. The visual editor saves each position into your Markdown.
 
-- Any <b data-clean>rough.js option</b> passes straight through.
-- Turn <b data-wobbly>roughness up</b> and set the colour, width, and duration yourself.
+<div class="grid grid-cols-[2fr_3fr] gap-x-8 items-center">
+<div>
 
-</DrawnAnnotation>
-</DrawnAnnotation>
+1. Add `drawnAnnotationEditor()` to `vite.config.ts`
+2. Run `slidev` and press **Alt+Shift+A** (**⌥⇧A** on a Mac)
+3. Drag a label, its width, or its line
+4. Press **Done**
+
+</div>
+<div>
+
+<img src="./docs/annotation-editor.png" alt="The annotation editor: a dragged label, its handles, and the toolbar" class="rounded-lg border border-gray-300 shadow-lg">
+
+</div>
+</div>
+
+Only while you write: a built or exported deck contains no editor.
 
 ---
 
-# Compiler diagnostics: static code
+# Everything follows Magic Move
 
-<InlineCompilerError :line="3" message="Type mismatch: inferred type is `String` but `Int` was expected">
+Decorations and annotations appear on the step that has their code, and leave with it.
 
-```kotlin
-fun retryAfter(attempt: Int): Int {
-    val delay: Int = "later"
-    return attempt + delay
-}
-```
-
-</InlineCompilerError>
-
----
-
-# Compiler diagnostics: exact and repeated text
-
-<InlineCompilerError text="accountId" :occurrence="2" message="Unresolved reference: accountId" :on="1">
-
-```kotlin
-val accountId = request.accountId
-val audit = accountId.toString()
-println(accountId)
-```
-
-</InlineCompilerError>
-
-The second occurrence is the diagnostic target; the first two clicks leave the code untouched.
-
----
-
-# Compiler diagnostics: several lines
-
-<InlineCompilerError text="when (state) {\n    Loading -> spinner()\n    is Content -> state.text\n  }" message="'when' expression must be exhaustive.\nAdd the 'is Error' branch or an 'else' branch" :on="1">
-
-```kotlin
-fun render(state: UiState): String =
-  when (state) {
-    Loading -> spinner()
-    is Content -> state.text
-  }
-```
-
-</InlineCompilerError>
-
-`\n` in `text` continues the match on the next source line, indentation included; each line gets its own squiggle and the message sits after the first.
-
----
-
-# Compiler diagnostics follow Magic Move
-
+<DrawnAnnotation type="underline" text="user." label="fixed by naming the receiver" :on="2">
 <InlineCompilerError text="displayName" message="Unresolved reference: displayName" :on="1">
 
 ````md magic-move
@@ -648,216 +419,25 @@ fun welcome(user: User) = user.displayName
 ````
 
 </InlineCompilerError>
-
----
-
-# Smart casts paint the narrowed receiver
-
-<SmartCast text="nullable.length" :on="1">
-
-```kotlin
-val nullable: String? = null
-val length =
-  if (nullable != null) nullable.length
-  else -1
-```
-
-</SmartCast>
-
-`SmartCast` paints IntelliJ's smart-cast green onto the matched tokens themselves, so it needs no position tracking and travels with Magic Move for free.
-
----
-
-# Warnings paint the suspicious code
-
-<Warning text="val tags: Array<String>" message="Property with 'Array' type in a 'data' class:\nit is recommended to override 'equals()' and 'hashCode()'" :on="1">
-
-```kotlin
-data class Tags(val key: String, val tags: Array<String>)
-```
-
-</Warning>
-
-`Warning` is `SmartCast` in IntelliJ's warning yellow: the same props, the same exact match across tokens, plus an optional `message` after the line. The code still compiles, so the Kotlin snippet CLI keeps its fence.
-
----
-
-# Type hints name the receiver
-
-<TypeHint :line="1" receiver="HTML">
-<TypeHint :line="2" receiver="BODY" :at="1">
-<TypeHint :line="3" receiver="P" :at="2">
-
-```kotlin
-html {
-  body {
-    p {
-      +"Hello"
-    }
-  }
-}
-```
-
-</TypeHint>
-</TypeHint>
-</TypeHint>
-
-`TypeHint` draws IntelliJ's inlay hint for a lambda with receiver: the `this: HTML` pill after the `{` on `line`. `text` defaults to `{`, so a DSL slide names a line and a receiver and nothing else.
-
----
-
-# Inline values show a result on its own line
-
-<InlineValue :line="3" text="listOf(1, 2, 3)" value="[2, 3, 4]">
-<InlineValue :line="4" text="listOf(1, 2, 3)" value="[[1, 2], [2, 3], [3, 4]]" :at="1">
-<InlineValue :line="5" text="listOf(1, 2, 3)" value="[1, 2, 2, 3, 3, 4]" :at="2">
-
-```kotlin
-fun <A, B> Iterable<A>.flatMap(transform: (A) -> Iterable<B>): List<B>
-
-listOf(1, 2, 3).map { it + 1 }
-listOf(1, 2, 3).map { listOf(it, it + 1) }
-listOf(1, 2, 3).flatMap { listOf(it, it + 1) }
-```
-
-</InlineValue>
-</InlineValue>
-</InlineValue>
-
-`InlineValue` writes the debugger's grey inline value after the line `text` names, so each line carries its own result instead of a console beneath the code. `value` is shown as written; `name: value` reads as the debugger labels a variable.
-
----
-
-# Explicit label sides are directional
-
-<DrawnAnnotation type="circle" selector="[data-up]" placement="up" label="up stays above" :on="1">
-<DrawnAnnotation type="circle" selector="[data-right]" placement="right" label="right stays right" :on="2">
-<DrawnAnnotation type="circle" selector="[data-down]" placement="down" label="down stays below" :on="3">
-<DrawnAnnotation type="circle" selector="[data-left]" placement="left" label="left stays left" :on="4">
-
-<div style="margin: 230px 180px; display: grid; grid-template-columns: repeat(2, 180px); gap: 70px; text-align: center">
-  <b data-up>up</b><b data-right>right</b><b data-left>left</b><b data-down>down</b>
-</div>
-
-</DrawnAnnotation>
-</DrawnAnnotation>
-</DrawnAnnotation>
 </DrawnAnnotation>
 
 ---
-
-# Automatic labels share the free space
-
-<DrawnAnnotation selector="[data-first]" type="underline" placement="auto" label="first annotation" avoid-selector="[data-reserved]" :at="1" :until="5">
-<DrawnAnnotation selector="[data-second]" type="circle" placement="auto" label="second annotation remains clear" :at="2" :until="5">
-<DrawnAnnotation selector="[data-third]" type="box" placement="auto" label="third annotation has a longer label that may wrap" :at="3" :until="5">
-
-<div class="grid grid-cols-2 gap-10">
-<div>
-
-- A <b data-first>persistent first label</b> starts the discussion.
-- A <b data-second>second label</b> overlaps it in time.
-- The <b data-third>third label</b> has the least room.
-
-</div>
-<div data-reserved style="border: 3px dashed var(--slidev-theme-primary, #7954f6); padding: 1.5rem">
-
-### Reserved teaching space
-
-`avoid-selector` keeps labels out of this arbitrary element.
-
-</div>
-</div>
-
-</DrawnAnnotation>
-</DrawnAnnotation>
-</DrawnAnnotation>
-
+kodee: welcome
 ---
 
-# Later clicks are label obstacles
+# Beyond the slides
 
-<DrawnAnnotation type="underline" selector="[data-source]" placement="auto" label="This label remains clear when the detail appears" :at="1" :until="4">
-
-<div class="grid grid-cols-2 gap-12">
-<div>
-
-## Immutable configuration
-
-The <b data-source>configuration value</b> is read once at startup.
-
-</div>
-<div>
-
-<div v-click="2" class="card">
-
-### Later detail
-
-A later click introduces this explanation. A persistent label must not cover it.
-
-</div>
-</div>
-</div>
-
-</DrawnAnnotation>
+- **Compiled snippets.** `npx slidev-kotlin-snippets` turns every Kotlin and Java snippet into a source file, so a stale slide fails your build instead of your talk.
+- **A handout and `llms.txt`.** Every build also writes your slides as plain pages, so search engines and coding agents can read the code.
+- **Analytics without cookies.** See which slide people stop at.
 
 ---
-
-# A label belongs to its Magic Move step
-
-<DrawnAnnotation text="val token" placement="down" label="a read-only local value" :on="1">
-
-````md magic-move [Session.kt]
-```kotlin
-fun session() = connect()
-```
-
-```kotlin
-fun session(): String {
-    val token = connect()
-    return token
-}
-```
-
-```kotlin
-fun session(): String = connect()
-```
-````
-
-</DrawnAnnotation>
-
+layout: cover
+kodee: wave
 ---
 
-# Leader lines do not become lassos
+# Ready to present Kotlin
 
-<DrawnAnnotation type="circle" text="remove" placement="down" label="remove only the matching entry" :on="1" arrow>
+## Install the theme and make it your own
 
-```kotlin
-fun prune(values: MutableList<String>, remove: String) {
-    values.remove(remove)
-    println("removed $remove")
-}
-```
-
-</DrawnAnnotation>
-
-The requested down placement is deliberate: it must remain below the source or fail cleanly, never drift into the code panel.
-
----
-
-# Reach a repeated token by its line
-
-<DrawnAnnotation type="box" text="$remove" :line="3" placement="down" label="`line` names the source line to search" :at="1">
-<DrawnAnnotation type="circle" text="remove" :line="2" occurrence="2" placement="down" label="`occurrence` then counts on that line only" :at="2">
-
-```kotlin
-fun prune(values: MutableList<String>, remove: String) {
-    values.remove(remove)
-    println("removed $remove")
-}
-```
-
-</DrawnAnnotation>
-</DrawnAnnotation>
-
-Same as `InlineCompilerError` and `SmartCast`: a short token that repeats is reached by naming its line instead of counting every earlier match.
+`npm install slidev-theme-kotlin`

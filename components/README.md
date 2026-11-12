@@ -299,8 +299,8 @@ No annotation ID or generated stylesheet is used. Enable
 serving it injects a transient source locator and the editor rewrites only this
 opening tag's `:geometry` binding and its `:connect` binding. The
 locator is not part of authored Markdown
-or production output. With the writer configured, press **Alt+Shift+A** (or use
-the global **Edit annotations** toolbar) in a development deck.
+or production output. With the writer configured, press **Alt+Shift+A** in a
+development deck.
 
 Editing is a deliberate frozen session. Entering edit mode locks the deck on
 the current slide and click state: Slidev's keyboard shortcuts are suspended
@@ -437,6 +437,12 @@ An annotation that cannot be drawn stays off the slide and says why on the
 browser console, once, prefixed `[DrawnAnnotation]`. The warnings wait until
 the annotation's click has been reached and the slide has stopped moving, so a
 Magic Move step that legitimately does not contain the text never causes one.
+
+In `slidev dev` the same problem also puts a red chip in the top-left corner
+of the slide; hover it for the full message. `InlineCompilerError`,
+`SmartCast`, `Warning`, `TypeHint`, and `InlineValue` report a target they
+cannot find the same way. The chip disappears when the target turns up, and
+builds, exports, the presenter view, and print mode never show it.
 
 - **Text … was not found in the slot** — `text` has to match the rendered text
   exactly, spaces included. Inside a Magic Move block it also has to be part of

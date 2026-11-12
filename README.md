@@ -1,39 +1,294 @@
 # Slidev Theme Kotlin
 
-A [Slidev](https://sli.dev) theme designed for Kotlin presentations, featuring the Kodee mascot with smooth animations and Kotlin-optimized syntax highlighting.
+A [Slidev](https://sli.dev) theme for Kotlin talks: code windows that look
+like IntelliJ, the decorations your IDE shows, hand-drawn annotations, and
+Kodee.
 
-## Overview
+**[See the demo deck](https://nomisrev.github.io/slidev-theme-kotlin/)**. Its
+source is [`slides.md`](slides.md), so every slide doubles as an example.
 
-This theme provides a professional presentation template tailored for Kotlin developers. It includes:
+## Quick start
 
-- **Kodee Mascot Integration**: Animated Kodee character with multiple variants (greeting, wink, wave, jumping, sitting, drinking, heart, in-love, welcome, winter, tiny)
-- **Magic Move Animations**: Smooth transitions for Kodee between slides with configurable size and position
-- **Magic Move between slides**: Link slides with a `magic-move` separator and their code windows morph across the slide boundary, including several parallel snippets per slide
-- **Kotlin Syntax Highlighting**: Custom Shiki configuration optimized for Kotlin code
-- **Multiple Layouts**: Pre-built layouts including default, cover, and intro
-- **JetBrains Fonts**: Prefers locally installed JetBrains Sans and JetBrains Mono, with Inter and Google-hosted JetBrains Mono fallbacks
-- **Drawn annotations**: Click-aware, hand-drawn marks, labels, and connectors for elements and code
-- **Inline compiler diagnostics**: IntelliJ-style squiggles and messages for static and Magic Move code blocks
-
-## Requirements
-
-- **Node.js**: >= 20.12.0
-- **Package Manager**: npm (or pnpm with shamefully-hoist=true)
-
-## Installation
-
-Install the theme in your Slidev project:
+You need Node.js 20.12 or newer. Install the theme in your Slidev project:
 
 ```bash
 npm install slidev-theme-kotlin
 ```
 
-## Usage
+With pnpm, set `shamefully-hoist=true` in `.npmrc`.
 
-### Visual annotation editor (development)
+Then name the theme at the top of `slides.md`:
 
-Enable the optional, development-only source writer in the consuming deck's
-`vite.config.ts`:
+```yaml
+---
+theme: kotlin
+transition: fade
+themeConfig:
+  kodee: greeting
+---
+
+# Your Presentation Title
+```
+
+## Contents
+
+- [Code windows](#code-windows)
+- [Folded imports](#folded-imports)
+- [Magic Move between slides](#magic-move-between-slides)
+- [IDE decorations](#ide-decorations)
+- [Drawn annotations](#drawn-annotations)
+- [Kodee](#kodee)
+- [Layouts](#layouts)
+- [Customising](#customising)
+- [Publishing a deck](#publishing-a-deck)
+- [Compiling the snippets](#compiling-the-snippets)
+- [Tips](#tips)
+- [Developing the theme](#developing-the-theme)
+
+## Code windows
+
+Every code fence is drawn as an IntelliJ editor, Light or Darcula with the
+deck's colour scheme. An icon in the top-right corner and the border colour
+say what kind of code it is:
+
+````md
+```kotlin
+fun main() = println("Hello")
+```
+
+```kotlin gradle
+plugins { kotlin("jvm") }
+```
+````
+
+| Fence | Icon |
+| --- | --- |
+| `kotlin`, `kt`, `kts` | Kotlin |
+| `kotlin gradle` | Gradle |
+| `kotlin ktor` | Ktor |
+| `kotlin arrow` | [Arrow](https://arrow-kt.io) |
+| `kotlin jdbc`, `kotlin r2dbc` | JDBC, R2DBC |
+| `java` | Java |
+| `bash` | Terminal |
+| `sql` | PostgreSQL |
+| `yaml toolchain` | Amper |
+| `xml maven` | Maven |
+
+The modifiers work with `kt` and `kts` too, and inside Magic Move. Any other
+fence is a plain code window.
+
+### Program output
+
+A `console` fence is output, not code. It looks like IntelliJ's Run tool
+window. Put it under the fence whose output it shows:
+
+````md
+```kotlin
+println(listOf(1, 2, 3).map { it + 1 })
+```
+
+```console
+[2, 3, 4]
+```
+````
+
+## Folded imports
+
+A snippet reads best without its imports, but a snippet that has them is
+complete: it compiles, and a reader of the handout can see where every symbol
+comes from. So write the imports, and the theme hides them on the slide:
+
+````md
+```kotlin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+
+fun numbers(): Flow<Int> = flowOf(1, 2, 3)
+```
+````
+
+The slide shows only `fun numbers()…`. The handout and `llms-full.txt` print
+the fence in full.
+
+### Hide more than imports
+
+When an example needs a table definition or a helper, put a `// Example`
+comment where the example starts. Everything above it stays off the slide,
+and so does the comment:
+
+````md
+```kotlin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+
+fun numbers(): Flow<Int> = flowOf(1, 2, 3)
+
+// Example: reuse the flow above without showing it
+fun doubled(): Flow<Int> = numbers().map { it * 2 }
+```
+````
+
+The text after the colon is optional.
+
+### Hide the answer of an exercise
+
+Put the answer above a `// Solution` comment. It folds like `// Example`, and
+the snippet checker compiles the assertions against it. The handout and
+`llms-full.txt` leave the answer out (they keep its `import` lines), and
+nothing on the slide can reveal it:
+
+````md
+```kotlin
+fun Int.isEven(): Boolean = this % 2 == 0
+
+// Solution
+check(4.isEven())
+check(!7.isEven())
+```
+````
+
+### Details
+
+- Kotlin, Java, and Scala fences fold (`kotlin`, `kt`, `kts`, `java`,
+  `scala`).
+- Without a marker, only the block of `import` lines at the top folds. A
+  `package` line or `@file:` annotation before it stays visible.
+- Only the first `// Example` or `// Solution` line in a fence counts, and
+  only when there is code above it.
+- Line numbers, `{1|2-3}` highlight ranges, and annotation targets count from
+  the first visible line, so folding never shifts them.
+- Magic Move folds too, step by step.
+- To show the imports, add `show-imports` to one fence
+  (`` ```kotlin show-imports ``) or set `themeConfig: { foldImports: false }`
+  for the whole deck.
+
+## Magic Move between slides
+
+Slidev's Magic Move animates code inside one slide. This theme can also morph
+code **from one slide to the next**: put `magic-move` in the separator
+between them.
+
+````md
+# My Slide
+
+```kotlin
+class Person
+```
+
+---
+magic-move
+---
+
+# My Slide
+
+```kotlin
+class Person(val name: String)
+```
+````
+
+- Repeat the separator to chain any number of slides. The last slide of a
+  chain needs no marker.
+- Code windows pair up by position: the first fence morphs into the first
+  fence of the next slide, the second into the second. Kotlin next to SQL
+  animates side by side.
+- Everything outside the fences is a normal slide. Headings and text can
+  change freely.
+- Navigating backward plays the animation in reverse.
+- Icons, `[Title]` labels, `{lines:true}`, and click highlighting such as
+  `` ```kotlin {1|2-3} `` all work.
+- `magicMove: true` in a slide's frontmatter does the same as the bare
+  separator, and combines with other frontmatter keys.
+- Snippet imports (`<<< @/...`) do not take part in a chain.
+- Use `transition: fade`. With `transition: view-transition`, Slidev 52
+  stalls for a moment on many navigations.
+
+## IDE decorations
+
+Show what the IDE shows: smart casts, warnings, errors, receiver hints,
+debugger values, and suspension points. Ask for one with a trailing
+`// [!kind …]` comment on the line it belongs to:
+
+````md
+```kotlin
+fun Application.users() = routing { // [!this Routing]
+  route(Api.Users.create) { // [!this TypedRespondScope<CreateUser, User>]
+    when (val result = insertUser(body)) {
+      is Success -> respond(result.user) // [!smartcast result]
+      AlreadyExists -> fail(UserAlreadyExists)
+    }
+  }
+}
+```
+````
+
+The comment never reaches the slide, the handout, or the compiled snippets.
+
+| Mark | What appears |
+| --- | --- |
+| `[!smartcast TEXT]` | Green smart-cast background behind `TEXT` |
+| `[!warning TEXT MESSAGE]` | Yellow warning background, with the message after the line |
+| `[!error TEXT MESSAGE]` | Red squiggle under `TEXT`, with the message after the line |
+| `[!this TYPE]` / `[!context TYPE]` | Grey `this: TYPE` hint after the line's `{` |
+| `[!type NAME TYPE]` | Inferred-type hint after `NAME` |
+| `[!value TEXT VALUE]` | Debugger value after the line |
+| `[!suspend]` | Suspend-call icon in the gutter |
+
+Quoting, options such as `on=1`, and several marks on one line are covered in
+[`docs/code-marks.md`](docs/code-marks.md).
+
+### As components
+
+Each decoration is also a component that wraps one fence. Use it when the
+decoration should appear on a click, or around a classic ````md magic-move````
+block:
+
+````md
+<InlineCompilerError text="userName" message="Unresolved reference: userName" :on="1">
+
+```kotlin
+println(userName)
+```
+
+</InlineCompilerError>
+````
+
+The props of
+[`InlineCompilerError`](components/README.md#inlinecompilererror),
+[`SmartCast`](components/README.md#smartcast),
+[`Warning`](components/README.md#warning),
+[`TypeHint`](components/README.md#typehint),
+[`InlineValue`](components/README.md#inlinevalue), and
+[`SuspendGutter`](components/README.md#suspendgutter) are in
+[`components/README.md`](components/README.md).
+
+## Drawn annotations
+
+`<DrawnAnnotation>` draws a hand-drawn mark on an element or on exact text
+inside a code block, and can connect it to a label or to another element:
+
+````md
+<DrawnAnnotation type="circle" text="fun main" label="program entry point" :on="1">
+
+```kotlin
+fun main() = println("Hello, Kotlin!")
+```
+
+</DrawnAnnotation>
+````
+
+- Marks: `underline`, `circle`, `box`, `strike-through`.
+- Labels take a little Markdown: `` `code` ``, `**strong**`, `*emphasis*`,
+  `>` quotes, and line breaks.
+- It follows Magic Move steps and Slidev's clicks.
+
+Every prop, the click timing, and troubleshooting are in
+[`components/README.md`](components/README.md#drawnannotation).
+
+### Visual editor
+
+Drag labels and connectors into place while the deck runs, instead of typing
+coordinates. Turn it on in the deck's `vite.config.ts`:
 
 ```ts
 import { defineConfig } from 'vite'
@@ -44,115 +299,103 @@ export default defineConfig({
 })
 ```
 
-Click the theme's **Edit annotations** launcher (or press **Alt+Shift+A**) to start a frozen
-edit session on the current slide and click state: Slidev navigation — arrow
-keys, space, page keys, click-to-navigate, swipes — is paused until you leave
-the editor. Drag a visible label, its width handle, or a connector control, or
-nudge the selected control with the arrow keys (**Shift** for larger steps);
-every change stays a local draft, so nothing is written mid-gesture. **Done
-editing annotations** commits all changed drafts as normalized `:geometry`
-bindings on exactly the edited `DrawnAnnotation` tags, then exits. **Esc**
-cancels in stages — an active drag, then the selection, then (after a
-confirmation) the whole session, discarding its drafts. One toolbar control
-hides or shows the connector (writing `:connect` into the tag where the
-deck's default differs, see `themeConfig.drawnAnnotation.connect`), one
-switches it between manual and automatic routing, another curves or
-straightens it with a draggable quadratic control point, and **Reset
-annotation** or **Reset slide** removes the saved geometry of one annotation
-or of every annotation on the slide. Source revisions are checked, so a
-conflicting commit fails without overwriting anyone: the drafts stay visible,
-and you either fix and press Done again or choose **Reload saved geometry** to
-discard them. The locator, toolbar, and write endpoint exist only while Vite
-serves the deck; builds and exports render saved geometry without editor code.
+![The annotation editor: a dragged label, its handles, and the toolbar](docs/annotation-editor.png)
 
-While serving, an annotation that cannot find what it should mark (a `text`
-that no longer matches the fence, an unmatched `selector` or `target`, an
-`occurrence` past the last match, or an `InlineCompilerError`, `SmartCast`, `Warning`,
-`TypeHint`, or `InlineValue` whose target is not found) also puts a red chip in the top-left corner of its slide, next to
-the warning it prints on the console. Hover the chip for the full message. The
-chip appears only once the annotation's click has been reached and the slide
-has settled, so a Magic Move step that does not yet contain the text never
-flags one, and it disappears again when the target turns up. Builds, exports,
-the presenter view, and print mode never render it.
+Then, in `slidev dev`:
 
-### Basic Setup
+1. Press **Alt+Shift+A** (**⌥⇧A** on a Mac) on the slide you want to edit. Navigation pauses
+   until you leave the editor.
+2. Drag a label, its width handle, or a connector. The arrow keys nudge the
+   selected control (**Shift** for larger steps).
+3. Press **Done editing annotations**. The positions are saved as a
+   `:geometry` attribute on the tags you edited.
 
-Add the theme to your slides' frontmatter:
+**Esc** cancels: first a drag, then the selection, then the whole session.
+The toolbar can also hide, curve, or reset a connector. Nothing of the editor
+is part of a built or exported deck. The details are in
+[Visual-editor geometry](components/README.md#visual-editor-geometry).
+
+### When an annotation finds nothing
+
+In `slidev dev`, a red chip in the top-left corner of the slide tells you
+that an annotation or decoration could not find its text or element. Hover it
+for the message; the console prints the same. See
+[When nothing appears](components/README.md#when-nothing-appears).
+
+## Kodee
+
+Turn the mascot on once for the whole deck:
 
 ```yaml
 ---
 theme: kotlin
-transition: fade
+themeConfig:
+  kodee: greeting
+---
+```
+
+Kodee sits small in the bottom-right corner of regular slides, and large
+beside the title on `cover` and `intro` slides. Between slides it glides to
+its new place.
+
+Change the expression for one slide, or hide the mascot:
+
+```yaml
+---
+kodee: wink    # or: kodee: false
+---
+```
+
+The variants are `greeting`, `wink`, `wave`, `jumping`, `sitting`,
+`drinking`, `heart`, `in-love`, `welcome`, `winter`, and `tiny`.
+
+### Size and position
+
+Use the object form for full control:
+
+```yaml
+---
+kodee:
+  variant: greeting
+  size: large
+  position: featured
+---
+```
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `variant` | one of the variants above | the deck's `themeConfig.kodee` |
+| `size` | `small` (200px), `medium` (320px), `large` (600px; 500px for `wave`) | `small`; `large` on `cover` and `intro` |
+| `position` | `corner`, `featured`, `custom` | `corner`; `featured` on `cover` and `intro` |
+| `x`, `y` | pixels, with `position: custom` | – |
+| `scale` | a multiplier, `1.2` for a fifth larger | `1` |
+
+## Layouts
+
+| Layout | Use |
+| --- | --- |
+| `default` | A regular slide |
+| `cover` | The title slide, with the text beside a large Kodee |
+| `intro` | A section or speaker introduction, same arrangement as `cover` |
+
+```yaml
+---
+layout: cover
 ---
 
-# Your Presentation Title
+# Presentation Title
 ```
 
-### Code icons
+Slidev's built-in layouts, such as `two-cols-header`, keep working.
 
-Code fences are rendered as one IntelliJ Light/Darcula editor surface without a
-title bar. A compact identity icon is placed in its top-right corner and follows
-the presentation color scheme:
+## Customising
 
-````md
-```kotlin
-fun main() = println("Hello")
-```
+Colours, sizes, and fonts are CSS variables. Override them in the deck's own
+stylesheet (`style.css` or `styles/index.css`).
 
-```kts gradle
-plugins { kotlin("jvm") }
-```
+### Code-window colours
 
-```yaml toolchain
-product: jvm/app
-```
-
-```xml maven
-<artifactId>demo</artifactId>
-```
-
-```sql
-SELECT * FROM presentations;
-```
-````
-
-`kotlin`, `kt`, and `kts` use the Kotlin icon; each with a `gradle`, `jdbc`,
-or `r2dbc` modifier uses the Gradle, JDBC, or R2DBC identity respectively, and
-with an `arrow` modifier the [Arrow](https://arrow-kt.io) icon, for Kotlin
-code that is really about `Raise`, `Resource`, or another Arrow library.
-Use `kotlin ktor` (also `kt ktor` or `kts ktor`) for the Ktor icon and purple
-border on Ktor code. These modifiers also work with Magic Move.
-`yaml toolchain`, `java`, `bash`, `xml maven`, and `sql` use the Amper, Java,
-Terminal, Maven, and PostgreSQL icons respectively. All other fences remain plain
-code surfaces.
-
-A `console` fence is program output, not code: it renders as a flat panel in
-the colours of IntelliJ's Run tool window, without the editor's outline and
-shadow, marked with the green run icon. Put it under the Kotlin fence whose
-output it shows:
-
-````md
-```kotlin
-println([1, 2, 3].map { it + 1 })
-```
-
-```console
-[2, 3, 4]
-```
-````
-
-To show a value next to the line that produces it instead, as the debugger
-does, wrap the fence in [`InlineValue`](components/README.md#inlinevalue).
-The other IntelliJ decorations have a component each: [`SmartCast`](components/README.md#smartcast)
-paints the green smart-cast background behind exact code, [`Warning`](components/README.md#warning)
-the yellow warning background with an optional message, [`TypeHint`](components/README.md#typehint)
-the grey `this: HTML` inlay hint after a lambda's brace, and [`SuspendGutter`](components/README.md#suspendgutter)
-the suspend-call icon in the gutter beside a line. All of them can also be
-written as [code marks](#code-marks) inside the fence.
-
-The identity border colours are exposed as theme variables and can be
-customized from a deck stylesheet. Each variable has a light and dark-mode
-value:
+Each icon has a border colour, with a light and a dark value:
 
 ```css
 :root {
@@ -181,85 +424,14 @@ html.dark {
 }
 ```
 
-### Folded imports
+The editor surface reads `--editor-bg`, `--editor-fg`, `--editor-border`, and
+`--editor-shadow`. `--code-window-border` overrides the border of one window.
 
-A snippet on a slide reads best without its imports, but a snippet that
-carries them is complete: it compiles as written, a snippet checker such as
-Knit can verify it, and the deck's handout (see below) shows a reader which
-package every symbol comes from. So write the imports, and the theme folds
-them away:
+### Code size
 
-````md
-```kotlin
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
-
-fun numbers(): Flow<Int> = flowOf(1, 2, 3)
-```
-````
-
-On the slide, the code window shows only `fun numbers()…`; the handout and
-`llms-full.txt` print the fence in full.
-
-When an example needs more than imports — a table definition, a helper the
-example calls — put a `// Example` comment where the example starts.
-Everything above it leaves the slide, and so does the marker line itself:
-
-````md
-```kotlin
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
-
-fun numbers(): Flow<Int> = flowOf(1, 2, 3)
-
-// Example: reuse the flow above without showing it
-fun doubled(): Flow<Int> = numbers().map { it * 2 }
-```
-````
-
-The window shows `fun doubled()…`. The comment is ordinary Kotlin, so the
-fence still compiles as written (see the snippet checker below), and the
-handout keeps it. A description after the colon is optional.
-
-An exercise slide shows the assertions and hides the answer. Put the answer
-above a `// Solution` comment instead: it folds exactly like `// Example`,
-the snippet checker compiles the assertions against it, but the handout and
-`llms-full.txt` print the fence without it (only its `import` lines survive,
-so a reader can still resolve the symbols), and nothing on the slide can
-reveal it:
-
-````md
-```kotlin
-fun Int.isEven(): Boolean = this % 2 == 0
-
-// Solution
-check(4.isEven())
-check(!7.isEven())
-```
-````
-
-Details:
-
-- Kotlin, Java, and Scala fences (`kotlin`, `kt`, `kts`, `java`, `scala`)
-  fold. Without a marker, only a block of `import` lines at the top of the
-  fence counts, and a `package` line or `@file:` annotation before it stays
-  visible. With a marker, everything above it folds. Only the first
-  `// Example` or `// Solution` line in a fence counts, and only when there
-  is code above it.
-- Line numbers, `{1|2-3}` highlight ranges, and annotation targets all
-  count from the first line of real code, so folding never shifts them.
-- Cross-slide Magic Move chains and classic ````md magic-move```` blocks fold
-  too, step by step.
-- Add `show-imports` to a fence (`` ```kotlin show-imports ``) when the slide
-  is about the imports themselves, or set `themeConfig: { foldImports: false }`
-  in the headmatter to keep every import visible.
-
-### Code sizing
-
-Every code window uses one font size calculated from the slide canvas width. By
-default, a full-width window fits 80 monospace characters. Override the column
-count once in the deck's stylesheet, or narrower on a single slide class:
+Every code window uses one font size, chosen so that a full-width window fits
+80 characters. Change the number of columns for the deck, or for one slide
+class:
 
 ```css
 :root {
@@ -267,109 +439,19 @@ count once in the deck's stylesheet, or narrower on a single slide class:
 }
 ```
 
-The calculation accounts for the standard layout and code padding. A custom
-layout with different horizontal spacing can override
-`--code-window-inline-space`. To bypass column-based sizing entirely, set an
-explicit `--code-window-font-size`, for example `1.25rem`. The font's advance
-width and the line height the calculation assumes are
-`--code-window-character-width` (`0.61`, JetBrains Mono's) and
-`--code-window-line-height` (`1.42`); a deck on another monospace font sets the
-first to that font's ratio. The editor surface itself reads `--editor-bg`,
-`--editor-fg`, `--editor-border`, and `--editor-shadow`, and one window's
-border colour can be overridden with `--code-window-border`.
+| Variable | Default | Use |
+| --- | --- | --- |
+| `--code-window-columns` | `80` | Characters that fit a full-width window |
+| `--code-window-font-size` | from the columns | Set a size such as `1.25rem` and skip the calculation |
+| `--code-window-inline-space` | the standard layout's | Horizontal padding, for a custom layout |
+| `--code-window-character-width` | `0.61` | Width of one character relative to the font size; change it for another monospace font |
+| `--code-window-line-height` | `1.42` | Line height |
 
-### Magic Move between slides
+### Cover text width
 
-Slidev's classic Magic Move animates code inside one slide, on clicks. This
-theme additionally supports morphing code **across slides**: put `magic-move`
-in the separator between two slides and their code windows animate from one to
-the next when you navigate.
-
-````md
-# My Slide
-
-```kotlin
-class Person
-```
-
----
-magic-move
----
-
-# My Slide
-
-```kotlin
-class Person(val name: String)
-```
-````
-
-Details:
-
-- The separator links the slide it precedes to the one before it, so the last
-  slide of a chain needs no marker. Any number of slides can be chained by
-  repeating the `magic-move` separator.
-- Code windows pair up **by position**: the first fence of a slide morphs into
-  the first fence of the next, the second into the second, and so on. Several
-  parallel snippets (say Kotlin next to SQL) each animate independently.
-- Everything outside the code fences is a normal slide — headings, prose, and
-  layout can change freely and follow the deck's regular slide transition.
-- With a slide transition such as `fade`, the departing slide's copy of the
-  window is hidden for the length of the transition, so only the arriving
-  window is visible while its tokens morph and its box resizes to the new
-  code. Prefer `fade` over `view-transition`: with `transition:
-  view-transition`, Slidev 52 switches its slideshow container between a
-  `div` and a `TransitionGroup` whenever a click is followed by a slide
-  change, which remounts every preloaded slide of the deck and stalls the
-  frame for 150 ms or more on each such navigation. If you do use
-  `view-transition`, the code windows of both slides are paired through the
-  View Transitions API instead.
-- Navigating backward plays the animation in reverse. Deep links, the
-  overview, and PDF/PNG exports render each slide's own step statically.
-- Fence metadata still works: the code-window identity icons, `[Title]`
-  labels, and `{lines:true}` line numbers apply per chain. Per-click line
-  highlighting works too — `` ```kotlin {1|2-3} `` registers clicks on that
-  slide and steps through the ranges before navigation moves on, exactly like
-  one step of a classic Magic Move block. Snippet imports (`<<< @/...`) do
-  not participate in chains.
-- `magicMove: true` in the slide's YAML frontmatter is equivalent to the bare
-  `magic-move` separator and can be combined with other frontmatter keys.
-
-### Using Kodee Mascot
-
-Enable Kodee once for the whole deck with `themeConfig`:
-
-```yaml
----
-theme: kotlin
-themeConfig:
-  kodee: greeting
----
-```
-
-Kodee then uses layout-aware defaults: `small` in the bottom-right corner on regular slides, and `large`/`featured` on `cover` and `intro` slides. Override only the variant when a slide needs a different expression:
-
-```yaml
----
-kodee: wink
----
-```
-
-Use `kodee: false` to hide the mascot on one slide. The original object form remains available when you need complete control:
-
-```yaml
----
-kodee:
-  variant: greeting
-  size: large
-  position: featured
----
-```
-
-On `cover` and `intro` slides the text sits in a column beside the featured
-mascot and wraps inside it instead of running under Kodee. The column is
-`--cover-text-width`, 48% of the content box by default, which clears the
-mascot's arm. Widen it in the deck's stylesheet when the titles are short, or
-give a slide that hides the mascot the full width:
+On `cover` and `intro` slides the text sits in a column beside Kodee. The
+column is `--cover-text-width`, 48% by default. Widen it when the titles are
+short, or give a slide without the mascot the full width:
 
 ```css
 .slidev-layout.cover.no-mascot {
@@ -377,139 +459,84 @@ give a slide that hides the mascot the full width:
 }
 ```
 
-#### Kodee Configuration Options
+### Fonts
 
-- **variant**: Choose from available Kodee images
-  - `greeting` - Kodee waving hello
-  - `wink` - Kodee winking
-  - `wave` - Kodee waving
-  - `jumping` - Kodee jumping with joy
-  - `sitting` - Kodee sitting down
-  - `drinking` - Kodee with a drink
-  - `heart` - Kodee with a heart
-  - `in-love` - Kodee in love
-  - `welcome` - Kodee welcoming
-  - `winter` - Kodee in winter attire
-  - `tiny` - Tiny Kodee
+The theme uses JetBrains Sans and JetBrains Mono when they are installed on
+your machine. Otherwise it falls back to Inter and to JetBrains Mono from
+Google Fonts.
 
-- **size**: Control Kodee's size
-  - `small` - 200x200px (regular-layout default)
-  - `medium` - 320x320px
-  - `large` - 600x600px (500x500px for wave variant; cover/intro default)
+### `themeConfig` reference
 
-- **position**: Control Kodee's placement
-  - `corner` - Bottom right corner (regular-layout default)
-  - `featured` - Prominently displayed (cover/intro default)
-  - `custom` - Use with `x` and `y` coordinates
+| Key | Default | Use |
+| --- | --- | --- |
+| `kodee` | off | The deck's [Kodee](#kodee) variant, or the object form |
+| `foldImports` | `true` | `false` keeps every import visible |
+| `drawnAnnotation.connect` | `true` | `false` draws labels without a line to their mark |
+| `siteUrl` | – | The deck's public URL, for [publishing](#publishing-a-deck) |
+| `handout` | on | `false` turns the static handout off; `handout.notes: false` leaves presenter notes out |
+| `analytics.goatcounter` | – | A GoatCounter site, to count pageviews |
+| `snippets` | – | Where [compiled snippets](#compiling-the-snippets) go |
 
-- **scale**: Multiply the size, `1.2` for a fifth larger. Defaults to `1`.
+## Publishing a deck
 
-#### Custom Positioning
-
-For precise control, use custom positioning:
+A built Slidev deck is a JavaScript app, so search engines and AI crawlers
+see none of your code. Every `slidev build` on this theme therefore also
+writes a static **handout** (`handout/index.html`), **`llms.txt`** and
+**`llms-full.txt`**, and a sitemap. Give the deck its public URL so the links
+are absolute:
 
 ```yaml
----
-kodee:
-  variant: greeting
-  position: custom
-  x: 100
-  y: 200
-  scale: 1.2
----
+themeConfig:
+  siteUrl: https://example.github.io/my-deck/
 ```
 
-### Using DrawnAnnotation
+On GitHub Pages, build with the hash router so deep links resolve:
 
-`<DrawnAnnotation>` is auto-registered for every deck using the theme. It can mark an element with a selector or exact text inside a Shiki or Magic Move code block, then connect that mark to a label or another element. Labels accept a small, safe Markdown subset (backticked inline code, `>` quotes, `**strong**` or `__strong__`, `*emphasis*` or `_emphasis_`, and line breaks; HTML is escaped): inline code and quotes use the local-first JetBrains Mono stack.
-
-````md
-<DrawnAnnotation type="circle" text="fun main" label="program entry point" :on="1">
-
-```kotlin
-fun main() = println("Hello, Kotlin!")
+```bash
+slidev build --base /my-deck/ --router-mode hash
 ```
 
-</DrawnAnnotation>
-````
+To count pageviews per slide without cookies, add a
+[GoatCounter](https://www.goatcounter.com) site:
 
-The full prop reference, timing behavior, and troubleshooting guide are in [`components/README.md`](components/README.md). The bundled [`slides.md`](slides.md) includes working examples of code annotations, connectors, labels, sequential reveals, and Magic Move integration.
-
-### Code marks
-
-Every IDE decoration (`SmartCast`, `Warning`, `InlineCompilerError`,
-`TypeHint`, `InlineValue`, `SuspendGutter`) can also be asked for from inside the fence, as a
-trailing `// [!kind …]` comment on the line it belongs to:
-
-````md
-```kotlin
-fun Application.users() = routing { // [!this Routing]
-  route(Api.Users.create) { // [!this TypedRespondScope<CreateUser, User>]
-    when (val result = insertUser(body)) {
-      is Success -> respond(result.user) // [!smartcast result]
-      AlreadyExists -> fail(UserAlreadyExists)
-    }
-  }
-}
-```
-````
-
-The comment never reaches the slide, the handout, or the generated Kotlin
-sources: the theme takes it out and wraps the fence in the components it
-asks for, with `:line` (and `:occurrence`) computed from where the comment
-sits. A mark therefore moves with its line through a Magic Move chain, a
-fence with five marks needs no five closing tags in reverse order, and quotes
-inside the marked text need no `&quot;`. The kinds:
-
-| Mark | Component |
-| --- | --- |
-| `[!smartcast TEXT]` | `SmartCast` on every occurrence of `TEXT` on the line |
-| `[!warning TEXT MESSAGE]` | `Warning` on the first occurrence, with the message |
-| `[!error TEXT MESSAGE]` | `InlineCompilerError`; the fence stays out of the generated Kotlin |
-| `[!this TYPE]` / `[!context TYPE]` | `TypeHint` after the line's last `{` |
-| `[!type NAME TYPE]` | `TypeHint` with the inferred type after `NAME` |
-| `[!value TEXT VALUE]` | `InlineValue` after the line |
-| `[!suspend]` | one line of `SuspendGutter`, collected over the fence into `:lines` |
-
-The first argument is one word, or quoted with `"…"` or `` `…` `` when it
-holds spaces or brackets (`` [!error `["a", "bb"]` No `of` operator] ``); the
-last argument runs to the closing `]`, so a message or a type with spaces
-needs no quotes. `key=value` options right after the kind pass through as
-attributes: `[!smartcast on=1 result]`, `[!smartcast occurrence=3 user]`,
-`[!this occurrence=1 Routing]`, `[!error color=red email2 Unresolved reference]`.
-Several marks share one comment (`// [!context ResourceScope] [!suspend]`),
-and a comment line that holds nothing but marks applies to the next code
-line and leaves the slide entirely, for a diagnostic too long to sit after
-the code. A `console` or `sql` fence that starts on the line right after the
-Kotlin fence is enclosed by the same wrapper, as a hand-written one would be,
-so the output panel stays attached to its code; a following code fence is
-wrapped on its own. Quotes and brackets inside a mark must balance, and a
-`[!…]` comment with a kind the theme does not know (Shiki's `[!code …]`
-notation among them) stays in the code. A mark whose text is not on its
-line, or that does not parse, is reported on the console when the slide is
-built. Marks inside classic ````md magic-move```` blocks
-are not supported; the wrappers below still are, and the two can be mixed in
-one deck.
-
-### Using InlineCompilerError
-
-`<InlineCompilerError>` is auto-registered for every deck using the theme. Wrap one code block to underline a source line or exact text with an IntelliJ-style diagnostic; it follows both static Shiki blocks and Magic Move steps.
-
-````md
-<InlineCompilerError text="userName" message="Unresolved reference: userName" :on="1">
-
-```kotlin
-println(userName)
+```yaml
+themeConfig:
+  analytics:
+    goatcounter: mysite
 ```
 
-</InlineCompilerError>
-````
+What each file contains, `robots.txt`, and what is counted are in
+[`docs/publishing.md`](docs/publishing.md).
 
-See [`components/README.md`](components/README.md#inlinecompilererror) for the target and click-timing props.
+## Compiling the snippets
 
-#### IntelliJ formatting
+`slidev-kotlin-snippets` turns the Kotlin and Java fences of a deck into
+source files, so a Gradle module can compile them against the real libraries.
+A stale slide then fails the build instead of the talk.
 
-IntelliJ recognizes only the first YAML block in a Markdown file as frontmatter. To keep later Slidev frontmatter intact when using **Reformat Code**, enable formatter tags and stop formatting after the deck headmatter:
+```yaml
+themeConfig:
+  snippets:
+    dir: src/main/kotlin/snippets
+    package: snippets
+```
+
+```bash
+npx slidev-kotlin-snippets            # writes the files, removes stale ones
+npx slidev-kotlin-snippets --check    # exits 1 when they are out of date (CI)
+```
+
+Add `no-compile` to a fence that is not meant to compile
+(`` ```kotlin no-compile ``). The Gradle wiring, the remaining options, and
+how fences map to files are in [`docs/snippets.md`](docs/snippets.md).
+
+## Tips
+
+### IntelliJ's Reformat Code
+
+IntelliJ treats only the first YAML block of a Markdown file as frontmatter,
+so **Reformat Code** breaks the frontmatter of later slides. Enable formatter
+tags and switch formatting off after the headmatter:
 
 ```ini
 # .editorconfig
@@ -525,399 +552,49 @@ theme: kotlin
 <!-- @formatter:off -->
 ```
 
-The theme's example deck includes this guard.
+## Developing the theme
 
-## Static handout, `llms.txt`, and hash-mode links
+`slides.md` is the demo deck. `slides.fixtures.md` holds edge cases for the
+visual review and is not published.
 
-A Slidev build is a single-page app: without JavaScript its `index.html`
-contains nothing but the title. Search engines render JavaScript for the root
-URL at best, and AI crawlers (GPTBot, ClaudeBot, CCBot, …) render none, so the
-code on your slides never reaches them. Every `slidev build` on this theme
-therefore also writes, next to the app:
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Serve the demo deck with hot reload |
+| `npm run build` | Lint and build the demo deck |
+| `npm test` | Unit tests |
+| `npm run test:annotation-editor` | Browser test of the visual editor |
+| `npm run visual:review` | Compare screenshots of the working tree with the last commit |
+| `npm run export` | Export the demo deck to PDF |
+| `npm run screenshot` | Export every slide and click state as PNG |
+| `npm run export:slide -- --slide 12 --click 3` | Export one slide as PNG; `--click` starts at 0 |
 
-- `handout/index.html` and `handout/<section>.html` — one page per source
-  file (`src:` lesson), with every slide's title, prose, and highlighted code,
-  each linking back to the live slide. A single-file deck gets one page.
-- `llms.txt` and `llms-full.txt` — the [llmstxt.org](https://llmstxt.org)
-  convention that coding agents and AI crawlers look for: an index, and the
-  full Markdown of the deck with complete code snippets (folded imports
-  expanded).
-- `sitemap.xml` — only when the deck's public URL is known.
-- `robots.txt` — only when that URL is the root of its host and `public/`
-  ships none. Crawlers read `robots.txt` at the host root alone, so a deck
-  served from a sub-path (a GitHub project page, a folder of your blog) gets
-  no file; add `Sitemap: <siteUrl>sitemap.xml` to the host's own
-  `robots.txt` instead, as the build reminds you.
+### Visual review
 
-The handout and `llms-full.txt` form one outline: the deck, then each
-section, then each slide, with a slide's own headings placed below its
-title. The handout pages carry a description, canonical URL, Open Graph
-tags, and the deck's `lang` from the headmatter (`en` when unset).
-
-The built `index.html` (and the `404.html` copied from it) is made
-self-describing too: `rel="alternate"` links to the handout and
-`llms-full.txt`, a plain-text `<meta name="description">` from the headmatter
-`info` (replacing the one Slidev renders from the raw Markdown), and a short
-paragraph linking to the same files as visible text, hidden as soon as the
-app has mounted. That paragraph is ordinary markup rather than `<noscript>`,
-which many text extractors drop, so a crawler that renders no JavaScript
-still finds the content from the root URL. With `siteUrl` set the page also
-carries the canonical URL and a `rel="sitemap"` link.
-
-Theme markup is translated, not dropped: a `DrawnAnnotation` with a `label`
-becomes a quoted note about the code it points at, an `InlineCompilerError`
-becomes its diagnostic, Magic Move blocks become their steps, and
-`<<< @/file#region` snippet imports are inlined.
-
-Give the deck its public URL so links, the sitemap, and `llms.txt` are
-absolute, and opt out of notes or the whole feature if you need to:
-
-```yaml
-themeConfig:
-  siteUrl: https://example.github.io/my-deck/
-  handout:
-    notes: false   # leave presenter notes out (default: included)
-  # handout: false # disable the static content entirely
-```
-
-## Analytics
-
-Decks can count pageviews with [GoatCounter](https://www.goatcounter.com),
-which sets no cookies and stores no personal data, so it needs no consent
-banner. Give the headmatter the endpoint of your GoatCounter site, or just
-its code:
-
-```yaml
-themeConfig:
-  analytics:
-    goatcounter: https://mysite.goatcounter.com/count   # or: mysite
-```
-
-Every `slidev build` then adds `count.js` to the deck, and the theme sends
-one pageview per slide, recorded as `<base>/<slide number>` with the slide's
-title, so the dashboard's path list doubles as a per-slide drop-off curve.
-Clicks within a slide, the presenter and overview views, notes, print, and
-export are never counted. Handout pages carry the tag too and count under
-their own URL. `slidev dev`, exports, and screenshots send nothing:
-`count.js` ignores localhost and headless browsers by itself.
-
-Every deck on one host can share one GoatCounter site, since paths carry the
-deck's base. Add `#toggle-goatcounter` to a deck's URL to stop counting your
-own visits in that browser.
-
-## Compiling the snippets
-
-A Kotlin fence on a slide is a fragment: it carries its imports (folded away,
-see above) but no package, and it may mix declarations with bare statements.
-`slidev-kotlin-snippets` turns Kotlin and Java fences into source files, in the
-spirit of [KotlinX Knit](https://github.com/Kotlin/kotlinx-knit), so a Gradle
-module can compile the deck's code against the real libraries and a stale slide
-fails the build instead of the talk.
-
-Turn it on in the headmatter and run the CLI from the deck:
-
-```yaml
-themeConfig:
-  snippets:
-    dir: src/main/kotlin/presentation/snippets   # default: src/main/kotlin/snippets
-    javaDir: src/main/java/presentation/snippets  # default: src/main/java/snippets
-    package: presentation.snippets               # default: snippets
-    imports:                                     # added to every file
-      - presentation.support.*
-```
+`npm run visual:review` renders every click state of both decks twice, for
+the working tree and for a Git revision, and writes a page with base,
+current, and diff side by side. Open the `file://` path it prints.
 
 ```bash
-npx slidev-kotlin-snippets            # writes the files, removes stale ones
-npx slidev-kotlin-snippets --check    # exits 1 when they are out of date (CI)
-npx slidev-kotlin-snippets talk.md    # another entry than slides.md
+npm run visual:review                        # against the last commit
+npm run visual:review -- --base origin/main  # against a branch
+npm run visual:check -- --base origin/main   # fail on any difference
 ```
 
-Each Kotlin fence becomes `<dir>/<section>/<slide>-<title>.kt`; each Java
-fence becomes `<javaDir>/<section>/<slide>-<title>.java`. Files have a package,
-`<package>.<section>.slide<n>`, so every step of a Magic Move chain can declare
-its own `object Talks`. A Java and Kotlin fence on the same slide deliberately
-share that package, allowing Java ↔ Kotlin interop examples to compile. Inside
-the file:
-
-- the fence's imports come first, after the `imports` from the config. Keep
-  the tables, types, and values the slides use without defining them in a
-  hand-written package and star-import it; a fence that defines its own
-  `Talks` shadows the shared one, because a declaration in the file's own
-  package wins over a star import.
-- Kotlin top-level declarations (`fun`, `val`, `object`, `class`, ... with
-  their annotations, modifiers, and `context(...)` lines) stay top-level, and
-  bare statements such as `Talks.selectAll()` are wrapped in `suspend fun main()`.
-  A Kotlin `package` line is dropped; `@file:` annotations move above the package.
-- Java fences are emitted as Java compilation units with the generated package
-  and imports; they must therefore contain declarations rather than bare
-  statements. Their own `package` line is replaced. A fence declaring a public
-  top-level Java type is named after that type (as Java requires); otherwise it
-  uses the slide-based filename. When a later slide of the same section declares
-  a public type an earlier slide already declared, its file goes in a directory
-  named after the slide, so both compile.
-- a slide with several fences in the same language tells them apart by their
-  first meta word (`jdbc`, `r2dbc`) or a letter.
-
-Not every fence is meant to compile. Add `no-compile` to a fence that sketches
-library internals or an intermediate step (`` ```kotlin no-compile ``); the flag
-is stripped before Slidev sees it. Fences inside an `InlineCompilerError` are
-skipped automatically, since the slide shows the diagnostic on purpose, and so
-are `gradle` build-script fences.
-
-Wire it into Gradle so `./gradlew check` also fails on stale sources:
-
-```kotlin
-val snippetsCheck by tasks.registering(Exec::class) {
-    commandLine("npx", "slidev-kotlin-snippets", "--check")
-}
-tasks.check { dependsOn(snippetsCheck) }
-```
-
-### Deep links on GitHub Pages
-
-GitHub Pages has no single-page-app rewrite, so a history-mode deep link such
-as `/my-deck/12` is answered by the copied `404.html` with a 404 status. Build
-with Slidev's hash router instead:
-
-```bash
-slidev build --base /my-deck/ --router-mode hash
-```
-
-Links then look like `/my-deck/#/12` and always resolve. The theme adds a small
-script to hash-mode builds that forwards old `/my-deck/12` links (and
-`presenter/…`, `overview`, `notes`, `print`, `export`) to their hash
-equivalent, so links shared before the switch keep working.
-
-## Development
-
-### Available Scripts
-
-```bash
-# Start development server with example presentation
-npm run dev
-
-# Build the example presentation for production
-npm run build
-
-# Export presentation to PDF
-npm run export
-
-# Export every slide and click state as PNG screenshots
-npm run screenshot
-
-# Export one slide; --click is zero-based (0 is the initial state)
-npm run export:slide -- --slide 12 --click 3
-
-# Render this working tree against HEAD and open the generated visual review
-npm run visual:review
-```
-
-### Exporting One Slide
-
-`npm run export:slide` is an AI-agent-friendly wrapper around `slidev export`. It writes one PNG rather than a directory of all exported pages:
-
-```bash
-# Initial state of slide 12
-npm run export:slide -- --slide 12
-
-# State after the third click of slide 12
-npm run export:slide -- --slide 12 --click 3 --output artifacts/slide-12-click-3.png
-
-# Use another deck entry
-npm run export:slide -- --entry path/to/talk.md --slide 4 --click 0
-```
-
-`--slide` is one-based. `--click` is optional and zero-based, so `--click 0` is the initial slide state, `--click 1` is the state after one click, and so on. Without `--output`, screenshots are written under `.slidev/exports/`, which is ignored by Git. Run `npm run export:slide -- --help` for timeout, wait, and dark-mode options.
-
-### Running the Slides
-
-The repository includes `slides.md`, a compact presentation demonstrating the theme's layouts, Kotlin highlighting, Kodee animations, magic moves, and click animations:
-
-```bash
-npm run dev
-```
-
-This will open the example presentation in your browser with hot-reload enabled.
-
-## Project Structure
-
-```
-.
-├── components/                   # Vue components
-│   ├── DrawnAnnotation.vue        # Hand-drawn marks, labels, and connectors
-│   ├── DrawnAnnotationEditor*.vue # Development-only editor launcher and toolbar
-│   ├── DrawnAnnotationProblems.vue # Development-only problem chips
-│   ├── drawn-annotation/          # Editor store, geometry, and browser writer
-│   ├── InlineCompilerError.vue    # Inline code diagnostics
-│   ├── SmartCast.vue              # Smart-cast background behind exact code
-│   ├── Warning.vue                # Warning background with an optional message
-│   ├── TypeHint.vue               # Inlay hint after a lambda's brace
-│   ├── InlineValue.vue            # Debugger inline value after a line
-│   ├── SuspendGutter.vue          # Suspend-call gutter icons beside listed lines
-│   ├── code-highlight.ts          # The mechanism the four above share
-│   ├── code-text-match.ts         # Text search shared with DrawnAnnotation
-│   ├── MagicMoveBetween.vue       # Cross-slide Magic Move code window
-│   ├── Kodee.vue                  # Main Kodee mascot component with animations
-│   └── KodeeWrapper.vue           # Wrapper component for Kodee integration
-├── global-top.vue       # Development-only editor toolbar and problem chips
-├── global-bottom.vue    # Deck-wide Kodee layer that follows the current slide
-├── slide-bottom.vue     # Per-slide Kodee for the overview and presenter preview
-├── plugins/             # Development-only source writer (`slidev-theme-kotlin/annotation-editor`)
-├── bin/                 # `slidev-kotlin-snippets` CLI
-├── layouts/            # Slidev layout templates
-│   ├── cover.vue       # Cover slide layout
-│   ├── default.vue     # Default slide layout
-│   └── intro.vue       # Introduction slide layout
-├── assets/             # Bundled theme assets
-│   ├── kodee-*.svg     # Kodee mascot variants (11 variants)
-│   ├── code-window/    # Code-window identity icons, referenced from layout.css
-│   └── gutter/         # Suspend-call icons for SuspendGutter, light and dark
-├── index.html          # Head tags merged into every deck (font preconnect)
-├── setup/              # Slidev setup files
-│   ├── main.ts         # App setup: per-slide analytics pageviews
-│   ├── preparser.ts    # The bare `magic-move` slide separator
-│   ├── shiki.ts        # Syntax highlighting configuration for Kotlin
-│   ├── transformers.ts # Cross-slide Magic Move and import folding passes
-│   ├── magic-move-between.ts   # Precompiled Magic Move steps
-│   ├── analytics.ts    # GoatCounter tag and per-slide pageviews
-│   ├── code-imports.ts # Folded imports: fence scanning and source edits
-│   ├── kotlin-snippets.ts      # Compilable snippet files per fence
-│   ├── static-content.ts       # Handout, llms.txt, sitemap generation
-│   ├── hash-route-redirect.ts  # Old history-mode links → hash routes
-│   └── vite-plugins.ts # Registers the three build plugins above
-├── styles/             # Theme styles
-│   ├── index.ts        # Style entry point
-│   └── layout.css      # Layout styles
-├── .pi/extensions/inspect-shiki-token-scopes.ts # Local Pi tool for inspecting Shiki token scopes
-├── slides.md           # Example presentation used for local development and GitHub Pages
-├── package.json        # Package configuration and dependencies
-└── LICENSE             # Apache License 2.0
-```
-
-## Environment Variables
-
-<!-- TODO: Document any environment variables if needed -->
-
-No environment variables are currently required for this theme.
-
-## Visual regression review
-
-Visual review starts a temporary Slidev server and uses Playwright Chromium to
-capture every settled click state from Slidev's normal presenter/player route
-(`/<slide>?clicks=<click>`), rather than the print-export `?print=clicks` route.
-It renders the current working tree and a Git revision with the same browser,
-compares every PNG with `pixelmatch`, and writes a three-column
-base/current/diff page. When the local
-`../kotlin-fundamentals` consumer deck is available, its baseline is
-rendered from its clean `HEAD` and its current capture includes its working-tree
-changes, with each capture linked to the corresponding theme revision.
-Screenshots are not committed: the chosen Git revision is the baseline, so
-accepting an intentional visual change is simply reviewing it and committing
-that change.
-
-```bash
-# Compare the working tree with the last commit.
-npm run visual:review
-
-# Compare a branch with its integration base.
-npm run visual:review -- --base origin/main
-
-# Use in automation when any visual difference should fail the command.
-npm run visual:check -- --base origin/main
-```
-
-Open the `file://.../.visual/review/index.html` path printed by the command.
-The `.visual/` directory contains disposable base/current captures and diffs
-and is ignored by Git. `npm run screenshot` is the non-comparison escape hatch
-when raw PNGs are all that is needed.
-
-The visual exporter requires the Chromium binary supplied by
-`playwright-chromium`. If dependency installation is configured not to run
-package install scripts, download it once with:
-
-```bash
-npx playwright install chromium
-```
-
-`npm run lint` validates the deck's frontmatter and Kodee configuration; `npm
-run build` runs that lint before building the Slidev deck.
-
-## Configuration
-
-### Theme Defaults
-
-The theme is configured with the following defaults in `package.json`:
-
-```json
-{
-  "slidev": {
-    "colorSchema": "both",
-    "defaults": {
-      "fonts": {
-        "sans": "JetBrains Sans,Inter",
-        "mono": "JetBrains Mono Local,JetBrains Mono",
-        "local": "JetBrains Sans,JetBrains Mono Local",
-        "weights": "400,700,800",
-        "italic": true
-      }
-    }
-  }
-}
-```
-
-## Layouts
-
-The theme provides three layouts:
-
-1. **default** - Standard slide layout with optional Kodee
-2. **cover** - Cover slide for presentation title
-3. **intro** - Introduction slide layout
-
-Use layouts by specifying them in slide frontmatter:
-
-```yaml
----
-layout: cover
----
-
-# Presentation Title
-```
-
-## Dependencies
-
-### Runtime Dependencies
-- `@shikijs/magic-move` (4.4.3) - Code-token morphing for Magic Move
-- `@slidev/parser` (^52.19.1) - Deck parsing for the snippets CLI and lint script
-- `@slidev/types` (^52.19.1) - Slidev type definitions
-- `jiti` (2.7.0) - Runs the theme's TypeScript setup modules from the CLI
-- `markdown-it` (14.3.0) - Renders the static handout
-- `roughjs` (4.6.6) - Hand-drawn SVG paths for `DrawnAnnotation`
-
-### Development Dependencies
-- `@slidev/cli` (52.19.1) - Slidev command-line interface
-
-## Contributing
-
-<!-- TODO: Add contribution guidelines -->
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
+No screenshots are committed: the Git revision is the baseline, so you accept
+a visual change by committing it. If Chromium is missing, install it once
+with `npx playwright install chromium`.
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Credits
 
-- **Kodee Mascot**: Official Kotlin mascot by JetBrains
-- **Kotlin Logos**: Official Kotlin branding by JetBrains
-- **Slidev**: Presentation framework by [Anthony Fu](https://github.com/antfu)
+- **Kodee** and the Kotlin logo: JetBrains
+- **Slidev**: [Anthony Fu](https://github.com/antfu)
 
 ## Links
 
-- [Slidev Documentation](https://sli.dev)
-- [Kotlin Official Website](https://kotlinlang.org)
+- [Slidev documentation](https://sli.dev)
+- [Kotlin](https://kotlinlang.org)
 - [Package on npm](https://www.npmjs.com/package/slidev-theme-kotlin)
-
----
-
-Made with ❤️ for the Kotlin community

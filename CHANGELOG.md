@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- The README is rewritten for deck authors: a quick start, one section per feature with an example, one "Customising" section for the CSS variables, and a `themeConfig` reference table. The reference detail moved to `docs/code-marks.md`, `docs/snippets.md`, and `docs/publishing.md`, which ship with the package.
+- The demo deck `slides.md` is a 19-slide tour, down from 63: one slide per feature, with code marks, `SuspendGutter`, the `ktor`, `arrow`, `jdbc`, and `r2dbc` icons, a slide that shows the visual annotation editor in use, and a closing slide for the snippets CLI, the handout, and analytics. The edge-case and per-prop slides moved to `slides.fixtures.md`, which `npm run visual:review` captures under `fixtures/` and `npm run lint` checks, and which is not published.
+
 ### Removed
 
 - The development-only **Edit annotations** launcher, the pencil button in the top-right corner of every slide with an annotation. **Alt+Shift+A** opens and closes the annotation editor as before.

@@ -21,6 +21,9 @@ const slidevCli = resolve(projectRoot, 'node_modules/@slidev/cli/bin/slidev.mjs'
 const screenshotHook = resolve(projectRoot, 'scripts/settled-screenshots.mjs')
 const consumerProjectRoot = resolve(projectRoot, '../kotlin-fundamentals')
 const reviewConsumer = existsSync(join(consumerProjectRoot, 'slides.md'))
+// Edge-case slides that would only be noise in the public showcase. A base
+// revision from before the deck existed simply has no captures for it.
+const fixturesEntry = 'slides.fixtures.md'
 const outputRoot = resolve(projectRoot, '.visual')
 const currentDir = join(outputRoot, 'current')
 const baselineDir = join(outputRoot, 'baseline')
@@ -56,13 +59,13 @@ function listPngs(dir) {
   return files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 }
 
-function capture(cwd, destination) {
+function capture(cwd, destination, entry = 'slides.md') {
   empty(destination)
   const exported = spawnSync(process.execPath, [
     '--import', screenshotHook,
     slidevCli,
     'export',
-    'slides.md',
+    entry,
     '--format', 'png',
     '--with-clicks',
     '--output', destination,
@@ -107,6 +110,8 @@ async function exportRevision(ref) {
     if (unpacked.status !== 0) throw new Error(`Could not unpack Git revision ${ref}.`)
     symlinkSync(join(projectRoot, 'node_modules'), join(worktree, 'node_modules'), 'dir')
     await capture(worktree, baselineDir)
+    if (existsSync(join(worktree, fixturesEntry)))
+      await capture(worktree, join(baselineDir, 'fixtures'), fixturesEntry)
     if (reviewConsumer) {
       const consumerWorktree = mkdtempSync(join(tmpdir(), 'slidev-visual-consumer-base-'))
       try {
@@ -165,6 +170,8 @@ console.log(`\nCapturing base revision ${base}…`)
 await exportRevision(base)
 console.log('\nCapturing the working tree…')
 await capture(projectRoot, currentDir)
+if (existsSync(join(projectRoot, fixturesEntry)))
+  await capture(projectRoot, join(currentDir, 'fixtures'), fixturesEntry)
 if (reviewConsumer)
   await withConsumerProject(projectRoot, consumerWorktree => capture(consumerWorktree, join(currentDir, 'kotlin-fundamentals')))
 const names = [...new Set([...listPngs(baselineDir), ...listPngs(currentDir)])]

@@ -22,6 +22,7 @@
     "assets",
     "bin",
     "components",
+    "docs",
     "plugins",
     "annotation-editor.mjs",
     "annotation-editor.d.ts",
@@ -38,7 +39,7 @@
     "!**/*.test.ts"
   ],
   "scripts": {
-    "lint": "node scripts/lint-slides.mjs slides.md",
+    "lint": "node scripts/lint-slides.mjs slides.md slides.fixtures.md",
     "build": "npm run lint && slidev build slides.md && node scripts/assert-production-annotation-editor.mjs",
     "dev": "slidev slides.md --open",
     "export": "slidev export slides.md",
